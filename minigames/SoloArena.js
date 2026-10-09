@@ -23,7 +23,7 @@
 // that already existed. See `soloHalf()` and `soloFinish()` below, which are the
 // only two functions a game has to call to support this.
 
-import { state } from '../../AppHost.js';
+import { state, setBoardPaused } from '../../AppHost.js';
 import { MG_INFO, MG_NET } from '../config/MinigameRegistry.js';
 import * as MinigameManager from './MinigameManager.js';
 
@@ -225,6 +225,10 @@ function _showLayer(on) {
     const el = typeof document !== 'undefined' && document.getElementById('minigame-layer');
     if (!el) return;
     el.style.display = on ? 'flex' : 'none';
+    // The board is hidden behind this for the whole round. Drawing it anyway
+    // took the frames the game needed: on a slow GPU a 34 s round ran at a
+    // tenth of real time, because each frame's dt is capped (R1).
+    try { setBoardPaused(!!on); } catch (e) {}
     // Lets the stylesheet tell a solo round apart from a shared one — the
     // status strip can wrap when there is no mirrored copy to stay level with.
     el.classList.toggle('is-solo', !!on);

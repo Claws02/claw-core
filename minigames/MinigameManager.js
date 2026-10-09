@@ -14,6 +14,7 @@ import { sfx, haptic } from '../engine/AudioManager.js';
 import { DualRead } from '../../AppHost.js';
 
 import { loadUIManager } from '../../AppHost.js';
+import { setBoardPaused } from '../../AppHost.js';
 // Lazy-loaded minigame modules
 const MG_MODULES = {
     sumospheres: () => import('./SumoSpheres.js'),
@@ -723,6 +724,10 @@ function _startMinigameLayer() {
     if (cd) cd.style.display = 'none';
 
     layer.style.display = 'flex';
+    // Nothing of the board shows through the layer, so stop drawing it. Only
+    // the 3D stage used to do this, which left every 2D game — and every round
+    // played one phone each — sharing its frames with a city nobody could see.
+    try { setBoardPaused(true); } catch (e) {}
     // The landscape hold turns the manager's own chrome — ready buttons,
     // countdown — to face players sitting side by side, and hides the two
     // status pills, which sit on the short edges (css: #minigame-layer.is-sideon).
@@ -1232,6 +1237,7 @@ export function endMinigame(winnerId) {
     _runMinigameCleanups();
     state.mgActive = false;
     document.getElementById('minigame-layer').style.display = 'none';
+    try { setBoardPaused(false); } catch (e) {}
 
     if (_practiceMode) {
         // Practice never touches coins, turn order or the board.
