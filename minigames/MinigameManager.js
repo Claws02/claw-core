@@ -259,6 +259,17 @@ export function init(controller) {
 }
 
 export function isPractice() { return _practiceMode; }
+/**
+ * Does this round put coins in anybody's purse? Only a board round does: a
+ * standalone (arcade) or practice round is played for the result alone, so a
+ * coin game must not tell its players they keep what they catch.
+ */
+export function paysOut() { return !_standaloneMode && !_practiceMode; }
+/** The rules text for `type`, worded for whether this round pays out. */
+export function descOf(type) {
+    const info = MG_INFO[type] || {};
+    return (!paysOut() && info.descPlain) || info.desc || '';
+}
 
 // ---- Practice ----------------------------------------------------------------
 // Runs `mgType` with no stakes. `onDone` is called once the round is over so the
@@ -414,7 +425,7 @@ function _showIntroCard(mgType) {
     const info = MG_INFO[mgType];
     document.getElementById('mg-intro-icon').textContent  = info.icon;
     document.getElementById('mg-intro-title').textContent = info.title;
-    document.getElementById('mg-intro-desc').textContent  = info.desc;
+    document.getElementById('mg-intro-desc').textContent  = descOf(mgType);
     _setPracticeBanner(false);
     _setPracticeButton(false);
     document.getElementById('mg-step-0').classList.add('done');
@@ -612,7 +623,7 @@ export function trigger(onComplete, seats, opts = {}) {
             const info = MG_INFO[state.mgType];
             document.getElementById('mg-intro-icon').textContent   = info.icon;
             titleEl.textContent = info.title;
-            document.getElementById('mg-intro-desc').textContent   = info.desc;
+            document.getElementById('mg-intro-desc').textContent   = descOf(state.mgType);
             document.getElementById('mg-step-0').classList.add('done');
             _setPracticeBanner(false);
             // Once the game is known, offer a no-stakes run of it first.

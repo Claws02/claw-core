@@ -11,7 +11,7 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, slotCount, isBotSlot, seatFor } from './MinigameManager.js';
+import { paysOut, registerMinigameCleanup, slotCount, isBotSlot, seatFor } from './MinigameManager.js';
 import { zonesFor } from '../config/MinigameLayout.js';
 import * as Solo from './SoloArena.js';
 
@@ -536,7 +536,9 @@ function _finishSolo() {
     if (_done) return;
     _done = true;
     const neu = document.getElementById('mg-neutral');
-    if (neu) neu.textContent = `YOU CAUGHT ${_score[0]} 🪙 — AND YOU KEEP THEM`;
+    // Plain on purpose: a round on everybody's own phone is the same code in
+    // both apps, and only one of them banks the haul.
+    if (neu) neu.textContent = `YOU CAUGHT ${_score[0]} 🪙`;
     sfx('mg_win');
     const banked = soloScore();
     _after(() => { _destroy(); Solo.soloFinish(banked); }, 1400);
@@ -551,9 +553,10 @@ function _finish() {
     const neu = document.getElementById('mg-neutral');
     if (neu) {
         const line = _score.join(' · ');
+        const keep = paysOut();
         neu.textContent = winner < 0
-            ? `DRAW! EVERYBODY KEEPS THEIRS — ${line} 🪙`
-            : `${_nameOf(winner)} WINS! EVERYBODY KEEPS THEIR COINS — ${line}`;
+            ? (keep ? `DRAW! EVERYBODY KEEPS THEIRS — ${line} 🪙` : `DRAW! ${line} 🪙`)
+            : (keep ? `${_nameOf(winner)} WINS! EVERYBODY KEEPS THEIR COINS — ${line}` : `${_nameOf(winner)} WINS! ${line} 🪙`);
     }
     sfx(winner < 0 ? 'land_bad' : 'mg_win');
     // Coin game: hand the manager every player's haul so they ALL bank it.
