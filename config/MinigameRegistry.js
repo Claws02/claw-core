@@ -596,7 +596,9 @@ export const MG_PROFILE = {
     // is a 34 px tile — under the 44 px the control law asks for. On a tablet
     // quarter the same grid is 68 px a side, so 3-4 seats is a tablet game.
     oddoneout:   { genre: 'brain',    control: 'tap',   wire: 'none',     seats: [2, 4], live: true, roomy: true },
-    turfwar:     { genre: 'push',     control: 'thumb', wire: 'snapshot', seats: [2, 4], live: false },
+    // Not roomy: one yard, four colours fighting over it; anybody else's wet
+    // paint slows you.
+    turfwar:     { genre: 'push',     control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     lilypad:     { genre: 'push',     control: 'thumb', wire: 'events',   seats: [2, 4], live: false },
     rooftop:     { genre: 'race',     control: 'tap',   wire: 'events',   seats: [2, 2], live: false },
     blockparty:  { genre: 'reflex',   control: 'thumb', wire: 'events',   seats: [2, 2], live: false },

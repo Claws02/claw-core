@@ -14,15 +14,19 @@
 //     round you in your colour.
 //
 // Bumping shoves you both apart. The clock is fixed: MATCH_TIME.
+//
+// LIVE (MG_PROFILE.live): two, three or four rollers in one yard. Anybody
+// else's wet paint is slippery; the most of the yard in your colour wins.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const COLS = 10, ROWS = 18, TILE = 1;
@@ -39,7 +43,7 @@ const NEUTRAL = 0x5f646b;
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _figs = [], _owner = null, _tiles = null, _bombs = [], _bot = [];
+let _n = 2, _figs = [], _owner = null, _tiles = null, _bombs = [], _bot = [];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _nextBomb = 0;
 let _dirOwns = false;
 const _tmpColor = typeof THREE !== 'undefined' ? new THREE.Color() : null;
@@ -47,9 +51,10 @@ const _tmpColor = typeof THREE !== 'undefined' ? new THREE.Color() : null;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
+    _n = Math.max(2, Math.min(4, slotCount()));
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _nextBomb = 3; _bombs = [];
     _owner = new Int8Array(COLS * ROWS).fill(-1);
-    _bot = [0, 1].map(() => ({ plan: 0, tx: 0, tz: 0 }));
+    _bot = Array.from({ length: _n }, () => ({ plan: 0, tx: 0, tz: 0 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -66,12 +71,12 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _set = STAGE_SETS.ind(_stage, { w: W, d: D });
         _buildTiles();
     }
-    _figs = [0, 1].map(_buildFig);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO RUN · PAINT THE YARD'));
+    _figs = Array.from({ length: _n }, (_, slot) => _buildFig(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO RUN · PAINT THE YARD');
 
     _dir.open({
         place: 'INDUSTRIAL ZONE · THE PAINT WORKS', title: 'TURF WAR',
-        sub: 'PAINT THE MOST GROUND',
+        sub: _n > 2 ? `${_n} ROLLERS · PAINT THE MOST GROUND` : 'PAINT THE MOST GROUND',
         from: { pos: [6, 8, 16], look: [0, 0, 2] },
         to: overheadCam(_stage, W, D, 8),
         onDone: () => { if (!_done) _enter('ready'); },
@@ -85,7 +90,7 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _figs = []; _bombs = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null; _tiles = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
 // ── The yard ─────────────────────────────────────────────────────────────────
 const _tileAt = (x, z) => {
@@ -118,15 +123,22 @@ function _paint(i, slot) {
     return true;
 }
 
+// Somebody else's paint: wet, slippery, and slower to roll over.
+const _theirs = (i, slot) => i >= 0 && _owner[i] >= 0 && _owner[i] !== slot;
+
 function _count() {
-    const n = [0, 0];
+    const n = new Array(_n).fill(0);
     for (let i = 0; i < _owner.length; i++) if (_owner[i] >= 0) n[_owner[i]]++;
     return n;
 }
 
 // ── Figures ──────────────────────────────────────────────────────────────────
 function _buildFig(slot) {
-    const f = { slot, x: 0, z: (slot === 0 ? 1 : -1) * (D / 2 - 1.5), face: slot === 0 ? Math.PI : 0, vx: 0, vz: 0 };
+    // At their own end, under their zone: the middle of each end at two, the
+    // corners at four.
+    const near = seatEdge(slot) === 'bottom';
+    const span = _n > 2 ? seatRing(_n)[slot].span : [0, 1];
+    const f = { slot, x: ((span[0] + span[1]) / 2 - 0.5) * W, z: (near ? 1 : -1) * (D / 2 - 1.5), face: near ? Math.PI : 0, vx: 0, vz: 0 };
     if (_stage.gl) {
         const c = _stage.character(slot);
         c.rig.root.scale.setScalar(FIG_SCALE);
@@ -147,7 +159,7 @@ function _buildFig(slot) {
 
 // ── Bot (§5) ─────────────────────────────────────────────────────────────────
 // Heads for the richest nearby patch of tiles that are not yet its colour —
-// the rival's count double, a bomb counts most — and re-plans on a delay.
+// anybody else's count double, a bomb counts most — and re-plans on a delay.
 function _botMove(slot, dt) {
     const f = _figs[slot], b = _bot[slot];
     b.plan -= dt;
@@ -161,7 +173,7 @@ function _botMove(slot, dt) {
             let v = 0;
             for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
                 const j = _tileAt(p.x + dx, p.z + dz);
-                if (j >= 0 && _owner[j] !== slot) v += _owner[j] === 1 - slot ? 2 : 1;
+                if (j >= 0 && _owner[j] !== slot) v += _theirs(j, slot) ? 2 : 1;
             }
             const score = v - d * (0.5 + _botSkill * 0.4);
             if (score > best) { best = score; b.tx = p.x; b.tz = p.z; }
@@ -241,7 +253,7 @@ function _frame(dt) {
             // instant you touched it meant you were never on their colour for
             // a whole frame, and the slowdown never happened.
             const here = _tileAt(f.x, f.z);
-            const theirs = _owner[here] === 1 - f.slot;
+            const theirs = _theirs(here, f.slot);
             if (here !== f.tile) { f.tile = here; f.scrub = 0; }
             const sp = SPEED * (theirs ? SLICK : 1);
             f.vx = m > 0.12 ? mv.dx * sp : 0; f.vz = m > 0.12 ? mv.dz * sp : 0;
@@ -259,15 +271,17 @@ function _frame(dt) {
             const px = Math.cos(f.face) * 0.5, pz = -Math.sin(f.face) * 0.5;
             if (f.moving) {
                 [_tileAt(f.x + px, f.z + pz), _tileAt(f.x - px, f.z - pz)].forEach(i => {
-                    if (_owner[i] !== 1 - f.slot || f.scrub >= SCRUB) _paint(i, f.slot);
+                    if (!_theirs(i, f.slot) || f.scrub >= SCRUB) _paint(i, f.slot);
                 });
             }
         });
-        const [a, b] = _figs;
-        const dx = a.x - b.x, dz = a.z - b.z, d = Math.hypot(dx, dz);
-        if (d < BODY * 2 && d > 1e-4) {
-            const push = (BODY * 2 - d) / 2 + 0.05;
-            a.x += dx / d * push; a.z += dz / d * push; b.x -= dx / d * push; b.z -= dz / d * push;
+        for (let i = 0; i < _figs.length; i++) for (let j = i + 1; j < _figs.length; j++) {
+            const a = _figs[i], b = _figs[j];
+            const dx = a.x - b.x, dz = a.z - b.z, d = Math.hypot(dx, dz);
+            if (d < BODY * 2 && d > 1e-4) {
+                const push = (BODY * 2 - d) / 2 + 0.05;
+                a.x += dx / d * push; a.z += dz / d * push; b.x -= dx / d * push; b.z -= dz / d * push;
+            }
         }
         for (let i = _bombs.length - 1; i >= 0; i--) {
             const bm = _bombs[i];
@@ -303,28 +317,35 @@ function _renderHud() {
     if (!_hud) return;
     const n = _count(), tot = COLS * ROWS;
     const left = Math.max(0, Math.ceil(MATCH_TIME - _clock));
-    [0, 1].forEach(slot => {
-        _hud.line(slot, `🎨 YOU ${Math.round(n[slot] / tot * 100)}% · ${left}s · THEM ${Math.round(n[1 - slot] / tot * 100)}%`);
+    const pc = k => Math.round(n[k] / tot * 100);
+    for (let slot = 0; slot < _n; slot++) {
+        _hud.line(slot, _n > 2 ? `🎨 ${pc(slot)}% · ${left}s` : `🎨 YOU ${pc(slot)}% · ${left}s · THEM ${pc(1 - slot)}%`);
         if (_clock > 6) _hud.hint(slot, '');
-    });
+    }
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `${left}s · ${seat(0).name} ${Math.round(n[0] / tot * 100)}% – ${Math.round(n[1] / tot * 100)}% ${seat(1).name}`;
+    if (el && _phase === 'play') {
+        // Four names don't fit the strip; the leader does.
+        const top = Math.max(...n), lead = n.indexOf(top);
+        el.textContent = _n > 2 ? `${left}s · ${top && n.filter(v => v === top).length === 1 ? `${seat(lead).name} LEADS · ${pc(lead)}%` : 'NECK AND NECK'}`
+                                : `${left}s · ${seat(0).name} ${pc(0)}% – ${pc(1)}% ${seat(1).name}`;
+    }
 }
 
 function _end() {
     _phase = 'over';
     _hud.say('');
     const n = _count();
-    const w = n[0] > n[1] ? 0 : n[1] > n[0] ? 1 : -1;
+    const top = Math.max(...n), lead = n.reduce((a, v, i) => (v === top ? a.concat(i) : a), []);
+    const w = lead.length === 1 ? lead[0] : -1;
     const tot = COLS * ROWS;
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? 'HALF THE YARD EACH' : `${Math.round(n[w] / tot * 100)}% OF THE YARD`,
+        sub: w < 0 ? (_n === 2 ? 'HALF THE YARD EACH' : 'A DEAD HEAT') : `${Math.round(n[w] / tot * 100)}% OF THE YARD`,
         closeUp: (f, p) => {
-            const end = f.slot === 0 ? 1 : -1;
+            const end = seatEdge(f.slot) === 'bottom' ? 1 : -1;
             return { pos: [p.x + 1.4, p.y + 6.5, p.z + end * 6], look: [p.x, p.y + 0.8, p.z] };
         },
-        onDone: () => _finish(w),
+        onDone: () => _finish(w, n),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -332,7 +353,7 @@ function _end() {
 
 // For probes.
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2), count: _owner ? _count() : [0, 0], bombs: _bombs.length,
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2), count: _owner ? _count() : new Array(_n).fill(0), bombs: _bombs.length,
              pos: _figs.map(f => [+f.x.toFixed(2), +f.z.toFixed(2)]), gl: !!_stage?.gl, turned: !!_stage?.turned,
              under: _figs.map(f => _owner ? _owner[_tileAt(f.x, f.z)] : -1) };
 }
