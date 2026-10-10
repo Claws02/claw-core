@@ -626,7 +626,9 @@ export const MG_PROFILE = {
     sackrace: { genre: 'race', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
     snowball: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     pancakes: { genre: 'aim', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
-    shellgame: { genre: 'brain', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one table everybody watches; a seat needs only its three buttons,
+    // read from its own end. Picks stay secret until everybody is in.
+    shellgame: { genre: 'brain', control: 'tap', wire: 'snapshot', seats: [2, 4], live: true },
     // A shared tower taken in turns: a third or fourth player is one more
     // name in the rotation, not another playfield, so it is live at 2-4 on a
     // phone. 'snapshot': the collapse is physics and cannot replay from taps.
