@@ -22,15 +22,19 @@
 //   (a tunnel, a pipe) and the roundabout, which carries you round.
 // You can only tag somebody at about your own height: up on a deck is safe
 // from IT on the ground, until IT climbs up after you.
+//
+// LIVE (MG_PROFILE.live): two, three or four on one phone. IT can tag anybody
+// in reach; the least time as IT wins, at any count.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const W = 11, D = 16;
@@ -94,18 +98,19 @@ let _forceMap = null;
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _map = null, _mapKey = '', _figs = [], _it = 0, _bot = [], _ring = null, _roundMesh = null, _roofs = [];
+let _n = 2, _map = null, _mapKey = '', _figs = [], _it = 0, _bot = [], _ring = null, _roundMesh = null, _roofs = [];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _tags = 0, _itTime = [0, 0];
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _tags = 0; _itTime = [0, 0]; _roofs = []; _roundMesh = null;
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _tags = 0; _itTime = new Array(_n).fill(0); _roofs = []; _roundMesh = null;
     _mapKey = _forceMap && MAPS[_forceMap] ? _forceMap : MAP_KEYS[(Math.random() * MAP_KEYS.length) | 0];
     _map = MAPS[_mapKey];
     _grid = null;
-    _it = Math.random() < 0.5 ? 0 : 1;
-    _bot = [0, 1].map(() => ({ think: 0, tx: 0, tz: 0 }));
+    _it = _n === 2 ? (Math.random() < 0.5 ? 0 : 1) : (Math.random() * _n) | 0;
+    _bot = Array.from({ length: _n }, () => ({ think: 0, tx: 0, tz: 0 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -123,8 +128,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
         else _buildSurround();
         _buildMap();
     }
-    _figs = [0, 1].map(_buildFig);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO RUN · CLIMB UP · TAKE THE SLIDE'));
+    _figs = Array.from({ length: _n }, (_, slot) => _buildFig(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'DRAG TO RUN · CLIMB · SLIDE' : 'DRAG TO RUN · CLIMB UP · TAKE THE SLIDE');
 
     _dir.open({
         place: _map.place, title: 'TAG, YOU’RE IT!',
@@ -142,7 +147,7 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _figs = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null; _ring = null; _roundMesh = null; _roofs = [];
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
 // ── Geometry ─────────────────────────────────────────────────────────────────
 const _inRect = (r, x, z, pad = 0) => Math.abs(x - r.x) <= r.hw + pad && Math.abs(z - r.z) <= r.hd + pad;
@@ -381,8 +386,12 @@ function _buildMap() {
 }
 
 function _buildFig(slot) {
-    const f = { slot, x: slot === 0 ? 1.2 : -1.2, z: (slot === 0 ? 1 : -1) * (D / 2 - 1.6), y: 0, on: null, sliding: false, burst: 0, bx: 0, bz: 0,
-                face: slot === 0 ? Math.PI : 0, moving: false, hidden: false, frozen: 0, immune: 0, vx: 0, vz: 0 };
+    // Each runner starts at their own end, under their zone: at two, a little off
+    // the middle of each end, as it shipped; at three or four, under each corner.
+    const near = seatEdge(slot) === 'bottom';
+    const x = _n === 2 ? (slot === 0 ? 1.2 : -1.2) : ((seatRing(_n)[slot].span[0] + seatRing(_n)[slot].span[1]) / 2 - 0.5) * W * 0.8;
+    const f = { slot, x, z: (near ? 1 : -1) * (D / 2 - 1.6), y: 0, on: null, sliding: false, burst: 0, bx: 0, bz: 0,
+                face: near ? Math.PI : 0, moving: false, hidden: false, frozen: 0, immune: 0, vx: 0, vz: 0 };
     _pushOut(f, _groundBlocks());
     if (_stage.gl) {
         const c = _stage.character(slot);
@@ -398,9 +407,19 @@ function _buildFig(slot) {
 // IT chases where the other is heading (a better bot leads further), and goes
 // up the ladder after somebody on a deck. The runner looks round for the
 // direction that keeps it furthest from IT, and a good one takes to a deck or
-// a slide when IT is close.
+// a slide when IT is close. With more than one runner, IT goes after the
+// nearest one it can actually reach (on its own level counts double).
 function _botMove(slot, dt) {
-    const me = _figs[slot], them = _figs[1 - slot], b = _bot[slot];
+    const me = _figs[slot], b = _bot[slot];
+    let them = _figs[_it];
+    if (_it === slot) {
+        let bd = Infinity;
+        _figs.forEach(o => {
+            if (o === me) return;
+            const d = Math.hypot(o.x - me.x, o.z - me.z) * (Math.abs(o.y - me.y) < REACH_Y ? 1 : 2);
+            if (d < bd) { bd = d; them = o; }
+        });
+    }
     b.think -= dt;
     if (b.think <= 0) {
         b.think = 0.35 - _botSkill * 0.2 + Math.random() * 0.15;
@@ -532,13 +551,25 @@ function _frame(dt) {
             }
             f.hidden = _inHide(f);
         });
-        const [a, b] = _figs, d = Math.hypot(a.x - b.x, a.z - b.z), level = Math.abs(a.y - b.y) < REACH_Y;
-        const itF = _figs[_it], runner = _figs[1 - _it];
-        if (d < BODY * 2 + 0.1 && level && itF.frozen <= 0 && itF.immune <= 0) _tag(itF, runner);
-        else if (d < BODY * 2 && d > 1e-4 && level && !a.on && !b.on) {
-            const push = (BODY * 2 - d) / 2;
-            const nx = (a.x - b.x) / d, nz = (a.z - b.z) / d;
-            a.x += nx * push; a.z += nz * push; b.x -= nx * push; b.z -= nz * push;
+        // IT tags the nearest runner in reach (one tag a frame); everybody
+        // else just bumps.
+        const itF = _figs[_it];
+        let tagged = null, td = Infinity;
+        if (itF.frozen <= 0 && itF.immune <= 0) _figs.forEach(r => {
+            if (r === itF) return;
+            const d = Math.hypot(itF.x - r.x, itF.z - r.z);
+            if (d < BODY * 2 + 0.1 && Math.abs(itF.y - r.y) < REACH_Y && d < td) { td = d; tagged = r; }
+        });
+        if (tagged) _tag(itF, tagged);
+        for (let i = 0; i < _figs.length; i++) for (let j = i + 1; j < _figs.length; j++) {
+            const a = _figs[i], b = _figs[j];
+            if (tagged && (a === itF || b === itF) && (a === tagged || b === tagged)) continue;
+            const d = Math.hypot(a.x - b.x, a.z - b.z);
+            if (d < BODY * 2 && d > 1e-4 && Math.abs(a.y - b.y) < REACH_Y && !a.on && !b.on) {
+                const push = (BODY * 2 - d) / 2;
+                const nx = (a.x - b.x) / d, nz = (a.z - b.z) / d;
+                a.x += nx * push; a.z += nz * push; b.x -= nx * push; b.z -= nz * push;
+            }
         }
         if (MATCH_TIME - _clock < 5.05 && MATCH_TIME - _clock > 4.95) _hud.say('5 SECONDS!', `${seat(_it).name} IS IT`, 900, _t, '#facc15');
         if (_clock >= MATCH_TIME) _end();
@@ -578,11 +609,13 @@ function _frame(dt) {
 function _renderHud() {
     if (!_hud) return;
     const left = Math.max(0, Math.ceil(MATCH_TIME - _clock));
-    [0, 1].forEach(slot => {
+    for (let slot = 0; slot < _n; slot++) {
         const me = _figs[slot];
-        _hud.line(slot, `${_it === slot ? '🟡 YOU’RE IT' : '🏃 RUN'} · IT ${_itTime[slot].toFixed(1)}s vs ${_itTime[1 - slot].toFixed(1)}s · ${left}s${me?.frozen > 0 ? ' · FROZEN' : ''}`);
+        _hud.line(slot, _n > 2
+            ? `${_it === slot ? '🟡 IT' : '🏃 RUN'} · ${_itTime[slot].toFixed(1)}s · ${left}s${me?.frozen > 0 ? ' · FROZEN' : ''}`
+            : `${_it === slot ? '🟡 YOU’RE IT' : '🏃 RUN'} · IT ${_itTime[slot].toFixed(1)}s vs ${_itTime[1 - slot].toFixed(1)}s · ${left}s${me?.frozen > 0 ? ' · FROZEN' : ''}`);
         if (_clock > 6) _hud.hint(slot, '');
-    });
+    }
     const el = document.getElementById('mg-neutral');
     if (el && _phase === 'play') el.textContent = `${left}s · ${seat(_it).name} IS IT`;
 }
@@ -592,15 +625,19 @@ function _end() {
     _phase = 'over';
     _hud.say('');
     sfx('whistle');
-    // Least time as IT wins; within a tenth of a second is a dead heat.
-    const [t0, t1] = _itTime;
-    const w = Math.abs(t0 - t1) < 0.1 ? -1 : t0 < t1 ? 0 : 1;
+    // Least time as IT wins; two within a tenth of a second of the least is a
+    // dead heat.
+    const least = Math.min(..._itTime);
+    const best = _itTime.reduce((a, t, i) => (t - least < 0.1 ? a.concat(i) : a), []);
+    const w = best.length === 1 ? best[0] : -1;
+    const next = w < 0 ? least : Math.min(..._itTime.filter((_, i) => i !== w));
     _figs.forEach(f => { f.sliding = false; });
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? `BOTH IT FOR ${t0.toFixed(1)}s` : `IT FOR ${_itTime[w].toFixed(1)}s TO ${_itTime[1 - w].toFixed(1)}s`,
-        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 8.5 * FIG_SCALE, p.z + (f.slot === 0 ? 1 : -1) * 8 * FIG_SCALE], look: [p.x, p.y + 0.8, p.z] }),
-        onDone: () => _finish(w),
+        sub: w < 0 ? `${best.length === _n && _n === 2 ? 'BOTH' : 'TIED,'} IT FOR ${least.toFixed(1)}s` : `IT FOR ${_itTime[w].toFixed(1)}s TO ${next.toFixed(1)}s`,
+        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 8.5 * FIG_SCALE, p.z + (seatEdge(f.slot) === 'bottom' ? 1 : -1) * 8 * FIG_SCALE], look: [p.x, p.y + 0.8, p.z] }),
+        // Standings: less time as IT ranks higher.
+        onDone: () => _finish(w, _itTime.map(t => -t)),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -608,7 +645,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2), it: _it, tags: _tags, map: _mapKey, itTime: _itTime.map(t => +t.toFixed(2)),
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2), it: _it, tags: _tags, map: _mapKey, itTime: _itTime.map(t => +t.toFixed(2)),
              figs: _figs.map(f => ({ x: +f.x.toFixed(2), z: +f.z.toFixed(2), y: +f.y.toFixed(2), on: f.on ? (f.on.id || f.on.kind) : null,
                                      sliding: f.sliding, frozen: +f.frozen.toFixed(2), hidden: f.hidden })),
              decks: _map.decks.map(d => ({ id: d.id, x: d.x, z: d.z, h: d.h })),
@@ -623,6 +660,6 @@ export function _debugPlace(slot, x, z) { const f = _figs[slot]; if (f) Object.a
 export function _debugOnDeck(slot, id) { const f = _figs[slot], d = _deck(id); if (f && d) Object.assign(f, { x: d.x, z: d.z, y: d.h, on: d, sliding: false, vx: 0, vz: 0 }); }
 export function _debugIt(slot) { _it = slot; _figs.forEach(f => { f.frozen = 0; f.immune = 0; }); }
 export function _debugClock(t) { _clock = t; }
-export function _debugItTime(a, b) { _itTime = [a, b]; }
+export function _debugItTime(...t) { t.forEach((v, i) => { if (i < _itTime.length) _itTime[i] = v; }); }
 /** Probes: the map the NEXT start() builds (null = random). */
 export function _debugForceMap(key) { _forceMap = key; }
