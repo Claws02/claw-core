@@ -12,7 +12,10 @@
 //                              message drawn twice, back to back
 //   sideHud(stage)             a score bar across the top, a pad per player at
 //                              the bottom of their own half, one big message
-//   touch(stage, opts)         per-seat pointer state on that seat's half:
+//   seatEdge(slot)             'bottom' or 'top': which end of the table a seat
+//                              sits at, at any seat count
+//   touch(stage, opts)         per-seat pointer state on that seat's half (or,
+//                              at three or four seats, its corner zone):
 //                              drag vector, hold time, and tap / release
 //                              callbacks. Screen space, in the stage frame.
 //   effects(stage)             bursts, puffs and debris that clean themselves up
@@ -21,7 +24,21 @@
 // ============================================================
 
 import { state } from '../../AppHost.js';
-import { isBotSlot, seatFor } from '../minigames/MinigameManager.js';
+import { isBotSlot, seatFor, slotCount } from '../minigames/MinigameManager.js';
+import { zonesFor, seatRing } from '../config/MinigameLayout.js';
+
+// How many seats the round has: 2 unless the manager has seated more. At two,
+// everything below is the face-off exactly as it shipped; at three and four the
+// seats take the zone layout's ring (MinigameLayout.zonesFor), corners at four.
+const _seatN = () => Math.max(2, Math.min(4, slotCount() || 2));
+const _zones = stage => zonesFor(_seatN(), stage.width, stage.height);
+
+/** Which edge a seat sits at: 'bottom' (reads upright) or 'top' (turned). */
+export function seatEdge(slot) {
+    const n = _seatN();
+    if (n <= 2) return slot === 1 ? 'top' : 'bottom';
+    return seatRing(n)[slot]?.edge || 'bottom';
+}
 
 export function seat(slot) {
     const p = state.players[seatFor(slot)] || {};
@@ -42,6 +59,7 @@ function _pop(el, on) {
 
 /** A strip at each player's end and a message drawn for both. */
 export function faceoffHud(stage, { bg = 'rgba(12,10,20,.72)' } = {}) {
+    if (_seatN() > 2) return _ringHud(stage, bg);
     const root = stage.hud;
     root.classList.add('bfont');
     const halves = [0, 1].map(slot => {
@@ -70,6 +88,69 @@ export function faceoffHud(stage, { bg = 'rgba(12,10,20,.72)' } = {}) {
     return {
         line(slot, text) { halves[slot].line.textContent = text; },
         hint(slot, text) { halves[slot].hint.textContent = text; halves[slot].hint.style.display = text ? '' : 'none'; },
+        say(msg, sub = '', ms = 0, now = 0, color = '') {
+            halves.forEach(h => {
+                h.big.textContent = msg; h.sub.textContent = sub; h.big.style.color = color;
+                h.box.style.opacity = msg ? '1' : '0';
+                _pop(h.big, !!msg);
+            });
+            clearAt = ms ? now + ms / 1000 : 0;
+        },
+        tick(now) { if (clearAt && now > clearAt) { clearAt = 0; this.say(''); } },
+    };
+}
+
+/**
+ * faceoffHud at three or four seats: a strip in each seat's own zone, at its
+ * outer edge and turned with it, and the big message still drawn twice, back
+ * to back, once for each end of the table.
+ */
+function _ringHud(stage, bg) {
+    const root = stage.hud;
+    root.classList.add('bfont');
+    const n = _seatN();
+    const strips = Array.from({ length: n }, (_, slot) => {
+        const s = seat(slot);
+        const box = document.createElement('div');
+        box.style.cssText = 'position:absolute;pointer-events:none;';
+        const strip = document.createElement('div');
+        strip.style.cssText = 'position:absolute;left:50%;bottom:6px;transform:translateX(-50%);padding:2px 9px;max-width:calc(100% - 10px);' +
+            `box-sizing:border-box;border-radius:12px;background:${bg};border:2px solid ${s.css};white-space:nowrap;overflow:hidden;` +
+            'text-overflow:ellipsis;text-align:center;' + TXT;
+        const line = document.createElement('div'); line.style.cssText = 'font-size:13px;overflow:hidden;text-overflow:ellipsis;';
+        const hint = document.createElement('div'); hint.style.cssText = 'font-size:10px;opacity:.9;overflow:hidden;text-overflow:ellipsis;';
+        strip.append(line, hint);
+        box.appendChild(strip);
+        root.appendChild(box);
+        return { box, line, hint };
+    });
+    const layout = () => {
+        _zones(stage).forEach((z, slot) => {
+            const b = strips[slot]?.box; if (!b) return;
+            const r = z.rect;
+            b.style.left = r.x + 'px'; b.style.top = r.y + 'px'; b.style.width = r.w + 'px'; b.style.height = r.h + 'px';
+            b.style.transform = z.rot === 180 ? 'rotate(180deg)' : '';
+        });
+    };
+    stage.onResize(layout);
+    const halves = [0, 1].map(k => {
+        const half = document.createElement('div');
+        half.style.cssText = 'position:absolute;left:0;right:0;height:50%;pointer-events:none;' +
+            (k === 0 ? 'bottom:0;' : 'top:0;transform:rotate(180deg);');
+        const box = document.createElement('div');
+        box.style.cssText = 'position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);text-align:center;' +
+            'opacity:0;transition:opacity .2s;white-space:nowrap;' + TXT;
+        const big = document.createElement('div'); big.style.cssText = 'font-size:40px;display:inline-block;';
+        const sub = document.createElement('div'); sub.style.fontSize = '14px';
+        box.append(big, sub);
+        half.appendChild(box);
+        root.appendChild(half);
+        return { box, big, sub };
+    });
+    let clearAt = 0;
+    return {
+        line(slot, text) { if (strips[slot]) strips[slot].line.textContent = text; },
+        hint(slot, text) { const h = strips[slot]?.hint; if (h) { h.textContent = text; h.style.display = text ? '' : 'none'; } },
         say(msg, sub = '', ms = 0, now = 0, color = '') {
             halves.forEach(h => {
                 h.big.textContent = msg; h.sub.textContent = sub; h.big.style.color = color;
@@ -163,8 +244,22 @@ export function uprightHud(stage) {
  */
 export function touch(stage, { split = 'y', stick = 55, tapPx = 12, tapMs = 220, floating = true,
                                onDown, onTap, onRelease } = {}) {
-    const seats = [0, 1].map(() => ({ pid: null, ax: 0, ay: 0, t0: 0, dx: 0, dy: 0, moved: false, down: false, held: 0 }));
-    const slotAt = p => (split === 'y' ? (p.y >= stage.height / 2 ? 0 : 1) : (p.x >= stage.width / 2 ? 0 : 1));
+    // At three or four seats on the face-off hold, a touch belongs to the seat
+    // whose zone it lands in (nearest zone, for the reserved bands at the ends).
+    const n = split === 'y' ? _seatN() : 2;
+    const seats = Array.from({ length: n }, () => ({ pid: null, ax: 0, ay: 0, t0: 0, dx: 0, dy: 0, moved: false, down: false, held: 0 }));
+    const ringSlot = p => {
+        let best = 0, bd = Infinity;
+        _zones(stage).forEach((z, i) => {
+            const r = z.rect;
+            const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.w)), dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.h));
+            const d = Math.hypot(dx, dy);
+            if (d < bd) { bd = d; best = i; }
+        });
+        return best;
+    };
+    const slotAt = p => (n > 2 ? ringSlot(p)
+        : split === 'y' ? (p.y >= stage.height / 2 ? 0 : 1) : (p.x >= stage.width / 2 ? 0 : 1));
     stage.listen('pointerdown', e => {
         e.preventDefault();
         const p = stage.toLocal(e.clientX, e.clientY);

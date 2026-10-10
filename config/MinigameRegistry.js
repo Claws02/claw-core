@@ -602,7 +602,10 @@ export const MG_PROFILE = {
     blockparty:  { genre: 'reflex',   control: 'thumb', wire: 'events',   seats: [2, 2], live: false },
     riftdive:    { genre: 'race',     control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     balloonpump: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
-    musicalchairs: { genre: 'reflex', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: the ring of chairs is one scene everybody reads from above, and
+    // a seat only needs somewhere to put a thumb. At 3-4 the music plays on
+    // until one player is left; the order you went out in is the standings.
+    musicalchairs: { genre: 'reflex', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     bumpercars: { genre: 'push', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     kartgp: { genre: 'race', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     redlight: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
