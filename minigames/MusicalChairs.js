@@ -2,15 +2,21 @@
 // MUSICAL CHAIRS — round the chairs in the fountain park.
 // (Scaffolded from _template3d.js; see docs/MINIGAME_3D_PLAYBOOK.md.)
 //
-// Face-off hold, seen from above. Both players' characters and three park-goers
-// circle a ring of chairs while the band plays: five walkers, four chairs.
+// Face-off hold, seen from above. Every player's character and enough park-goers
+// to make five walkers circle a ring of chairs while the band plays: five
+// walkers, four chairs. (Two players walk with three park-goers; four players
+// with one.)
 //
 //   When the music STOPS, DRAG on your half to run for a chair. Reach a free
 //   one and you sit.
 //
-// Whoever is left standing is out, and a chair goes. The first player out
-// loses. Outlast the park-goers and the last round is the two of you and one
-// chair.
+// Whoever is left standing is out, and a chair goes. At two, the first player
+// out loses. At three or four the music keeps going until one player is left,
+// and the order you went out in is the standings. Outlast everybody and the
+// last round is two of you and one chair.
+//
+// LIVE (MG_PROFILE.live): two, three or four players on one phone. Each seat
+// drags in its own zone (StageKit.touch takes the zone layout at 3-4).
 //
 // Fake-outs: the music dips and the lanterns flicker, but the walking goes on.
 // Running before the real stop is a false start: frozen for a moment. The
@@ -20,15 +26,15 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic, mgMusic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const W = 10, D = 13;               // the lawn the camera frames
-const NPCS = 3;                    // park-goers; chairs start at walkers − 1
+const WALKERS = 5;                 // players + park-goers; chairs start at walkers − 1
 const RC = 2.1;                    // chair ring radius
 const RW = 3.8;                    // walking circle radius
 const OMEGA = 0.6;                 // rad/s round the circle
@@ -48,13 +54,14 @@ const NPC_COLS = [0x9ca3af, 0xd6b98c, 0x8fb3c9];
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _walkers = [], _chairs = [], _dips = [], _out = null;
+let _n = 2, _walkers = [], _chairs = [], _dips = [], _outOrder = [];
 let _phase = 'intro', _sub = '', _subT = 0, _t = 0, _round = 0, _musicLen = 5, _flicker = 0;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _round = 0; _out = null; _dips = []; _flicker = 0;
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _round = 0; _outOrder = []; _dips = []; _flicker = 0;
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -70,13 +77,14 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _stage.camera.up.set(0, 0, -1);
         _set = STAGE_SETS.ring(_stage, { w: W, d: D });
     }
-    // Players first (slots 0, 1), then the park-goers.
-    const n = 2 + NPCS;
+    // Players first (slots 0..n-1), then the park-goers. At two the circle is
+    // the one that shipped: P2 half a step round from P1's opposite.
+    const n = Math.max(WALKERS, _n + 1);
     _walkers = [];
-    for (let i = 0; i < n; i++) _walkers.push(_buildWalker(i, i < 2 ? i : -1, (i / n) * Math.PI * 2 + (i === 1 ? Math.PI / n : 0)));
+    for (let i = 0; i < n; i++) _walkers.push(_buildWalker(i, i < _n ? i : -1, (i / n) * Math.PI * 2 + (_n === 2 && i === 1 ? Math.PI / n : 0)));
     _chairs = [];
     for (let i = 0; i < n - 1; i++) _chairs.push(_buildChair((i / (n - 1)) * Math.PI * 2));
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'WHEN THE MUSIC STOPS · DRAG TO A CHAIR'));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'MUSIC STOPS · DRAG TO A CHAIR' : 'WHEN THE MUSIC STOPS · DRAG TO A CHAIR');
 
     _dir.open({
         place: 'CITY RING ROAD · THE FOUNTAIN PARK', title: 'MUSICAL CHAIRS',
@@ -95,14 +103,14 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _walkers = []; _chairs = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
 // ── Walkers and chairs ───────────────────────────────────────────────────────
 function _buildWalker(i, slot, theta) {
     const w = { i, slot, human: slot >= 0, theta, x: Math.cos(theta) * RW, z: Math.sin(theta) * RW,
                 face: 0, seated: -1, out: false, frozen: 0, react: 0, tx: 0, tz: 0, moving: false };
     if (!_stage.gl) return w;
-    const c = slot >= 0 ? _stage.character(slot) : _stage.figure(NPC_TYPES[(i * 2) % NPC_TYPES.length], NPC_COLS[(i - 2) % NPC_COLS.length]);
+    const c = slot >= 0 ? _stage.character(slot) : _stage.figure(NPC_TYPES[(i * 2) % NPC_TYPES.length], NPC_COLS[(i - _n) % NPC_COLS.length]);
     c.rig.root.scale.setScalar(slot >= 0 ? FIG_SCALE : FIG_SCALE * 0.92);
     Object.assign(w, { rig: c.rig, anim: c.anim });
     return w;
@@ -184,11 +192,17 @@ function _eliminate(w) {
     w.anim?.play('defeat');
     _sub = 'result'; _subT = 0;
     if (w.human) {
-        _hud.say(`${seat(w.slot).name} IS OUT!`, '', RESULT * 1000, _t, seat(w.slot).css);
-        _out = w;
-        return;
+        _outOrder.push(w.slot);
+        // The round is over once one player is left standing in the game; at
+        // two that is the first player out, exactly as it shipped.
+        if (_humansIn() <= 1) {
+            _hud.say(`${seat(w.slot).name} IS OUT!`, '', RESULT * 1000, _t, seat(w.slot).css);
+            return;
+        }
+        _hud.say(`${seat(w.slot).name} IS OUT!`, 'ONE MORE CHAIR GOES', RESULT * 1000, _t, seat(w.slot).css);
+    } else {
+        _hud.say('A PARK-GOER IS OUT', 'ONE MORE CHAIR GOES', RESULT * 1000, _t);
     }
-    _hud.say('A PARK-GOER IS OUT', 'ONE MORE CHAIR GOES', RESULT * 1000, _t);
     // A chair goes: the one furthest from anyone, then the rest spread out.
     let far = 0, best = -1;
     _chairs.forEach((c, k) => { const d = Math.min(..._walkers.filter(q => !q.out).map(q => Math.hypot(q.x - Math.cos(c.a) * RC, q.z - Math.sin(c.a) * RC))); if (d > best) { best = d; far = k; } });
@@ -242,8 +256,7 @@ function _frame(dt) {
                 _eliminate(standing[0]);
             }
         } else if (_sub === 'result' && _subT >= RESULT) {
-            const humans = _walkers.filter(w => w.human);
-            if (_out) _end();
+            if (_humansIn() <= 1) _end();
             else if (live.length < 2) _end();
             else _nextRound();
         }
@@ -279,6 +292,8 @@ function _frame(dt) {
     }
     _renderHud();
 }
+
+const _humansIn = () => _walkers.filter(w => w.human && !w.out).length;
 
 function _nearestFree(w, free) {
     let best = null, d = Infinity;
@@ -323,12 +338,14 @@ function _scrambleMove(w, dt) {
 function _renderHud() {
     if (!_hud) return;
     const left = _walkers.filter(w => !w.out).length;
-    [0, 1].forEach(slot => {
+    for (let slot = 0; slot < _n; slot++) {
         const me = _walkers[slot];
         const st = me?.out ? 'OUT' : me?.seated >= 0 ? 'SEATED' : me?.frozen > 0 ? 'FROZEN!' : '';
-        _hud.line(slot, `🪑 ${_chairs.length} CHAIR${_chairs.length === 1 ? '' : 'S'} · ${left} WALKING${st ? ' · ' + st : ''}`);
+        // A corner zone is half as wide: the name and state, not the count.
+        _hud.line(slot, _n > 2 ? `${seat(slot).name}${st ? ' · ' + st : ''}`
+                               : `🪑 ${_chairs.length} CHAIR${_chairs.length === 1 ? '' : 'S'} · ${left} WALKING${st ? ' · ' + st : ''}`);
         if (_round > 1) _hud.hint(slot, '');
-    });
+    }
     const el = document.getElementById('mg-neutral');
     if (el && _phase === 'play') el.textContent = `ROUND ${_round} · ${_chairs.length} CHAIR${_chairs.length === 1 ? '' : 'S'}`;
 }
@@ -337,16 +354,17 @@ function _end() {
     _phase = 'over';
     mgMusic('stop');
     _hud.say('');
-    const humans = _walkers.slice(0, 2);
-    let w = -1;
-    if (_out) w = 1 - _out.slot;
-    else if (humans.filter(h => !h.out).length === 1) w = humans.find(h => !h.out).slot;
+    const humans = _walkers.slice(0, _n);
+    const still = humans.filter(h => !h.out);
+    const w = still.length === 1 ? still[0].slot : -1;
+    // Standings: still in beats out, and among those out, later beats earlier.
+    const rank = humans.map(h => (h.out ? _outOrder.indexOf(h.slot) : Number.MAX_SAFE_INTEGER));
     _dir.close({
         winner: w,
         figs: humans.filter(h => h.rig).map(h => ({ slot: h.slot, rig: h.rig, anim: h.anim })),
         sub: w < 0 ? 'NOBODY SAT' : 'NEVER LEFT STANDING',
-        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 8.5 * FIG_SCALE, p.z + (f.slot === 0 ? 1 : -1) * 8 * FIG_SCALE], look: [p.x, p.y + 0.8, p.z] }),
-        onDone: () => _finish(w),
+        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 8.5 * FIG_SCALE, p.z + (seatEdge(f.slot) === 'bottom' ? 1 : -1) * 8 * FIG_SCALE], look: [p.x, p.y + 0.8, p.z] }),
+        onDone: () => _finish(w, rank),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -354,10 +372,12 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, sub: _sub, round: _round, chairs: _chairs.length, musicLen: +_musicLen.toFixed(2),
+    return { phase: _phase, sub: _sub, round: _round, n: _n, chairs: _chairs.length, musicLen: +_musicLen.toFixed(2), outOrder: _outOrder.slice(),
              walkers: _walkers.map(w => ({ slot: w.slot, seated: w.seated, out: w.out, frozen: +Math.max(0, w.frozen).toFixed(2), x: +w.x.toFixed(2), z: +w.z.toFixed(2) })),
              gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
+/** Probes: keep this round's music playing until _debugStop(). */
+export function _debugHoldMusic() { if (_sub === 'walk') _musicLen = 1e9; }
 /** Probes: stop the music now. */
 export function _debugStop() { if (_sub === 'walk') _stop(); }
 /** Probes: stand a walker next to a chair (index into the free chairs). */
