@@ -376,6 +376,8 @@ export function _debugState() {
              walkers: _walkers.map(w => ({ slot: w.slot, seated: w.seated, out: w.out, frozen: +Math.max(0, w.frozen).toFixed(2), x: +w.x.toFixed(2), z: +w.z.toFixed(2) })),
              gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
+/** Probes: keep this round's music playing until _debugStop(). */
+export function _debugHoldMusic() { if (_sub === 'walk') _musicLen = 1e9; }
 /** Probes: stop the music now. */
 export function _debugStop() { if (_sub === 'walk') _stop(); }
 /** Probes: stand a walker next to a chair (index into the free chairs). */
