@@ -12,15 +12,20 @@
 // moment stunned, and a point to your rival. So the game is shoving them into
 // it without going in yourself. A gentle brush only bounces.
 // First to 3, or the most at the bell.
+//
+// LIVE (MG_PROFILE.live): two, three or four cars in one rink. At three or
+// four, a zap scores for whoever last bumped you (within BLAME s); drive into
+// the rail on your own and nobody scores. At two it is always your rival.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const W = 9, D = 14;               // the rink
@@ -34,19 +39,21 @@ const BOOST = 6.5, BOOST_CD = 3;
 const BOUNCE = 0.92;               // car-on-car restitution
 const ZAP_V = 2.2;                 // speed into the rail that zaps
 const STUN = 0.9, IMMUNE = 1.3;
+const BLAME = 3;                   // s a bump still counts as the shove that zapped you
 const FIG_SCALE = 0.72;
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _cars = [], _score = [0, 0], _bot = [], _posts = [];
+let _n = 2, _cars = [], _score = [0, 0], _bot = [], _posts = [];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _score = [0, 0];
-    _bot = [0, 1].map(() => ({ think: 0, tx: 0, tz: 0, boostWant: false }));
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _score = new Array(_n).fill(0);
+    _bot = Array.from({ length: _n }, () => ({ think: 0, tx: 0, tz: 0, boostWant: false }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -66,12 +73,12 @@ export function start(isBot, onWin, botSkill = 0.55) {
     // Two rubber posts: something to bounce off and to use as cover.
     _posts = [{ x: -W / 4, z: 0, r: 0.55 }, { x: W / 4, z: 0, r: 0.55 }];
     _posts.forEach(_buildPost);
-    _cars = [0, 1].map(_buildCar);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO DRIVE · TAP TO BOOST'));
+    _cars = Array.from({ length: _n }, (_, slot) => _buildCar(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO DRIVE · TAP TO BOOST');
 
     _dir.open({
         place: 'CITY RING ROAD · THE FAIR IN THE PARK', title: 'BUMPER CARS',
-        sub: 'SHOVE THEM INTO THE RAIL',
+        sub: _n > 2 ? `${_n} CARS · SHOVE THEM INTO THE RAIL` : 'SHOVE THEM INTO THE RAIL',
         from: { pos: [7, 6, 13], look: [0, 0, 0] },
         to: overheadCam(_stage, W, D, 7),
         onDone: () => { if (!_done) _enter('ready'); },
@@ -85,7 +92,7 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _cars = []; _posts = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
 // ── The rink ─────────────────────────────────────────────────────────────────
 let _railMats = [];
@@ -122,8 +129,12 @@ function _buildPost(p) {
 
 // ── Cars ─────────────────────────────────────────────────────────────────────
 function _buildCar(slot) {
-    const c = { slot, x: 0, z: (slot === 0 ? 1 : -1) * (D / 2 - 2), vx: 0, vz: 0, head: slot === 0 ? Math.PI : 0,
-                cd: 0, stun: 0, immune: 0, spin: 0 };
+    // Each car starts at its own driver's end of the rink, under their zone:
+    // at two, the middle of each end, as it shipped; at four, the corners.
+    const near = seatEdge(slot) === 'bottom';
+    const span = _n > 2 ? seatRing(_n)[slot].span : [0, 1];
+    const c = { slot, x: ((span[0] + span[1]) / 2 - 0.5) * W, z: (near ? 1 : -1) * (D / 2 - 2), vx: 0, vz: 0, head: near ? Math.PI : 0,
+                cd: 0, stun: 0, immune: 0, spin: 0, by: -1, byAt: -99 };
     if (!_stage.gl) return c;
     const col = seat(slot).color;
     const g = new THREE.Group();
@@ -165,7 +176,10 @@ function _boost(slot) {
 // Get round behind the rival, on the far side from their nearest rail, and
 // drive through them toward it. Keep off its own rail. Boost when lined up.
 function _botDrive(slot, dt) {
-    const me = _cars[slot], them = _cars[1 - slot], b = _bot[slot];
+    const me = _cars[slot], b = _bot[slot];
+    // The rival to go after: the nearest car that isn't spinning out.
+    let them = null, bd = Infinity;
+    _cars.forEach(o => { if (o === me) return; const d = Math.hypot(o.x - me.x, o.z - me.z) + (o.stun > 0 ? 6 : 0); if (d < bd) { bd = d; them = o; } });
     b.think -= dt;
     if (b.think <= 0) {
         b.think = 0.45 - _botSkill * 0.3 + Math.random() * 0.2;
@@ -205,9 +219,17 @@ function _enter(phase) {
     else if (phase === 'play') sfx('go');
 }
 
+// Who a zap scores for: at two, always the rival; at three or four, whoever
+// bumped this car last, if it was recent enough to be the shove that did it.
+function _blame(c) {
+    if (_n === 2) return 1 - c.slot;
+    return c.by >= 0 && _t - c.byAt <= BLAME ? c.by : -1;
+}
+
 function _zap(c) {
     c.stun = STUN; c.immune = IMMUNE; c.spin = 1;
-    _score[1 - c.slot]++;
+    const by = _blame(c);
+    if (by >= 0) _score[by]++;
     sfx('boom'); haptic([80]);
     _railMats.forEach(m => { m.emissiveIntensity = 1.4; });
     if (_stage?.gl) {
@@ -216,8 +238,9 @@ function _zap(c) {
         _fx.confetti(at, [0xfacc15, 0x7dd3fc, 0xffffff], 14, 3);
         c.anim.flinch?.();
     }
-    _hud.say('ZAP!', `${seat(1 - c.slot).name} +1`, 900, _t, seat(1 - c.slot).css);
-    if (_score[1 - c.slot] >= TARGET) _end();
+    if (by >= 0) _hud.say('ZAP!', `${seat(by).name} +1`, 900, _t, seat(by).css);
+    else _hud.say('ZAP!', `${seat(c.slot).name} DROVE IN`, 900, _t, seat(c.slot).css);
+    if (by >= 0 && _score[by] >= TARGET) _end();
 }
 
 function _frame(dt) {
@@ -266,25 +289,34 @@ function _frame(dt) {
                 if (vn < 0) { c.vx -= 1.8 * vn * nx; c.vz -= 1.8 * vn * nz; if (vn < -1) sfx('slam'); }
             });
         });
-        // Car on car: equal masses, bouncy.
-        const [a, b] = _cars, dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
-        if (d < R * 2 && d > 1e-4) {
-            const nx = dx / d, nz = dz / d, over = R * 2 - d;
-            a.x -= nx * over / 2; a.z -= nz * over / 2; b.x += nx * over / 2; b.z += nz * over / 2;
-            const rel = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
-            if (rel > 0) {
-                const j = (1 + BOUNCE) * rel / 2;
-                a.vx -= j * nx; a.vz -= j * nz; b.vx += j * nx; b.vz += j * nz;
-                if (rel > 1.2) {
-                    sfx('slam'); haptic([rel > 4 ? 45 : 20]);
-                    if (_stage?.gl && rel > 3) _fx.burst(new THREE.Vector3((a.x + b.x) / 2, 0.6, (a.z + b.z) / 2), 0xffffff, 0.35, 0.18);
-                }
-            }
-        }
+        // Car on car, every pair: equal masses, bouncy.
+        for (let i = 0; i < _cars.length; i++) for (let j = i + 1; j < _cars.length; j++) _bump(_cars[i], _cars[j]);
         if (MATCH_TIME - _clock < 5.05 && MATCH_TIME - _clock > 4.95) _hud.say('5 SECONDS!', '', 900, _t, '#facc15');
         if (_clock >= MATCH_TIME && _phase === 'play') _end();
     }
+    _draw(dt);
+}
 
+function _bump(a, b) {
+    const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+    if (d < R * 2 && d > 1e-4) {
+        const nx = dx / d, nz = dz / d, over = R * 2 - d;
+        a.x -= nx * over / 2; a.z -= nz * over / 2; b.x += nx * over / 2; b.z += nz * over / 2;
+        const rel = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
+        if (rel > 0) {
+            const j = (1 + BOUNCE) * rel / 2;
+            a.vx -= j * nx; a.vz -= j * nz; b.vx += j * nx; b.vz += j * nz;
+            // Each remembers who hit it, for the blame if it hits the rail.
+            a.by = b.slot; a.byAt = _t; b.by = a.slot; b.byAt = _t;
+            if (rel > 1.2) {
+                sfx('slam'); haptic([rel > 4 ? 45 : 20]);
+                if (_stage?.gl && rel > 3) _fx.burst(new THREE.Vector3((a.x + b.x) / 2, 0.6, (a.z + b.z) / 2), 0xffffff, 0.35, 0.18);
+            }
+        }
+    }
+}
+
+function _draw(dt) {
     _railMats.forEach(m => { m.emissiveIntensity += (0.25 + Math.sin(_t * 6) * 0.08 - m.emissiveIntensity) * Math.min(1, dt * 4); });
     _cars.forEach(c => {
         if (!c.g) return;
@@ -311,26 +343,38 @@ function _frame(dt) {
 function _renderHud() {
     if (!_hud) return;
     const left = Math.max(0, Math.ceil(MATCH_TIME - _clock));
-    [0, 1].forEach(slot => {
+    for (let slot = 0; slot < _n; slot++) {
         const c = _cars[slot];
         const boost = !c ? '' : c.cd > 0 ? `BOOST ${c.cd.toFixed(1)}s` : 'BOOST READY';
-        _hud.line(slot, `⚡ YOU ${_score[slot]} · ${left}s · THEM ${_score[1 - slot]}`);
+        _hud.line(slot, _n > 2 ? `⚡ ${_score[slot]} · ${left}s` : `⚡ YOU ${_score[slot]} · ${left}s · THEM ${_score[1 - slot]}`);
         if (_clock > 6 || seat(slot).bot) _hud.hint(slot, seat(slot).bot ? '' : boost);
-    });
+    }
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `${left}s · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
+    if (el && _phase === 'play') el.textContent = _n > 2 ? `${left}s · ${_leadLine()}`
+        : `${left}s · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
+}
+
+// Four names don't fit the strip; the leader does (each seat's own count is in
+// its own zone).
+function _leadLine() {
+    const top = Math.max(..._score), at = _score.filter(v => v === top).length;
+    return at > 1 ? (top ? `${at} TIED ON ${top}` : 'ALL LEVEL') : `${seat(_score.indexOf(top)).name} LEADS · ${top}`;
 }
 
 function _end() {
     if (_phase === 'over') return;
     _phase = 'over';
     _hud.say('');
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
+    // The most zaps wins; a share of the top is a draw.
+    const top = Math.max(..._score);
+    const leaders = _score.reduce((a, v, i) => (v === top ? a.concat(i) : a), []);
+    const w = leaders.length === 1 ? leaders[0] : -1;
+    const rest = w < 0 ? 0 : Math.max(..._score.filter((_, i) => i !== w));
     _dir.close({
         winner: w, figs: _cars.filter(c => c.rig).map(c => ({ slot: c.slot, rig: c.rig, anim: c.anim })),
-        sub: w < 0 ? `${_score[0]} ZAPS APIECE` : `${_score[w]} ZAPS TO ${_score[1 - w]}`,
-        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 7, p.z + (f.slot === 0 ? 1 : -1) * 6.5], look: [p.x, p.y + 0.6, p.z] }),
-        onDone: () => _finish(w),
+        sub: w < 0 ? `${top} ZAPS APIECE` : `${_score[w]} ZAPS TO ${rest}`,
+        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 7, p.z + (seatEdge(f.slot) === 'bottom' ? 1 : -1) * 6.5], look: [p.x, p.y + 0.6, p.z] }),
+        onDone: () => _finish(w, [..._score]),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -338,9 +382,9 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2), score: [..._score],
-             cars: _cars.map(c => ({ x: +c.x.toFixed(2), z: +c.z.toFixed(2), v: +Math.hypot(c.vx, c.vz).toFixed(2), cd: +c.cd.toFixed(2), stun: +c.stun.toFixed(2) })),
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2), score: [..._score],
+             cars: _cars.map(c => ({ x: +c.x.toFixed(2), z: +c.z.toFixed(2), v: +Math.hypot(c.vx, c.vz).toFixed(2), cd: +c.cd.toFixed(2), stun: +c.stun.toFixed(2), by: c.by })),
              gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
 /** Probes: put a car somewhere, moving. */
-export function _debugPlace(slot, x, z, vx = 0, vz = 0) { const c = _cars[slot]; if (c) Object.assign(c, { x, z, vx, vz, immune: 0, stun: 0 }); }
+export function _debugPlace(slot, x, z, vx = 0, vz = 0) { const c = _cars[slot]; if (c) Object.assign(c, { x, z, vx, vz, immune: 0, stun: 0, by: -1, byAt: -99 }); }

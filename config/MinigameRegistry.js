@@ -606,7 +606,9 @@ export const MG_PROFILE = {
     // a seat only needs somewhere to put a thumb. At 3-4 the music plays on
     // until one player is left; the order you went out in is the standings.
     musicalchairs: { genre: 'reflex', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
-    bumpercars: { genre: 'push', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one rink, everybody shoving everybody, like Sumo. At 3-4 a zap
+    // scores for whoever last bumped you; driving in on your own scores nobody.
+    bumpercars: { genre: 'push', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     kartgp: { genre: 'race', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     redlight: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     tag: { genre: 'scramble', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
