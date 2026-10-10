@@ -163,16 +163,21 @@ function _ringHud(stage, bg) {
     };
 }
 
-/** A top bar, a pad per player at the bottom of their half, one big message. */
+/**
+ * A top bar, a pad per player at the bottom of their half, one big message.
+ * At three or four seats (side by side along one edge) a pad per player under
+ * their own strip of the screen, slot 0 on the right as at two.
+ */
 export function sideHud(stage, { padWidth = 260 } = {}) {
+    const n = _seatN();
     const root = stage.hud;
     root.classList.add('bfont');
     const el = (css, parent = root) => { const e = document.createElement('div'); e.style.cssText = css; parent.appendChild(e); return e; };
     const bar = el('position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:14px;align-items:center;' +
         'padding:5px 16px;border-radius:14px;background:rgba(20,12,24,.62);font-size:19px;white-space:nowrap;' + TXT);
-    const pads = [0, 1].map(slot => {
+    const pads = Array.from({ length: n }, (_, slot) => {
         const s = seat(slot);
-        const pad = el(`position:absolute;bottom:10px;width:${padWidth}px;padding:3px 8px;border-radius:14px;text-align:center;` +
+        const pad = el(`position:absolute;bottom:10px;width:${padWidth}px;padding:3px 8px;border-radius:14px;text-align:center;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;` +
             `white-space:nowrap;background:rgba(20,12,24,.55);border:2px solid ${s.css};transition:background .12s;` + TXT);
         const name = el('font-size:15px;', pad); name.textContent = s.name + (s.bot ? ' · BOT' : '');
         const hint = el('font-size:11px;opacity:.9;', pad);
@@ -184,6 +189,11 @@ export function sideHud(stage, { padWidth = 260 } = {}) {
     const sub = el('font-size:18px;', box);
     const layout = () => {
         const W = stage.width;
+        if (n > 2) {
+            const pw = Math.min(padWidth, W / n - 10);
+            pads.forEach((p, slot) => { p.pad.style.width = pw + 'px'; p.pad.style.left = (W * (n - 1 - slot + 0.5) / n - pw / 2) + 'px'; });
+            return;
+        }
         pads[0].pad.style.left = (W * 0.75 - padWidth / 2) + 'px';
         pads[1].pad.style.left = (W * 0.25 - padWidth / 2) + 'px';
     };
@@ -245,8 +255,10 @@ export function uprightHud(stage) {
 export function touch(stage, { split = 'y', stick = 55, tapPx = 12, tapMs = 220, floating = true,
                                onDown, onTap, onRelease } = {}) {
     // At three or four seats on the face-off hold, a touch belongs to the seat
-    // whose zone it lands in (nearest zone, for the reserved bands at the ends).
-    const n = split === 'y' ? _seatN() : 2;
+    // whose zone it lands in (nearest zone, for the reserved bands at the ends);
+    // on the side hold, to the seat whose strip of the edge it is in, slot 0 on
+    // the right as at two.
+    const n = _seatN();
     const seats = Array.from({ length: n }, () => ({ pid: null, ax: 0, ay: 0, t0: 0, dx: 0, dy: 0, moved: false, down: false, held: 0 }));
     const ringSlot = p => {
         let best = 0, bd = Infinity;
@@ -258,7 +270,8 @@ export function touch(stage, { split = 'y', stick = 55, tapPx = 12, tapMs = 220,
         });
         return best;
     };
-    const slotAt = p => (n > 2 ? ringSlot(p)
+    const stripSlot = p => Math.max(0, Math.min(n - 1, n - 1 - Math.floor(p.x / (stage.width / n))));
+    const slotAt = p => (n > 2 ? (split === 'y' ? ringSlot(p) : stripSlot(p))
         : split === 'y' ? (p.y >= stage.height / 2 ? 0 : 1) : (p.x >= stage.width / 2 ? 0 : 1));
     stage.listen('pointerdown', e => {
         e.preventDefault();

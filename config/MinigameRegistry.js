@@ -605,7 +605,9 @@ export const MG_PROFILE = {
     rooftop:     { genre: 'race',     control: 'tap',   wire: 'events',   seats: [2, 2], live: false },
     blockparty:  { genre: 'reflex',   control: 'thumb', wire: 'events',   seats: [2, 2], live: false },
     riftdive:    { genre: 'race',     control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
-    balloonpump: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one stall seen side-on, a balloon each along it; a seat needs
+    // only a strip of the edge to hold. A pop still ends the round for all.
+    balloonpump: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     // Not roomy: the ring of chairs is one scene everybody reads from above, and
     // a seat only needs somewhere to put a thumb. At 3-4 the music plays on
     // until one player is left; the order you went out in is the standings.
