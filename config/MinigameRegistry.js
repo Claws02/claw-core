@@ -611,7 +611,9 @@ export const MG_PROFILE = {
     bumpercars: { genre: 'push', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     kartgp: { genre: 'race', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     redlight: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
-    tag: { genre: 'scramble', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one yard everybody runs round. IT tags whoever it reaches, and
+    // least time as IT wins at any count.
+    tag: { genre: 'scramble', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     balloontoss: { genre: 'nerve', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
     minigolf: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     bowling: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
