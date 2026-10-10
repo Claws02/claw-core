@@ -599,7 +599,9 @@ export const MG_PROFILE = {
     // Not roomy: one yard, four colours fighting over it; anybody else's wet
     // paint slows you.
     turfwar:     { genre: 'push',     control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
-    lilypad:     { genre: 'push',     control: 'thumb', wire: 'events',   seats: [2, 4], live: false },
+    // Not roomy: one pond everybody hops round. A round runs until one is left
+    // dry; a shared pad stomps everybody on it.
+    lilypad:     { genre: 'push',     control: 'thumb', wire: 'events',   seats: [2, 4], live: true },
     rooftop:     { genre: 'race',     control: 'tap',   wire: 'events',   seats: [2, 2], live: false },
     blockparty:  { genre: 'reflex',   control: 'thumb', wire: 'events',   seats: [2, 2], live: false },
     riftdive:    { genre: 'race',     control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
