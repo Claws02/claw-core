@@ -14,14 +14,20 @@
 // from anything thrown straight at you: to hit somebody who is hiding, come
 // round the side of their wall. Three hits and you're
 // out; after 45 s, fewest hits taken wins.
+//
+// LIVE (MG_PROFILE.live): two, three or four. At three or four each player
+// has the part of the yard under their own zone (a quarter each at four, each
+// with one of the four walls), a snowball hits anybody but its thrower, and
+// the last one still in wins.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const W = 10, D = 14;
@@ -45,14 +51,15 @@ const WALLS = [[-2.3, 2.6, 1.3, 0.3], [2.4, 4.3, 1.2, 0.3]].flatMap(([x, z, hw, 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _figs = [], _balls = [], _flakes = null, _bot = [];
+let _n = 2, _figs = [], _balls = [], _flakes = null, _bot = [], _outOrder = [];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _winner = -2, _endAt = 0;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -2; _endAt = 0; _balls = [];
-    _bot = [0, 1].map(() => ({ think: 0, tx: 0, tz: 0, throwAt: 1 + Math.random() }));
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -2; _endAt = 0; _balls = []; _outOrder = [];
+    _bot = Array.from({ length: _n }, () => ({ think: 0, tx: 0, tz: 0, throwAt: 1 + Math.random() }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -68,8 +75,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _stage.camera.up.set(0, 0, -1);          // P1's end at the bottom of the phone
         _buildYard();
     }
-    _figs = [0, 1].map(_buildFig);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO RUN · FLICK TO THROW · STAND STILL TO PACK'));
+    _figs = Array.from({ length: _n }, (_, slot) => _buildFig(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'DRAG · FLICK TO THROW · STAND TO PACK' : 'DRAG TO RUN · FLICK TO THROW · STAND STILL TO PACK');
 
     _dir.open({
         place: 'THE TERRITORY · THE WINTER YARD', title: 'SNOWBALL FIGHT',
@@ -87,7 +94,28 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _figs = []; _balls = []; _flakes = null; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+
+// The part of the yard a seat plays in: its end of the yard, and at three or
+// four the slice of that end under its own zone. MID is kept clear of every
+// edge it shares with somebody else's ground.
+function _region(slot) {
+    const near = seatEdge(slot) === 'bottom';
+    const [a, b] = _n > 2 ? seatRing(_n)[slot].span : [0, 1];
+    return {
+        x0: -W / 2 + a * W + (a > 0 ? MID : BODY), x1: -W / 2 + b * W - (b < 1 ? MID : BODY),
+        z0: near ? MID : -D / 2 + BODY, z1: near ? D / 2 - BODY : -MID,
+        near, cx: -W / 2 + (a + b) / 2 * W,
+    };
+}
+const _inRegion = (r, x, z) => x >= r.x0 - BODY && x <= r.x1 + BODY && z >= r.z0 - BODY && z <= r.z1 + BODY;
+const _alive = () => _figs.filter(f => !f.out);
+/** The nearest player still in, other than `me`. */
+function _nearestRival(me) {
+    let best = null, bd = Infinity;
+    _figs.forEach(o => { if (o === me || o.out) return; const d = Math.hypot(o.x - me.x, o.z - me.z); if (d < bd) { bd = d; best = o; } });
+    return best;
+}
 
 // ── The yard ─────────────────────────────────────────────────────────────────
 function _buildYard() {
@@ -97,12 +125,19 @@ function _buildYard() {
     const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); _stage.add(m); return m; };
     const snow = new THREE.MeshStandardMaterial({ color: 0xe2eaf2, roughness: 0.9 });
     const ground = add(new THREE.PlaneGeometry(70, 70), snow, 0, 0, 0); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
-    // Each half faintly in its player's colour, and a trodden line down the middle.
-    [0, 1].forEach(slot => {
-        const h = add(new THREE.PlaneGeometry(W, D / 2), new THREE.MeshBasicMaterial({ color: seat(slot).color, transparent: true, opacity: 0.16, depthWrite: false }), 0, 0.01, (slot === 0 ? 1 : -1) * D / 4);
+    // Each player's ground faintly in their colour, and trodden lines between.
+    for (let slot = 0; slot < _n; slot++) {
+        const near = seatEdge(slot) === 'bottom', [a, b] = _n > 2 ? seatRing(_n)[slot].span : [0, 1];
+        const h = add(new THREE.PlaneGeometry(W * (b - a), D / 2), new THREE.MeshBasicMaterial({ color: seat(slot).color, transparent: true, opacity: 0.16, depthWrite: false }),
+            -W / 2 + (a + b) / 2 * W, 0.01, (near ? 1 : -1) * D / 4);
         h.rotation.x = -Math.PI / 2;
-    });
+    }
     const line = add(new THREE.PlaneGeometry(W, 0.12), new THREE.MeshBasicMaterial({ color: 0x9fb6cc }), 0, 0.015, 0); line.rotation.x = -Math.PI / 2;
+    // At three or four, a line up the middle of each end that two seats share.
+    [1, -1].forEach(side => {
+        const sharing = Array.from({ length: _n }, (_, s) => s).filter(s => (seatEdge(s) === 'bottom') === (side > 0)).length;
+        if (_n > 2 && sharing > 1) { const m = add(new THREE.PlaneGeometry(0.12, D / 2), new THREE.MeshBasicMaterial({ color: 0x9fb6cc }), 0, 0.015, side * D / 4); m.rotation.x = -Math.PI / 2; }
+    });
     // Snow walls: packed blocks with a rounded cap.
     const block = new THREE.MeshStandardMaterial({ color: 0xa9c1da, roughness: 0.8 });
     WALLS.forEach(w => {
@@ -138,7 +173,8 @@ function _buildYard() {
 }
 
 function _buildFig(slot) {
-    const f = { slot, x: 0, z: (slot === 0 ? 1 : -1) * (D / 2 - 1.2), face: slot === 0 ? Math.PI : 0,
+    const r = _region(slot);
+    const f = { slot, x: r.cx, z: (r.near ? 1 : -1) * (D / 2 - 1.2), face: r.near ? Math.PI : 0, region: r,
                 hits: 0, ammo: AMMO_START, still: 0, pack: 0, flinch: 0, cool: 0, moving: false, crouch: false, out: false };
     if (_stage.gl) {
         const c = _stage.character(slot);
@@ -198,9 +234,9 @@ function _sliceBalls(dt) {
         b.x += b.vx * dt; b.z += b.vz * dt; b.vy -= G * dt; b.y += b.vy * dt;
         // Walls stop anything below their top.
         if (b.y < WALL_H + 0.1 && WALLS.some(w => Math.abs(b.x - w.x) < w.hw + 0.12 && Math.abs(b.z - w.z) < w.hd + 0.12)) { _splat(b); sfx('dice_land'); continue; }
-        // Players: the one who threw it can't be hit by it.
-        const f = _figs[1 - b.from];
-        if (f && !f.out && Math.hypot(b.x - f.x, b.z - f.z) < BODY + 0.2 && b.y < (f.crouch ? CROUCH_H : STAND_H)) { _hit(f, b); continue; }
+        // Players: the one who threw it can't be hit by it; anybody else can.
+        const f = _figs.find(q => q.slot !== b.from && !q.out && Math.hypot(b.x - q.x, b.z - q.z) < BODY + 0.2 && b.y < (q.crouch ? CROUCH_H : STAND_H));
+        if (f) { _hit(f, b); continue; }
         if (b.y <= 0.05 || Math.abs(b.x) > W / 2 + 3 || Math.abs(b.z) > D / 2 + 3) _splat(b);
     }
 }
@@ -213,17 +249,20 @@ function _hit(f, b) {
     f.anim?.play('hit', { restart: true });
     _hud.say('SPLAT!', `${seat(f.slot).name} · ${HITS - Math.min(HITS, f.hits)} LEFT`, 800, _t, '#7dd3fc');
     if (f.hits >= HITS && !f.out) {
-        f.out = true;
+        f.out = true; _outOrder.push(f.slot);
         f.anim?.play('defeat', { restart: true });
-        if (_winner === -2) { _winner = 1 - f.slot; _endAt = _clock + 1.3; sfx('mg_win'); }
+        // The last one still in wins (at two, the moment the other goes out).
+        const left = _alive();
+        if (_winner === -2 && left.length <= 1) { _winner = left.length ? left[0].slot : -1; _endAt = _clock + 1.3; sfx('mg_win'); }
+        else if (left.length > 1) _hud.say(`${seat(f.slot).name} IS OUT!`, `${left.length} LEFT`, 1000, _t, seat(f.slot).css);
     }
 }
 
 // ── Movement ─────────────────────────────────────────────────────────────────
 function _collide(f) {
-    const zMin = f.slot === 0 ? MID : -D / 2 + BODY, zMax = f.slot === 0 ? D / 2 - BODY : -MID;
-    f.x = Math.max(-W / 2 + BODY, Math.min(W / 2 - BODY, f.x));
-    f.z = Math.max(zMin, Math.min(zMax, f.z));
+    const r = f.region;
+    f.x = Math.max(r.x0, Math.min(r.x1, f.x));
+    f.z = Math.max(r.z0, Math.min(r.z1, f.z));
     WALLS.forEach(w => {
         const cx = Math.max(w.x - w.hw, Math.min(w.x + w.hw, f.x)), cz = Math.max(w.z - w.hd, Math.min(w.z + w.hd, f.z));
         const dx = f.x - cx, dz = f.z - cz, d = Math.hypot(dx, dz);
@@ -235,23 +274,24 @@ function _collide(f) {
 // ── Bot (§5): pack behind a wall, pop out and throw with a skill-sized aim
 // error, and move somewhere else afterwards. ─────────────────────────────────
 function _botMove(slot, dt) {
-    const me = _figs[slot], them = _figs[1 - slot], b = _bot[slot];
+    const me = _figs[slot], b = _bot[slot], r = me.region, side = r.near ? 1 : -1;
+    const them = _nearestRival(me);
     b.think -= dt;
     if (b.think <= 0) {
         b.think = 1.2 + Math.random() * 1.4 - _botSkill * 0.5;
-        const mine = WALLS.filter(w => (slot === 0 ? w.z > 0 : w.z < 0));
-        if (me.ammo === 0 || Math.random() < 0.45) {
-            // Behind a wall, on the far side of it from the rival.
+        const mine = WALLS.filter(w => _inRegion(r, w.x, w.z));
+        if (mine.length && (me.ammo === 0 || Math.random() < 0.45)) {
+            // Behind a wall, on its own end's side of it.
             const w = mine[(Math.random() * mine.length) | 0];
-            b.tx = w.x + (Math.random() - 0.5) * w.hw; b.tz = w.z + (slot === 0 ? 1 : -1) * (w.hd + BODY + 0.15);
+            b.tx = w.x + (Math.random() - 0.5) * w.hw; b.tz = w.z + side * (w.hd + BODY + 0.15);
         } else {
             // Out into the open, and forward when skilled.
-            b.tx = (Math.random() - 0.5) * (W - 2);
-            b.tz = (slot === 0 ? 1 : -1) * (MID + 0.5 + (1 - _botSkill) * 3 + Math.random() * 2);
+            b.tx = r.x0 + Math.random() * (r.x1 - r.x0);
+            b.tz = side * (MID + 0.5 + (1 - _botSkill) * 3 + Math.random() * 2);
         }
     }
     b.throwAt -= dt;
-    if (b.throwAt <= 0 && me.ammo > 0 && !them.out) {
+    if (b.throwAt <= 0 && me.ammo > 0 && them) {
         b.throwAt = 0.9 + (1 - _botSkill) * 1.3 + Math.random() * 0.8;
         // Aim at where they'll be, give or take.
         const dist = Math.hypot(them.x - me.x, them.z - me.z);
@@ -305,8 +345,10 @@ function _frame(dt) {
         _stepBalls(dt);
         if (_endAt && _clock >= _endAt) _end();
         else if (_clock >= MATCH_TIME && _winner === -2) {
-            const [a, b] = _figs;
-            _winner = a.hits < b.hits ? 0 : b.hits < a.hits ? 1 : -1;
+            // The bell: fewest hits taken; a share of the fewest is a draw.
+            const least = Math.min(..._figs.map(f => f.hits));
+            const best = _figs.filter(f => f.hits === least);
+            _winner = best.length === 1 ? best[0].slot : -1;
             _end();
         }
     }
@@ -327,8 +369,8 @@ function _draw(dt) {
         f.rig.root.position.set(f.x, 0, f.z);
         if (_phase === 'over') return;
         if (!f.out) {
-            // Face where you run; when still, face the rival.
-            const them = _figs[1 - f.slot];
+            // Face where you run; when still, face the nearest rival.
+            const them = _nearestRival(f) || _figs.find(o => o !== f);
             const want = f.moving ? f.face : Math.atan2(them.x - f.x, them.z - f.z);
             f.anim.face(want);
             const pose = f.flinch > 0 ? 'hit' : f.moving ? 'run' : f.crouch ? 'duck' : 'ready';
@@ -348,16 +390,19 @@ function _draw(dt) {
 
 function _renderHud() {
     if (!_hud) return;
-    [0, 1].forEach(slot => {
-        const f = _figs[slot], them = _figs[1 - slot];
-        if (!f) return;
+    const left = Math.max(0, Math.ceil(MATCH_TIME - _clock));
+    for (let slot = 0; slot < _n; slot++) {
+        const f = _figs[slot];
+        if (!f) continue;
         const hearts = '❤️'.repeat(Math.max(0, HITS - f.hits)) + '🤍'.repeat(Math.min(HITS, f.hits));
         const ammo = '❄️'.repeat(f.ammo) + '·'.repeat(AMMO_MAX - f.ammo);
-        _hud.line(slot, `${hearts}  ${ammo}  · THEM ${'❤️'.repeat(Math.max(0, HITS - them.hits))} · ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s`);
-        if (_clock > 8 && !seat(slot).bot) _hud.hint(slot, f.ammo === 0 ? 'OUT OF SNOW — STAND STILL TO PACK' : f.crouch ? 'CROUCHED · FLICK TO THROW' : '');
-    });
+        if (_n > 2) _hud.line(slot, f.out ? `OUT · ${left}s` : `${hearts} ${ammo} · ${left}s`);
+        else _hud.line(slot, `${hearts}  ${ammo}  · THEM ${'❤️'.repeat(Math.max(0, HITS - _figs[1 - slot].hits))} · ${left}s`);
+        if (_clock > 8 && !seat(slot).bot) _hud.hint(slot, f.out ? '' : f.ammo === 0 ? (_n > 2 ? 'STAND STILL TO PACK' : 'OUT OF SNOW — STAND STILL TO PACK') : f.crouch ? 'CROUCHED · FLICK TO THROW' : '');
+    }
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `${seat(0).name} ${HITS - _figs[0].hits} – ${HITS - _figs[1].hits} ${seat(1).name}`;
+    if (el && _phase === 'play') el.textContent = _n > 2 ? `${left}s · ${_alive().length} STILL IN`
+        : `${seat(0).name} ${HITS - _figs[0].hits} – ${HITS - _figs[1].hits} ${seat(1).name}`;
 }
 
 function _end() {
@@ -368,8 +413,9 @@ function _end() {
     const w = _winner < -1 ? -1 : _winner;
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? 'BOTH EQUALLY SOAKED' : 'LAST ONE DRY',
-        onDone: () => _finish(w),
+        sub: w < 0 ? (_n === 2 ? 'BOTH EQUALLY SOAKED' : 'EQUALLY SOAKED') : 'LAST ONE DRY',
+        // Standings: still in first (fewer hits higher), then by how late you went out.
+        onDone: () => _finish(w, _figs.map(f => (f.out ? _outOrder.indexOf(f.slot) - 10 : 10 - f.hits))),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -377,7 +423,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2), winner: _winner, balls: _balls.length, ballAt: _balls.map(b => [+b.x.toFixed(2), +b.y.toFixed(2), +b.z.toFixed(2)]),
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2), winner: _winner, balls: _balls.length, ballAt: _balls.map(b => [+b.x.toFixed(2), +b.y.toFixed(2), +b.z.toFixed(2)]),
              figs: _figs.map(f => ({ x: +f.x.toFixed(2), z: +f.z.toFixed(2), hits: f.hits, ammo: f.ammo, crouch: f.crouch, out: f.out, moving: f.moving })),
              walls: WALLS, gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
