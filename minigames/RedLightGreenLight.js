@@ -12,15 +12,19 @@
 // back to green. Red: anyone still moving once the short grace is up is caught
 // and sent back to the start. Runners carry a little momentum, so a late let-go
 // is a caught one. First to the stop line under the light wins.
+//
+// LIVE (MG_PROFILE.live): two, three or four. Each end of the lawn takes the
+// seats at that end of the table, a lane each under their own zone.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const W = 9, D = 24;
@@ -33,21 +37,23 @@ const FAKE_AMBER = 0.3;                 // chance an amber flips back to green
 const SENT_BACK = 0.9;                  // s the walk of shame takes
 const MATCH_TIME = 60;
 const READY_TIME = 1.2;
-const LANE_X = [0.9, -0.9];             // players' lanes (P1, P2)
+const LANE_X = [0.9, -0.9];             // players' lanes at two (P1, P2)
+const LANES_W = 5.4;                    // the width the lanes spread over at three or four
 const FIG_SCALE = 1.15;
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _runners = [], _bot = [], _light = null, _lampMats = null, _glow = null, _cap = null;
+let _n = 2, _runners = [], _bot = [], _light = null, _lampMats = null, _glow = null, _cap = null;
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _winner = -1;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
+    _n = Math.max(2, Math.min(4, slotCount()));
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -1;
     _light = { state: 'red', t: 0, dur: 99, fake: false };
-    _bot = [0, 1].map(() => ({ react: 0, hold: false }));
+    _bot = Array.from({ length: _n }, () => ({ react: 0, hold: false }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -64,13 +70,15 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _set = STAGE_SETS.ring(_stage, { w: W, d: D });
         _buildCourse();
     }
-    // The seated players, and nobody else.
-    _runners = [
-        _buildRunner(0, 0, LANE_X[0], 1),
-        _buildRunner(1, 1, LANE_X[1], -1),
-    ];
+    // The seated players, and nobody else: each at their own end of the lawn,
+    // in a lane under their own zone.
+    _runners = Array.from({ length: _n }, (_, slot) => {
+        const side = seatEdge(slot) === 'bottom' ? 1 : -1;
+        const span = _n > 2 ? seatRing(_n)[slot].span : null;
+        return _buildRunner(slot, slot, span ? ((span[0] + span[1]) / 2 - 0.5) * LANES_W : LANE_X[slot], side);
+    });
     _setLight('red', 99);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'HOLD TO RUN · FREEZE ON RED'));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : 'HOLD TO RUN · FREEZE ON RED');
 
     _dir.open({
         place: 'CITY RING ROAD · THE FOUNTAIN PARK', title: 'RED LIGHT, GREEN LIGHT',
@@ -88,7 +96,7 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _runners = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null; _lampMats = null; _glow = null; _cap = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
 // ── The course: lanes, lines and the light ───────────────────────────────────
 function _buildCourse() {
@@ -217,9 +225,11 @@ function _frame(dt) {
             }
         });
         if (_clock >= MATCH_TIME && _winner < 0) {
-            // The bell: nearest the light wins.
-            const [a, b] = _runners;
-            _winner = Math.abs(a.z) < Math.abs(b.z) - 0.05 ? 0 : Math.abs(b.z) < Math.abs(a.z) - 0.05 ? 1 : -1;
+            // The bell: nearest the light wins; two within a hair of the
+            // nearest is neck and neck.
+            const near = Math.min(..._runners.map(r => Math.abs(r.z)));
+            const best = _runners.filter(r => Math.abs(r.z) - near <= 0.05);
+            _winner = best.length === 1 ? best[0].slot : -1;
             _end();
         }
     }
@@ -254,12 +264,14 @@ function _enter(phase) {
 function _renderHud() {
     if (!_hud) return;
     const pct = r => Math.round((1 - (Math.abs(r.z) - FINISH) / (START - FINISH)) * 100);
-    [0, 1].forEach(slot => {
-        const me = _runners[slot], them = _runners[1 - slot];
-        if (!me) return;
-        _hud.line(slot, `🚦 YOU ${pct(me)}% · THEM ${pct(them)}%`);
+    for (let slot = 0; slot < _n; slot++) {
+        const me = _runners[slot];
+        if (!me) continue;
+        // At three or four, the best of the rest stands in for "them".
+        const them = _n === 2 ? pct(_runners[1 - slot]) : Math.max(..._runners.filter(r => r !== me).map(pct));
+        _hud.line(slot, _n > 2 ? `🚦 ${pct(me)}% · BEST ${them}%` : `🚦 YOU ${pct(me)}% · THEM ${them}%`);
         if (_clock > 6) _hud.hint(slot, '');
-    });
+    }
     const el = document.getElementById('mg-neutral');
     if (el && _phase === 'play') el.textContent = _light.state === 'red' ? 'RED LIGHT' : _light.state === 'amber' ? 'AMBER' : 'GREEN LIGHT';
 }
@@ -270,10 +282,11 @@ function _end() {
     _hud.say('');
     const w = _winner;
     _dir.close({
-        winner: w, figs: _runners.slice(0, 2).filter(r => r.rig).map(r => ({ slot: r.slot, rig: r.rig, anim: r.anim })),
+        winner: w, figs: _runners.filter(r => r.rig).map(r => ({ slot: r.slot, rig: r.rig, anim: r.anim })),
         sub: w < 0 ? 'NECK AND NECK' : 'FIRST TO THE LIGHT',
-        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 8.5 * FIG_SCALE, p.z + (f.slot === 0 ? 1 : -1) * 8 * FIG_SCALE], look: [p.x, p.y + 0.8, p.z] }),
-        onDone: () => _finish(w),
+        closeUp: (f, p) => ({ pos: [p.x + 2, p.y + 8.5 * FIG_SCALE, p.z + (seatEdge(f.slot) === 'bottom' ? 1 : -1) * 8 * FIG_SCALE], look: [p.x, p.y + 0.8, p.z] }),
+        // Standings: home first, then nearest the light.
+        onDone: () => _finish(w, _runners.map(r => (r.home ? 100 : -Math.abs(r.z)))),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -281,8 +294,8 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2), light: _light?.state, lightT: +(_light?.t || 0).toFixed(2), winner: _winner,
-             runners: _runners.map(r => ({ z: +r.z.toFixed(2), v: +r.v.toFixed(2), back: +r.back.toFixed(2), caught: r.caught, home: r.home })),
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2), light: _light?.state, lightT: +(_light?.t || 0).toFixed(2), winner: _winner,
+             runners: _runners.map(r => ({ x: +r.x.toFixed(2), z: +r.z.toFixed(2), v: +r.v.toFixed(2), back: +r.back.toFixed(2), caught: r.caught, home: r.home })),
              gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
 /** Probes: set the light (and hold it there for `dur` s). */

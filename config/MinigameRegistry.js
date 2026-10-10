@@ -614,7 +614,9 @@ export const MG_PROFILE = {
     // scores for whoever last bumped you; driving in on your own scores nobody.
     bumpercars: { genre: 'push', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     kartgp: { genre: 'race', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
-    redlight: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one lawn, one light. At 3-4 each end takes its own seats, a
+    // lane each; first to the light still wins outright.
+    redlight: { genre: 'nerve', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     // Not roomy: one yard everybody runs round. IT tags whoever it reaches, and
     // least time as IT wins at any count.
     tag: { genre: 'scramble', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
