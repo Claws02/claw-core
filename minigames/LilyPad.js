@@ -11,15 +11,19 @@
 // Hop onto the pad your rival is standing on and you stomp them off it, onto
 // a pad beside them — or into the water, if there is none. Last one dry takes
 // the round; first to two. The pond gets hungrier the longer a round runs.
+//
+// LIVE (MG_PROFILE.live): two, three or four on one pond. A round runs until
+// one is left dry; landing on a shared pad stomps everybody standing on it.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const COLS = 5, ROWS = 8, GAP = 2.2;
@@ -39,7 +43,7 @@ const FIG_SCALE = 1.05;
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _pads = [], _figs = [], _bot = [], _aimRings = [];
-let _round = 0, _score = [0, 0];
+let _n = 2, _round = 0, _score = [0, 0];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 let _dirOwns = false;
 let _nextRise = 0;
@@ -47,8 +51,9 @@ let _nextRise = 0;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _round = 0; _score = [0, 0]; _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0;
-    _bot = [0, 1].map(() => ({ wait: 0 }));
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _round = 0; _score = new Array(_n).fill(0); _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0;
+    _bot = Array.from({ length: _n }, () => ({ wait: 0 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -65,12 +70,12 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _set = STAGE_SETS.fae(_stage, { w: W, d: D });
     }
     _buildPads();
-    _figs = [0, 1].map(_buildFig);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO AIM · LET GO TO HOP'));
+    _figs = Array.from({ length: _n }, (_, slot) => _buildFig(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO AIM · LET GO TO HOP');
 
     _dir.open({
         place: 'FAE GLADE · MIDNIGHT', title: 'LILY PAD LEAP',
-        sub: 'LAST ONE DRY',
+        sub: _n > 2 ? `${_n} ON THE POND · LAST ONE DRY` : 'LAST ONE DRY',
         from: { pos: [5, 7, 14], look: [0, 0, 2] },
         to: overheadCam(_stage, W, D, 8),
         onDone: () => { if (!_done) _enter('ready'); },
@@ -84,7 +89,7 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _pads = []; _figs = []; _aimRings = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
 // ── Pads ─────────────────────────────────────────────────────────────────────
 function _buildPads() {
@@ -121,7 +126,14 @@ function _padColor(p) {
     p.leaf.material.color.setRGB(0.25 + (1 - k) * 0.35, 0.64 * k + 0.25 * (1 - k), 0.3 * k + 0.12 * (1 - k));
 }
 
-const _home = slot => (slot === 0 ? (ROWS - 1) * COLS + 2 : 2);
+// A seat's starting pad: on its own end's row, under its zone — the middle pad
+// of each end at two, as it shipped; the pads under the corners at four.
+function _home(slot) {
+    const row = seatEdge(slot) === 'bottom' ? ROWS - 1 : 0;
+    const span = _n > 2 ? seatRing(_n)[slot].span : [0, 1];
+    return row * COLS + Math.round(((span[0] + span[1]) / 2) * (COLS - 1));
+}
+const _others = f => _figs.filter(o => o !== f);
 
 // ── Figures ──────────────────────────────────────────────────────────────────
 function _buildFig(slot) {
@@ -148,7 +160,7 @@ function _resetRound() {
     _figs.forEach(f => {
         Object.assign(f, { pad: _home(f.slot), hop: null, out: false, y: 0 });
         _place(f);
-        if (f.rig) { f.rig.root.position.set(f.x, 0.08, f.z); f.rig.root.rotation.set(0, 0, 0); f.anim.play('ready', { restart: true }); f.anim.face(f.slot === 0 ? Math.PI : 0, true); }
+        if (f.rig) { f.rig.root.position.set(f.x, 0.08, f.z); f.rig.root.rotation.set(0, 0, 0); f.anim.play('ready', { restart: true }); f.anim.face(seatEdge(f.slot) === 'bottom' ? Math.PI : 0, true); }
     });
     _clock = 0; _nextRise = RISE_AT;
 }
@@ -195,9 +207,9 @@ function _land(f) {
     const p = _pads[to];
     if (!p.up) { _splash(f); return; }
     f.anim?.play('ready', { restart: true });
-    // Stomp: the rival on this pad is knocked to a pad beside them, or in.
-    const o = _figs[1 - f.slot];
-    if (!o.out && !o.hop && o.pad === to) {
+    // Stomp: anybody else on this pad is knocked to a pad beside it, or in.
+    _others(f).forEach(o => {
+        if (o.out || o.hop || o.pad !== to) return;
         const near = _pads.map((q, i) => ({ q, i })).filter(({ q, i }) => i !== to && q.up && Math.hypot(q.x - p.x, q.z - p.z) < GAP * 1.2);
         sfx('slam'); haptic([50]);
         o.anim?.flinch();
@@ -206,7 +218,7 @@ function _land(f) {
             o.hop = { from: to, to: pick, t: 0, knock: true };
         } else _splash(o);
         if (_stage?.gl) _fx.burst(new THREE.Vector3(p.x, 0.6, p.z), 0xf0abfc, 0.5, 0.25);
-    }
+    });
 }
 
 function _splash(f) {
@@ -219,13 +231,13 @@ function _splash(f) {
 
 // ── Bot (§5) ─────────────────────────────────────────────────────────────────
 // Stays while its pad is healthy, then hops to the healthiest pad in reach
-// that is not next to the rival — or, sometimes, straight onto the rival.
+// that is not next to a rival — or, sometimes, straight onto one.
 function _botStep(slot, dt) {
-    const f = _figs[slot], b = _bot[slot], o = _figs[1 - slot];
+    const f = _figs[slot], b = _bot[slot], rivals = _others(f).filter(o => !o.out);
     if (f.out || f.hop) return;
     const here = _pads[f.pad];
     b.wait -= dt;
-    const nervous = here.hp < 0.3 + _botSkill * 0.25 || (!o.out && o.pad === f.pad);
+    const nervous = here.hp < 0.3 + _botSkill * 0.25 || rivals.some(o => o.pad === f.pad);
     if (!nervous && b.wait > 0) return;
     if (!nervous && Math.random() > 0.02) return;
     b.wait = 0.55 - _botSkill * 0.35 + Math.random() * 0.25;
@@ -235,9 +247,9 @@ function _botStep(slot, dt) {
         const d = Math.hypot(p.x - f.x, p.z - f.z);
         if (d > HOP_RANGE) return;
         let sc = p.hp * 3 - d * 0.2;
-        const nearRival = !o.out && Math.hypot(p.x - o.x, p.z - o.z) < GAP * 1.2;
+        const nearRival = rivals.some(o => Math.hypot(p.x - o.x, p.z - o.z) < GAP * 1.2);
         if (nearRival) sc -= 1.2;
-        if (!o.out && o.pad === i && Math.random() < 0.15 + _botSkill * 0.4) sc += 3;     // the stomp
+        if (rivals.some(o => o.pad === i) && Math.random() < 0.15 + _botSkill * 0.4) sc += 3;     // the stomp
         sc += (Math.random() - 0.5) * (1 - _botSkill) * 2;
         if (sc > bs) { bs = sc; best = i; }
     });
@@ -250,10 +262,11 @@ function _enter(phase) {
     if (phase === 'ready') { _round++; _resetRound(); _hud.say(`ROUND ${_round}`, 'LAST ONE DRY', READY_TIME * 1000, _t); }
     else if (phase === 'play') sfx('go');
     else if (phase === 'result') {
-        const outs = _figs.filter(f => f.out);
-        const w = outs.length === 2 ? -1 : 1 - outs[0].slot;
+        // The one left dry takes the round; nobody dry is nobody's.
+        const dry = _figs.filter(f => !f.out);
+        const w = dry.length === 1 ? dry[0].slot : -1;
         if (w >= 0) _score[w]++;
-        _hud.say(w < 0 ? 'BOTH IN!' : `${seat(w).name} STAYS DRY`, `${_score[0]} – ${_score[1]}`, RESULT_TIME * 1000, _t);
+        _hud.say(w < 0 ? (_n === 2 ? 'BOTH IN!' : 'ALL IN!') : `${seat(w).name} STAYS DRY`, _score.join(' – '), RESULT_TIME * 1000, _t);
         _figs.forEach(f => { if (!f.out) f.anim?.play('victory'); });
     }
 }
@@ -264,13 +277,13 @@ function _frame(dt) {
     _hud.tick(_t);
     if (_phase === 'ready' && _phaseT > READY_TIME) _enter('play');
     else if (_phase === 'result' && _phaseT > RESULT_TIME) {
-        if (_score[0] >= WIN_ROUNDS || _score[1] >= WIN_ROUNDS || _round >= MAX_ROUNDS) _end();
+        if (_score.some(v => v >= WIN_ROUNDS) || _round >= MAX_ROUNDS) _end();
         else _enter('ready');
     }
 
     if (_phase === 'play') {
         _clock += dt;
-        [0, 1].forEach(slot => { if (isBotSlot(slot)) _botStep(slot, dt); });
+        for (let slot = 0; slot < _n; slot++) if (isBotSlot(slot)) _botStep(slot, dt);
         // Aim.
         _figs.forEach(f => {
             if (isBotSlot(f.slot)) { f.aim = -1; return; }
@@ -306,10 +319,12 @@ function _frame(dt) {
             if (live.length) live[Math.floor(Math.random() * live.length)].going = true;
         }
         if (_clock >= ROUND_CAP) {
-            // Still both dry: the healthier footing takes it, and the other goes in.
-            const [a, b] = _figs;
-            const ha = _pads[a.pad].hp, hb = _pads[b.pad].hp;
-            if (Math.abs(ha - hb) < 0.05) { _splash(a); _splash(b); } else _splash(ha < hb ? a : b);
+            // Still more than one dry: the healthiest footing takes it and the
+            // rest go in. Level footing at the top is a draw: everybody goes in.
+            const dry = _figs.filter(f => !f.out);
+            const best = Math.max(...dry.map(f => _pads[f.pad].hp));
+            const top = dry.filter(f => best - _pads[f.pad].hp < 0.05);
+            dry.forEach(f => { if (top.length > 1 || f !== top[0]) _splash(f); });
         }
         // Hops in flight.
         _figs.forEach(f => {
@@ -320,9 +335,11 @@ function _frame(dt) {
             f.y = Math.sin(k * Math.PI) * (f.hop.knock ? 0.9 : 1.3);
             if (f.hop.t >= 1) { f.y = 0; _land(f); }
         });
+        // The round is over once at most one is dry (and the splashes have
+        // played), or at once when nobody is.
         const outs = _figs.filter(f => f.out);
-        if (outs.length && outs.every(f => f.outT > 0.5)) _enter('result');
-        else if (outs.length === 2) _enter('result');
+        if (outs.length >= _n - 1 && outs.every(f => f.outT > 0.5)) _enter('result');
+        else if (outs.length === _n) _enter('result');
     }
     _figs.forEach(f => { if (f.out) f.outT += dt; });
 
@@ -365,20 +382,23 @@ function _frame(dt) {
 
 function _renderHud() {
     if (!_hud) return;
-    [0, 1].forEach(slot => {
+    for (let slot = 0; slot < _n; slot++) {
         const f = _figs[slot];
         const hp = f && !f.out ? Math.round(Math.max(0, _pads[f.pad].hp) * 100) : 0;
-        _hud.line(slot, `🍃 ROUND ${_round} · YOU ${_score[slot]} – ${_score[1 - slot]} THEM · PAD ${hp}%`);
+        _hud.line(slot, _n > 2 ? `🍃 ${_score[slot]} WON · PAD ${hp}%`
+                               : `🍃 ROUND ${_round} · YOU ${_score[slot]} – ${_score[1 - slot]} THEM · PAD ${hp}%`);
         if (_round > 1) _hud.hint(slot, '');
-    });
+    }
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `ROUND ${_round} · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
+    if (el && _phase === 'play') el.textContent = _n > 2 ? `ROUND ${_round} · ${_figs.filter(f => !f.out).length} DRY`
+        : `ROUND ${_round} · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
 }
 
 function _end() {
     _phase = 'over';
     _hud.say('');
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
+    const top = Math.max(..._score), lead = _score.reduce((a, v, i) => (v === top ? a.concat(i) : a), []);
+    const w = lead.length === 1 ? lead[0] : -1;
     // Everyone back on a pad for the verdict.
     _figs.forEach(f => {
         f.out = false; f.hop = null; f.y = 0;
@@ -390,10 +410,10 @@ function _end() {
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
         sub: w < 0 ? 'THE POND WINS' : 'KING OF THE POND',
         closeUp: (f, p) => {
-            const end = f.slot === 0 ? 1 : -1;
+            const end = seatEdge(f.slot) === 'bottom' ? 1 : -1;
             return { pos: [p.x + 1.2, p.y + 5.5, p.z + end * 5.5], look: [p.x, p.y + 0.7, p.z] };
         },
-        onDone: () => _finish(w),
+        onDone: () => _finish(w, _score.slice()),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -402,7 +422,7 @@ function _end() {
 // For probes.
 export function _debugState() {
     return {
-        phase: _phase, round: _round, score: _score.slice(), clock: +_clock.toFixed(2),
+        phase: _phase, n: _n, round: _round, score: _score.slice(), clock: +_clock.toFixed(2),
         pad: _figs.map(f => f.pad), out: _figs.map(f => f.out), hopping: _figs.map(f => !!f.hop),
         hp: _figs.map(f => (_pads[f.pad] ? +_pads[f.pad].hp.toFixed(2) : 0)), aim: _figs.map(f => f.aim ?? -1),
         pads: _pads.map(p => ({ x: +p.x.toFixed(2), z: +p.z.toFixed(2), up: p.up })),
@@ -411,3 +431,7 @@ export function _debugState() {
 }
 /** Probes: hop a seat to a pad now. */
 export function _debugHop(slot, to) { return _hop(slot, to); }
+/** Probes: stand a seat straight on a pad, dry, not hopping. */
+export function _debugPad(slot, pad) { const f = _figs[slot]; if (!f) return; Object.assign(f, { pad, hop: null, out: false, y: 0 }); _place(f); }
+/** Probes: every pad back up and healthy, and the clock back inside the grace. */
+export function _debugRefill() { _pads.forEach(p => { p.hp = 1; p.sunk = 0; p.up = true; p.going = false; if (p.mesh) p.mesh.visible = true; }); _clock = 0; _nextRise = RISE_AT; }
