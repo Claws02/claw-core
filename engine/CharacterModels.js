@@ -29,6 +29,31 @@
 // case (2 players + 4 attached buddies + 1 board buddy), which is well inside
 // what the board already draws for tiles.
 
+// ---- The cast ----
+// Who a player can BE. The townsfolk below the line (cabbie, vendor, banker,
+// bodyguard, investor) are still drawn, but only as HundredBlockDash's board
+// allies and the Musical Chairs crowd; they are no longer picked as a player.
+export const CAST = [
+    { id: 'slime',   name: 'Bloop',     icon: '💧' },
+    { id: 'ghost',   name: 'Spook',     icon: '👻' },
+    { id: 'boxy',    name: 'Crate',     icon: '🧊' },
+    { id: 'bunny',   name: 'Thumper',   icon: '🐰' },
+    { id: 'frog',    name: 'Hopper',    icon: '🐸' },
+    { id: 'cat',     name: 'Whiskers',  icon: '🐱' },
+    { id: 'penguin', name: 'Waddles',   icon: '🐧' },
+    { id: 'dino',    name: 'Chomp',     icon: '🦖' },
+    { id: 'octopus', name: 'Inky',      icon: '🐙' },
+    { id: 'donut',   name: 'Sprinkles', icon: '🍩' },
+    { id: 'duck',    name: 'Quackers',  icon: '🦆' },
+    { id: 'ufo',     name: 'Zorp',      icon: '🛸' },
+];
+export const CAST_IDS = CAST.map(c => c.id);
+// A saved pick of a character that is no longer playable moves to the one
+// that replaced it.
+export const RETIRED = { cabbie: 'frog', vendor: 'donut', banker: 'cat', bodyguard: 'dino', investor: 'penguin' };
+/** The playable character a saved id stands for now. */
+export const playableChar = id => (CAST_IDS.includes(id) ? id : RETIRED[id] || 'slime');
+
 // Cheap darker/lighter relatives of the player colour, so every figure gets
 // shading that belongs to it rather than a shared grey.
 export function _tint(hex, f) {
@@ -285,6 +310,154 @@ export function createCharacterMesh(type, colorCode) {
         add(new THREE.ConeGeometry(0.16, 0.3, 4), green, 0.36, 2.28, 0, 0, Math.PI / 4, -0.5);
         eyes(1.45, 0.32, 0.12, 0.18);
         smile(1.3, 0.34, 0.1);
+    } else if (type === 'frog') {
+        // Wide and low, eyes on stalks on top: the frog silhouette.
+        const body = add(new THREE.SphereGeometry(0.66, 22, 16), mat, 0, 0.55);
+        body.scale.set(1.18, 0.78, 1.0);
+        const belly = add(new THREE.SphereGeometry(0.5, 18, 14), pale, 0, 0.45, 0.3);
+        belly.scale.set(1.05, 0.7, 0.55);
+        [-1, 1].forEach(s => {
+            add(new THREE.SphereGeometry(0.24, 14, 12), mat, s * 0.32, 1.0, 0.12);      // eye bump
+            const haunch = add(new THREE.SphereGeometry(0.3, 14, 12), mat, s * 0.62, 0.32, -0.12);
+            haunch.scale.set(0.8, 1, 1.2);
+            const foot = add(new THREE.SphereGeometry(0.17, 12, 10), shade, s * 0.42, 0.08, 0.42);
+            foot.scale.set(1.5, 0.5, 1.2);
+            add(new THREE.SphereGeometry(0.08, 10, 10), _mkMat(0xf9a8d4, 0.5), s * 0.42, 0.66, 0.56); // cheek
+        });
+        eyes(1.04, 0.31, 0.15, 0.32);
+        const grin = smile(0.62, 0.6, 0.3);
+        grin.scale.set(1, 0.6, 1);
+    } else if (type === 'cat') {
+        const body = add(new THREE.SphereGeometry(0.54, 20, 16), mat, 0, 0.56);
+        body.scale.set(1, 1.05, 0.95);
+        add(new THREE.SphereGeometry(0.46, 20, 16), mat, 0, 1.26);
+        [-1, 1].forEach(s => {
+            add(new THREE.ConeGeometry(0.17, 0.32, 4), mat, s * 0.27, 1.66, 0, 0, Math.PI / 4, -s * 0.28);
+            add(new THREE.ConeGeometry(0.1, 0.2, 4), _mkMat(0xf9a8d4, 0.5), s * 0.27, 1.64, 0.06, 0, Math.PI / 4, -s * 0.28);
+            // Whiskers: three thin strokes either side of the muzzle.
+            [-0.06, 0, 0.06].forEach(dy => add(new THREE.CylinderGeometry(0.012, 0.012, 0.36, 4), dark,
+                s * 0.3, 1.13 + dy, 0.4, 0, 0, Math.PI / 2 + s * dy * 2.5));
+            add(new THREE.SphereGeometry(0.13, 10, 10), mat, s * 0.24, 0.12, 0.2);   // paws
+        });
+        const muz = add(new THREE.SphereGeometry(0.17, 14, 12), pale, 0, 1.12, 0.38);
+        muz.scale.set(1.35, 0.8, 0.7);
+        add(new THREE.SphereGeometry(0.055, 10, 10), _mkMat(0xf472b6, 0.4), 0, 1.2, 0.5);
+        add(new THREE.SphereGeometry(0.3, 14, 10), pale, 0, 0.5, 0.32).scale.set(1, 1.2, 0.5);  // chest
+        // A tail that curls up behind, so the side view is a cat too.
+        add(new THREE.TorusGeometry(0.3, 0.07, 8, 16, Math.PI * 1.2), mat, 0.18, 0.62, -0.5, 0, Math.PI / 2, 0);
+        eyes(1.32, 0.38, 0.13, 0.18);
+    } else if (type === 'penguin') {
+        const body = add(new THREE.SphereGeometry(0.58, 22, 18), mat, 0, 0.82);
+        body.scale.set(1, 1.32, 0.95);
+        const belly = add(new THREE.SphereGeometry(0.5, 20, 16), white, 0, 0.74, 0.16);
+        belly.scale.set(0.82, 1.18, 0.82);
+        const face = add(new THREE.SphereGeometry(0.34, 16, 12), white, 0, 1.3, 0.24);
+        face.scale.set(1.1, 0.85, 0.75);
+        const beak = add(new THREE.ConeGeometry(0.1, 0.24, 10), _mkMat(0xff9f1c, 0.4), 0, 1.22, 0.56, Math.PI / 2, 0, 0);
+        beak.scale.set(1.3, 1, 0.8);
+        [-1, 1].forEach(s => {
+            const fl = add(new THREE.SphereGeometry(0.24, 12, 10), shade, s * 0.58, 0.82, 0, 0, 0, s * 0.35);
+            fl.scale.set(0.35, 1.25, 0.7);
+            const ft = add(new THREE.SphereGeometry(0.15, 10, 8), _mkMat(0xff9f1c, 0.4), s * 0.2, 0.06, 0.24);
+            ft.scale.set(1.1, 0.4, 1.5);
+            add(new THREE.SphereGeometry(0.07, 10, 10), _mkMat(0xf9a8d4, 0.5), s * 0.26, 1.18, 0.44);   // blush
+        });
+        eyes(1.38, 0.43, 0.11, 0.15);
+    } else if (type === 'dino') {
+        // A chunky little T-rex: big head out front, plates down the back,
+        // a tail behind. Plates in the light tint so they read on any colour.
+        const body = add(new THREE.SphereGeometry(0.62, 20, 16), mat, 0, 0.66, -0.08);
+        body.scale.set(1, 1.08, 1.1);
+        const belly = add(new THREE.SphereGeometry(0.46, 18, 14), pale, 0, 0.6, 0.24);
+        belly.scale.set(0.95, 1.1, 0.6);
+        add(new THREE.SphereGeometry(0.48, 20, 16), mat, 0, 1.4, 0.1);
+        const snout = add(new THREE.SphereGeometry(0.34, 16, 12), mat, 0, 1.22, 0.46);
+        snout.scale.set(1.15, 0.78, 1.05);
+        const grin = smile(1.12, 0.78, 0.2);
+        grin.scale.set(1, 0.7, 1);
+        [-1, 1].forEach(s => {
+            add(new THREE.SphereGeometry(0.04, 6, 6), dark, s * 0.11, 1.32, 0.8);                    // nostrils
+            add(new THREE.ConeGeometry(0.04, 0.1, 6), white, s * 0.1, 1.06, 0.76, Math.PI, 0, 0);       // fangs
+            const arm = add(new THREE.SphereGeometry(0.11, 10, 8), mat, s * 0.5, 0.86, 0.3, 0.6, 0, 0);
+            arm.scale.set(0.8, 1.4, 0.8);
+            const leg = add(new THREE.SphereGeometry(0.22, 12, 10), mat, s * 0.34, 0.16, 0.06);
+            leg.scale.set(1, 0.75, 1.35);
+        });
+        [[1.9, -0.06, 0.18], [1.5, -0.36, 0.22], [1.14, -0.56, 0.22], [0.8, -0.66, 0.17]].forEach(([y, z, r]) => {
+            const plate = add(new THREE.ConeGeometry(r, r * 2.2, 4), pale, 0, y, z, -0.55, Math.PI / 4, 0);
+            plate.scale.set(0.45, 1, 1);
+        });
+        add(new THREE.ConeGeometry(0.26, 0.6, 12), mat, 0, 0.34, -0.72, -Math.PI / 2 + 0.35, 0, 0);
+        eyes(1.56, 0.36, 0.14, 0.2);
+    } else if (type === 'octopus') {
+        const head = add(new THREE.SphereGeometry(0.6, 22, 18), mat, 0, 0.98);
+        head.scale.set(1, 1.08, 0.95);
+        [[0.26, 1.4, 0.4, 0.09], [-0.32, 1.26, 0.46, 0.07], [0.42, 1.1, 0.42, 0.06]].forEach(([x, y, z, r]) =>
+            add(new THREE.SphereGeometry(r, 10, 10), pale, x, y, z));                      // spots
+        // Eight curling arms round the base, the front two curled up like a wave.
+        for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+            const arm = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.085, 8, 14, Math.PI * 1.15), mat);
+            arm.position.set(Math.sin(a) * 0.46, 0.24, Math.cos(a) * 0.46);
+            arm.rotation.set(0, a + Math.PI / 2, Math.PI * 0.95);
+            group.add(arm);
+        }
+        eyes(1.0, 0.5, 0.17, 0.24);
+        smile(0.72, 0.54, 0.12);
+    } else if (type === 'donut') {
+        // Dough ring standing up, icing in the player's colour on the front.
+        const dough = _mkMat(0xd99a5b, 0.6);
+        add(new THREE.TorusGeometry(0.5, 0.3, 18, 30), dough, 0, 0.86, 0);
+        const icing = add(new THREE.TorusGeometry(0.5, 0.31, 18, 30), mat, 0, 0.86, 0.07);
+        icing.scale.set(1.01, 1.01, 0.78);
+        const SPR = [0xffffff, 0xffd23f, 0x2ec4b6, 0xff5fa2, 0x8b5cf6];
+        for (let i = 0; i < 14; i++) {
+            const a = (i / 14) * Math.PI * 2 + 0.2;
+            if (a > 1.1 && a < 2.05) continue;                     // keep the face clear
+            const r = 0.5 + ((i * 37) % 7 - 3) * 0.04;
+            add(new THREE.CylinderGeometry(0.028, 0.028, 0.13, 6),
+                _mkMat(SPR[i % SPR.length], 0.4), Math.cos(a) * r, 0.86 + Math.sin(a) * r, 0.33, 0, 0, a * 3);
+        }
+        [-1, 1].forEach(s => add(new THREE.SphereGeometry(0.12, 10, 8), dark, s * 0.24, 0.05, 0.04).scale.set(1.2, 0.5, 1.4));
+        eyes(1.28, 0.3, 0.13, 0.2);
+        smile(0.48, 0.31, 0.13);
+    } else if (type === 'duck') {
+        const body = add(new THREE.SphereGeometry(0.6, 22, 16), mat, 0, 0.52, -0.05);
+        body.scale.set(1.05, 0.82, 1.22);
+        add(new THREE.SphereGeometry(0.42, 20, 16), mat, 0, 1.18, 0.16);
+        const bill = add(new THREE.SphereGeometry(0.2, 14, 10), _mkMat(0xff8a1c, 0.35), 0, 1.06, 0.56);
+        bill.scale.set(1.35, 0.42, 1.1);
+        const tuft = add(new THREE.ConeGeometry(0.16, 0.36, 10), mat, 0, 0.86, -0.72, -0.9, 0, 0);
+        tuft.scale.set(1.3, 1, 0.8);
+        add(new THREE.ConeGeometry(0.06, 0.18, 8), mat, 0, 1.64, 0.12, -0.3, 0, 0);       // hair curl
+        [-1, 1].forEach(s => {
+            const wing = add(new THREE.SphereGeometry(0.3, 14, 10), shade, s * 0.56, 0.6, -0.08);
+            wing.scale.set(0.35, 0.7, 1.05);
+            add(new THREE.SphereGeometry(0.07, 10, 10), _mkMat(0xf9a8d4, 0.5), s * 0.3, 1.08, 0.4);
+        });
+        eyes(1.3, 0.42, 0.12, 0.16);
+    } else if (type === 'ufo') {
+        // A saucer in the player's colour, a glass dome, a little alien inside.
+        const saucer = add(new THREE.SphereGeometry(0.84, 26, 14), mat, 0, 0.62);
+        saucer.scale.set(1, 0.3, 1);
+        add(new THREE.TorusGeometry(0.8, 0.06, 8, 30), shade, 0, 0.62, 0, Math.PI / 2);
+        for (let i = 0; i < 10; i++) {
+            const a = (i / 10) * Math.PI * 2;
+            add(new THREE.SphereGeometry(0.055, 8, 8), gold, Math.sin(a) * 0.8, 0.62, Math.cos(a) * 0.8);
+        }
+        const alien = new THREE.MeshPhysicalMaterial({ color: 0x8ef08a, roughness: 0.35, clearcoat: 0.6 });
+        add(new THREE.SphereGeometry(0.27, 16, 12), alien, 0, 0.98, 0.04);
+        [-1, 1].forEach(s => {
+            add(new THREE.CylinderGeometry(0.014, 0.014, 0.22, 5), dark, s * 0.11, 1.32, 0, 0, 0, -s * 0.35);
+            add(new THREE.SphereGeometry(0.045, 8, 8), gold, s * 0.155, 1.43, 0);
+        });
+        const dome = add(new THREE.SphereGeometry(0.44, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+            new THREE.MeshPhysicalMaterial({ color: 0xd8f3ff, roughness: 0.05, transparent: true, opacity: 0.32, clearcoat: 1, depthWrite: false }), 0, 0.72);
+        dome.renderOrder = 2;
+        // Three stubby landing legs.
+        [0, 2.1, 4.2].forEach(a => add(new THREE.CylinderGeometry(0.04, 0.07, 0.42, 8), dark, Math.sin(a) * 0.42, 0.24, Math.cos(a) * 0.42));
+        eyes(1.02, 0.24, 0.085, 0.1);
+        smile(0.9, 0.27, 0.06);
     }
 
     // Contact shadow. Without it every figure looks like it is hovering a few
