@@ -17,11 +17,15 @@
 //   SAND TRAPS · THE SLIDER
 // Fewest strokes over the three wins. Level on strokes, the faster total time
 // to hole out wins — so there are no ties.
+//
+// LIVE (MG_PROFILE.live): two, three or four side by side along one edge, all
+// on the one course, a strip of the screen each (slot 0 on the right as at
+// two). Every ball knocks every other.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
@@ -31,8 +35,9 @@ import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
 const HX = 8.6, HZ = 3.2;              // a hole: x from the tee end (−) to the cup end (+), z across
 // One course, shared: both balls are on it at once and can knock each other.
 // (Kept as a per-player offset so the drawing code reads the same either way.)
-const OFF = [0, 0];
+const OFF = [0, 0, 0, 0];
 const TEE_Z = [0.35, -0.35];           // side by side on the tee
+const TEE_GAP = 0.45;                  // ball to ball on the tee at three or four
 const BR = 0.2;                        // ball radius
 const MAXV = 11;                       // a full pull
 const DECEL = 1.3, DRAG = 0.55;        // rolling friction: constant + per unit speed
@@ -99,16 +104,17 @@ function _dynamic(h, t) {
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _holes = [], _hole = -1, _balls = [], _strokes = [[], []], _times = [[], []], _copies = [], _aims = [], _figs = [], _bot = [];
+let _n = 2, _holes = [], _hole = -1, _balls = [], _strokes = [[], []], _times = [[], []], _copies = [], _aims = [], _figs = [], _bot = [];
 let _phase = 'intro', _sub = '', _subT = 0, _t = 0, _holeT = 0;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _strokes = [[], []]; _times = [[], []]; _copies = [];
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _strokes = _seats().map(() => []); _times = _seats().map(() => []); _copies = [];
     // Three holes, the same three for both, in a random order.
     _holes = _forceHoles ? _forceHoles.map(k => POOL.find(p => p.key === k)) : [...POOL].sort(() => Math.random() - 0.5).slice(0, HOLES_PER_MATCH);
-    _bot = [0, 1].map(() => ({ wait: 1 }));
+    _bot = _seats().map(() => ({ wait: 1 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -122,15 +128,15 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _dir = createDirector(_stage);
     if (_stage.gl) {
         _set = STAGE_SETS.ring(_stage, { w: HX * 2 + 4, d: 34, lanterns: false });
-        _aims = [0, 1].map(_buildAim);
+        _aims = _seats().map(_buildAim);
     }
-    _balls = [0, 1].map(_buildBall);
-    _figs = [0, 1].map(_buildFig);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG BACK ON YOUR HALF · LET GO TO PUTT'));
+    _balls = _seats().map(_buildBall);
+    _figs = _seats().map(_buildFig);
+    _seats().forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : _firstHint()));
 
     _dir.open({
         place: 'CITY RING ROAD · THE CRAZY GOLF', title: 'MINI GOLF',
-        sub: `${_holes.length} HOLES · BOTH AT ONCE · FEWEST STROKES`,
+        sub: `${_holes.length} HOLES · ${_n > 2 ? 'ALL' : 'BOTH'} AT ONCE · FEWEST STROKES`,
         from: { pos: [14, 12, 0], look: [0, 0, 0] },
         to: _playCam(),
         onDone: () => {
@@ -147,7 +153,15 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _balls = []; _figs = []; _copies = []; _aims = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+
+const _seats = () => Array.from({ length: _n }, (_, i) => i);
+// Side by side on the tee: at two the shipped pair, at three or four in a
+// line across the tee, slot 0 nearest you.
+const _teeZ = slot => (_n === 2 ? TEE_Z[slot] : ((_n - 1) / 2 - slot) * TEE_GAP);
+const _firstHint = () => (_n > 2 ? 'DRAG BACK ON YOUR STRIP · LET GO TO PUTT' : 'DRAG BACK ON YOUR HALF · LET GO TO PUTT');
+// Is every OTHER ball in?
+const _othersIn = slot => _balls.every(o => o.slot === slot || o.state === 'done');
 
 // The whole hole across the landscape screen, from the players' side, tilted
 // just enough to read the windmill and the loop as things standing up.
@@ -164,12 +178,13 @@ function _buildBall(slot) {
 }
 function _buildFig(slot) {
     // Each player stands off the far rail on their own side of the screen
-    // (P1 right, P2 left), looking across the green at the players.
+    // (P1 right, P2 left; at three or four spread along it, slot 0 on the
+    // right), looking across the green at the players.
     const f = { slot };
     if (_stage.gl) {
         const c = _stage.character(slot);
         c.rig.root.scale.setScalar(FIG_SCALE);
-        c.rig.root.position.set(slot === 0 ? HX - 2.2 : -HX + 2.2, 0, -HZ - 1.0);
+        c.rig.root.position.set((HX - 2.2) * (1 - 2 * slot / (_n - 1)), 0, -HZ - 1.0);
         c.anim.face(0, true);
         c.anim.play('ready');
         Object.assign(f, { rig: c.rig, anim: c.anim });
@@ -345,7 +360,7 @@ function _nextHole() {
     if (_hole >= _holes.length) { _end(); return; }
     const h = _holes[_hole];
     if (_stage?.gl) { _clearCopies(); _copies = [_buildCopy(h, 0)]; }
-    _balls.forEach(b => Object.assign(b, { x: h.tee[0], z: h.tee[1] + TEE_Z[b.slot], vx: 0, vz: 0, holed: false, loop: null, looped: false, state: 'aim', clock: 0, idle: 0 }));
+    _balls.forEach(b => Object.assign(b, { x: h.tee[0], z: h.tee[1] + _teeZ(b.slot), vx: 0, vz: 0, holed: false, loop: null, looped: false, state: 'aim', clock: 0, idle: 0 }));
     _strokes.forEach(s => s.push(0));
     _times.forEach(s => s.push(0));
     _bot.forEach(b => { b.wait = 1.8 + Math.random() * 0.8; });
@@ -457,7 +472,7 @@ function _frame(dt) {
                     } else if (aim) aim.visible = false;
                     // Less time to dawdle once the other ball is in; and twice out
                     // of time on a hole picks you up, so nobody holds the table up.
-                    const limit = _balls[1 - b.slot].state === 'done' ? 6 : SHOT_CLOCK;
+                    const limit = _othersIn(b.slot) ? 6 : SHOT_CLOCK;
                     if (b.clock >= limit && b.idle >= 1) { b.idle++; _holed(b, h, 'pickup'); return; }
                     if (b.clock >= limit) {
                         // Out of time: a short putt toward the flag is taken for you.
@@ -497,24 +512,27 @@ function _frame(dt) {
         });
         // Ball on ball: an even trade of speed along the line between them. A
         // ball waiting to be putted can be knocked away — no stroke for that.
-        const [p, q] = _balls;
-        if (!p.holed && !q.holed && !p.loop && !q.loop) {
-            const dx = q.x - p.x, dz = q.z - p.z, d = Math.hypot(dx, dz);
-            if (d < BR * 2 && d > 1e-5) {
-                const nx = dx / d, nz = dz / d, over = BR * 2 - d;
-                p.x -= nx * over / 2; p.z -= nz * over / 2; q.x += nx * over / 2; q.z += nz * over / 2;
-                const rel = (p.vx - q.vx) * nx + (p.vz - q.vz) * nz;
-                if (rel > 0) {
-                    p.vx -= rel * nx; p.vz -= rel * nz; q.vx += rel * nx; q.vz += rel * nz;
-                    sfx('land_good');
-                    [p, q].forEach(b => { if (b.state === 'aim' && Math.hypot(b.vx, b.vz) > STOP_V) { b.state = 'roll'; b.knocked = true; if (_aims[b.slot]) _aims[b.slot].visible = false; } });
+        for (let i = 0; i < _balls.length; i++) for (let j = i + 1; j < _balls.length; j++) {
+            const p = _balls[i], q = _balls[j];
+            if (!p.holed && !q.holed && !p.loop && !q.loop) {
+                const dx = q.x - p.x, dz = q.z - p.z, d = Math.hypot(dx, dz);
+                if (d < BR * 2 && d > 1e-5) {
+                    const nx = dx / d, nz = dz / d, over = BR * 2 - d;
+                    p.x -= nx * over / 2; p.z -= nz * over / 2; q.x += nx * over / 2; q.z += nz * over / 2;
+                    const rel = (p.vx - q.vx) * nx + (p.vz - q.vz) * nz;
+                    if (rel > 0) {
+                        p.vx -= rel * nx; p.vz -= rel * nz; q.vx += rel * nx; q.vz += rel * nz;
+                        sfx('land_good');
+                        [p, q].forEach(b => { if (b.state === 'aim' && Math.hypot(b.vx, b.vz) > STOP_V) { b.state = 'roll'; b.knocked = true; if (_aims[b.slot]) _aims[b.slot].visible = false; } });
+                    }
                 }
             }
         }
         if (_balls.every(b => b.state === 'done')) {
             _sub = 'tally'; _subT = 0;
             const s = _strokes.map(x => x[_hole]), tm = _times.map(x => x[_hole]);
-            _hud.say(`${seat(0).name} ${s[0]} · ${seat(1).name} ${s[1]}`, `${tm[0].toFixed(1)}s · ${tm[1].toFixed(1)}s`, TALLY * 1000, _t, '#fde047');
+            if (_n > 2) _hud.say(`HOLE ${_hole + 1} DONE`, _seats().map(i => `${seat(i).name} ${s[i]}`).join(' · '), TALLY * 1000, _t, '#fde047');
+            else _hud.say(`${seat(0).name} ${s[0]} · ${seat(1).name} ${s[1]}`, `${tm[0].toFixed(1)}s · ${tm[1].toFixed(1)}s`, TALLY * 1000, _t, '#fde047');
         }
     } else if (_phase === 'play' && _sub === 'tally' && _subT >= TALLY) _nextHole();
 
@@ -550,21 +568,27 @@ function _renderHud() {
     if (!_hud || _hole < 0) return;
     const tot = _totals();
     const hl = Math.min(_hole, _holes.length - 1);
-    _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${tot[1]}</span>` +
+    // Left to right as they sit, the highest slot on the left.
+    if (_n > 2) _hud.bar(_seats().reverse().map(s => `<span style="color:${seat(s).css}">${tot[s]}</span>`).join('') +
+        `<span style="font-size:15px;opacity:.85">⛳ ${hl + 1}/${_holes.length} · PAR ${_holes[hl].par}</span>`);
+    else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${tot[1]}</span>` +
         `<span style="font-size:15px;opacity:.85">⛳ ${hl + 1}/${_holes.length} ${_holes[hl].name} · PAR ${_holes[hl].par}</span>` +
         `<span style="color:${seat(0).css}">${tot[0]} ${seat(0).name}</span>`);
-    [0, 1].forEach(slot => {
+    _seats().forEach(slot => {
         const b = _balls[slot];
         if (seat(slot).bot) return;
         const now = _strokes[slot][hl] || 0;
-        const lim = _balls[1 - slot].state === 'done' ? 6 : SHOT_CLOCK;
+        const lim = _othersIn(slot) ? 6 : SHOT_CLOCK;
         const clock = b.state === 'aim' && b.clock > lim - 4 ? ` · ${Math.max(0, Math.ceil(lim - b.clock))}s` : '';
-        _hud.hint(slot, b.state === 'done' && _sub === 'play' ? 'IN! WAITING FOR THE OTHER BALL…'
-            : _hole === 0 && now === 0 ? 'DRAG BACK ON YOUR HALF · LET GO TO PUTT'
+        _hud.hint(slot, b.state === 'done' && _sub === 'play' ? (_n > 2 ? 'IN! WAITING FOR THE OTHERS…' : 'IN! WAITING FOR THE OTHER BALL…')
+            : _hole === 0 && now === 0 ? _firstHint()
             : `STROKE ${now + (b.state === 'aim' ? 1 : 0)}${clock}`);
     });
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `HOLE ${hl + 1} · ${seat(0).name} ${tot[0]} – ${tot[1]} ${seat(1).name}`;
+    if (el && _phase === 'play') {
+        if (_n > 2) { const lo = Math.min(...tot), lead = _seats().filter(s => tot[s] === lo); el.textContent = `HOLE ${hl + 1} · ${lead.length === 1 ? `${seat(lead[0]).name} LEADS ON ${lo}` : `LEVEL ON ${lo}`}`; }
+        else el.textContent = `HOLE ${hl + 1} · ${seat(0).name} ${tot[0]} – ${tot[1]} ${seat(1).name}`;
+    }
 }
 
 function _end() {
@@ -573,12 +597,20 @@ function _end() {
     _hud.say('');
     const tot = _totals(), tt = _timeTotals();
     // Fewest strokes; level on strokes, the faster total time.
-    const w = tot[0] !== tot[1] ? (tot[0] < tot[1] ? 0 : 1) : Math.abs(tt[0] - tt[1]) < 0.05 ? -1 : tt[0] < tt[1] ? 0 : 1;
+    let w;
+    if (_n === 2) w = tot[0] !== tot[1] ? (tot[0] < tot[1] ? 0 : 1) : Math.abs(tt[0] - tt[1]) < 0.05 ? -1 : tt[0] < tt[1] ? 0 : 1;
+    else {
+        const lo = Math.min(...tot), level = _seats().filter(s => tot[s] === lo).sort((a, b) => tt[a] - tt[b]);
+        w = level.length === 1 || tt[level[1]] - tt[level[0]] >= 0.05 ? level[0] : -1;
+    }
+    // Rank, higher better: strokes first, then time.
+    const rank = _seats().map(s => -(tot[s] * 1000 + tt[s]));
+    const runner = _n === 2 ? 1 - w : w < 0 ? -1 : _seats().filter(s => s !== w).sort((a, b) => tot[a] - tot[b] || tt[a] - tt[b])[0];
     _aims.forEach(a => { a.visible = false; });
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? `${tot[0]} STROKES EACH` : tot[0] !== tot[1] ? `${tot[w]} STROKES TO ${tot[1 - w]}` : `LEVEL ON ${tot[0]} · QUICKER BY ${Math.abs(tt[0] - tt[1]).toFixed(1)}s`,
-        onDone: () => _finish(w),
+        sub: w < 0 ? `${Math.min(...tot)} STROKES EACH` : tot[w] !== tot[runner] ? `${tot[w]} STROKES TO ${tot[runner]}` : `LEVEL ON ${tot[w]} · QUICKER BY ${Math.abs(tt[w] - tt[runner]).toFixed(1)}s`,
+        onDone: () => _finish(w, rank),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -587,7 +619,7 @@ function _end() {
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 let _forceHoles = null;
 export function _debugState() {
-    return { phase: _phase, sub: _sub, hole: _hole, holes: _holes.map(h => h.key), strokes: _strokes.map(s => [...s]), times: _times.map(s => s.map(t => +t.toFixed(2))),
+    return { phase: _phase, n: _n, sub: _sub, hole: _hole, holes: _holes.map(h => h.key), strokes: _strokes.map(s => [...s]), times: _times.map(s => s.map(t => +t.toFixed(2))),
              balls: _balls.map(b => ({ x: +b.x.toFixed(2), z: +b.z.toFixed(2), v: +Math.hypot(b.vx, b.vz).toFixed(2), state: b.state, holed: b.holed, loop: !!b.loop })),
              views: _stage?.views ? _stage.views.length : 1, gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
