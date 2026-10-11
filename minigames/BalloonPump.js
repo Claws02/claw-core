@@ -16,11 +16,16 @@
 // The tell: near its limit a balloon starts to strain. It wobbles, stretches
 // and squeaks, harder the closer it gets, so reading it is the skill.
 // Five rounds; the last counts double.
+//
+// LIVE (MG_PROFILE.live): two, three or four side by side along one edge, a
+// pump each, slot 0 on the right as at two. Every balloon shares the round's
+// limit, and a pop still ends the round for everybody (the popper scores
+// nothing) — so nobody learns the limit from a pop and pumps to just under it.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
@@ -35,20 +40,23 @@ const RATE = 21;                   // size per second while pumping (0–100 sca
 const LIMIT_MIN = 52, LIMIT_MAX = 97;
 const STRAIN = 16;                 // the tell starts this far below the limit
 const X = [1.9, -1.9];             // P1 on the right (the home edge)
+const GAP = 2.8;                   // between stations at three or four, right to left
 const FIG_SCALE = 1.05;
 const R0 = 0.16, R1 = 1.12;        // balloon radius at size 0 and 100
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _figs = [], _score = [0, 0], _bot = [];
+let _n = 2, _figs = [], _score = [0, 0], _bot = [];
 let _phase = 'intro', _sub = '', _subT = 0, _t = 0, _round = 0, _limit = 70, _squeakT = [0, 0], _roundWin = -1;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _round = 0; _score = [0, 0]; _roundWin = -1;
-    _bot = [0, 1].map(() => ({ target: 60 }));
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _round = 0; _score = new Array(_n).fill(0); _roundWin = -1;
+    _squeakT = new Array(_n).fill(0);
+    _bot = Array.from({ length: _n }, () => ({ target: 60 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -61,8 +69,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _fx = effects(_stage);
     _dir = createDirector(_stage);
     if (_stage.gl) _set = STAGE_SETS.shop(_stage);
-    _figs = [0, 1].map(_buildStation);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'HOLD TO PUMP · DON’T POP IT'));
+    _figs = Array.from({ length: _n }, (_, slot) => _buildStation(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'HOLD TO PUMP' : 'HOLD TO PUMP · DON’T POP IT');
 
     _dir.open({
         place: 'SHOPPING PROMENADE · THE BALLOON STALL', title: 'BALLOON PUMP',
@@ -80,7 +88,10 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _figs = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+// A station's x: at two, as shipped; at three or four, evenly along the stall,
+// slot 0 on the right like the seats.
+const _stationX = slot => (_n === 2 ? X[slot] : ((_n - 1) / 2 - slot) * GAP);
 
 function _playCam() { return { pos: [0, 2.9, 10.4], look: [0, 2.1, 0] }; }
 
@@ -91,15 +102,16 @@ function _buildStation(slot) {
     const col = seat(slot).color;
     const c = _stage.character(slot);
     c.rig.root.scale.setScalar(FIG_SCALE);
-    c.rig.root.position.set(X[slot], 0.17, -0.2);
+    c.rig.root.position.set(_stationX(slot), 0.17, -0.2);
     c.anim.face(0, true);
     c.anim.play('ready');
     Object.assign(f, { rig: c.rig, anim: c.anim });
 
     // The pump: a barrel, a plunger and a T handle, in front of the figure.
-    // Outboard of the figure, so two full balloons never meet in the middle.
-    const out = slot === 0 ? 1 : -1;
-    const px = X[slot] + out * 0.9;
+    // Outboard of the figure, so two full balloons never meet in the middle;
+    // at three or four, every pump on the same side, a station apart.
+    const out = _n > 2 ? 1 : slot === 0 ? 1 : -1;
+    const px = _stationX(slot) + out * (_n > 2 ? 0.75 : 0.9);
     const pump = new THREE.Group();
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.9, 14), new THREE.MeshStandardMaterial({ color: 0xd9dde3, metalness: 0.5, roughness: 0.35 }));
     barrel.position.y = 0.62; pump.add(barrel);
@@ -128,7 +140,7 @@ function _buildStation(slot) {
     const hose = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1, 6), new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.8 }));
     _stage.add(hose);
 
-    Object.assign(f, { plunger, balloon, skin, knot, hose, nozzle: new THREE.Vector3(px, 1.1, 0.35), base: new THREE.Vector3(px + out * 0.55, 1.45, 0.4) });
+    Object.assign(f, { plunger, balloon, skin, knot, hose, nozzle: new THREE.Vector3(px, 1.1, 0.35), base: new THREE.Vector3(px + out * (_n > 2 ? 0.35 : 0.55), 1.45, 0.4) });
     _placeBalloon(f);
     return f;
 }
@@ -165,7 +177,7 @@ function _placeBalloon(f) {
 function _nextRound() {
     _round++;
     if (_round > ROUNDS) { _end(); return; }
-    // One hidden limit for both balloons: nobody gets a luckier balloon.
+    // One hidden limit for every balloon: nobody gets a luckier balloon.
     _limit = LIMIT_MIN + Math.random() * (LIMIT_MAX - LIMIT_MIN);
     _figs.forEach(f => {
         Object.assign(f, { size: 0, popped: false, banked: false, bankT: 0, pumping: false });
@@ -207,15 +219,16 @@ function _tally(popper = null) {
         f.pumping = false;
         if (!f.popped) { f.banked = true; f.bankT = 0; f.anim?.play(f.size > 0 ? 'raise' : 'ready'); }
     });
-    const [a, b] = pts;
-    const w = a === b ? -1 : (a > b ? 0 : 1);
+    // The biggest banked balloon takes the round; a share of the top is drawn.
+    const top = Math.max(...pts), best = pts.reduce((acc, p, i) => (p === top ? acc.concat(i) : acc), []);
+    const w = best.length === 1 ? best[0] : -1;
     let msg, sub;
     if (popper) {
         // A pop ends the round: the survivor takes it.
         msg = `💥 ${seat(popper.slot).name} POPPED!`;
         sub = w < 0 ? `ROUND DRAWN · LIMIT WAS ${Math.round(_limit)}` : `${seat(w).name} WINS THE ROUND +${pts[w]}`;
     } else {
-        msg = w < 0 ? (a === 0 ? 'NO SCORE' : 'DEAD EVEN') : `${seat(w).name} WINS THE ROUND`;
+        msg = w < 0 ? (top === 0 ? 'NO SCORE' : 'DEAD EVEN') : `${seat(w).name} WINS THE ROUND`;
         sub = w < 0 ? `LIMIT WAS ${Math.round(_limit)}` : `+${pts[w]} · LIMIT WAS ${Math.round(_limit)}`;
     }
     _roundWin = w;
@@ -282,27 +295,32 @@ function _renderHud() {
     if (!_hud) return;
     const r = Math.min(_round, ROUNDS);
     const left = _sub === 'pump' ? Math.max(0, Math.ceil(PUMP_TIME - _subT)) : '';
-    // Left to right as they sit: P2 on the left, P1 on the right.
-    _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${_score[1]}</span>` +
-        `<span>🎈 ${r}/${ROUNDS}${left !== '' ? ' · ' + left + 's' : ''}</span>` +
+    // Left to right as they sit: P2 on the left, P1 on the right (and at three
+    // or four, the highest slot on the left).
+    const clock = `<span>🎈 ${r}/${ROUNDS}${left !== '' ? ' · ' + left + 's' : ''}</span>`;
+    if (_n > 2) _hud.bar(Array.from({ length: _n }, (_, k) => _n - 1 - k)
+        .map(s => `<span style="color:${seat(s).css}">${_score[s]}</span>`).join('') + clock);
+    else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${_score[1]}</span>` + clock +
         `<span style="color:${seat(0).css}">${_score[0]} ${seat(0).name}</span>`);
-    [0, 1].forEach(slot => {
+    for (let slot = 0; slot < _n; slot++) {
         const f = _figs[slot];
         _hud.lit(slot, !!f?.pumping);
         if (_round > 1) _hud.hint(slot, f?.popped ? 'POP!' : '');
-    });
+    }
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `ROUND ${r}/${ROUNDS} · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
+    if (el && _phase === 'play') el.textContent = _n > 2 ? `ROUND ${r}/${ROUNDS}`
+        : `ROUND ${r}/${ROUNDS} · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
 }
 
 function _end() {
     _phase = 'over';
     _hud.say('');
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
+    const top = Math.max(..._score), lead = _score.reduce((a, v, i) => (v === top ? a.concat(i) : a), []);
+    const w = lead.length === 1 ? lead[0] : -1;
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? `${_score[0]} APIECE` : `${_score[w]} POINTS OF HOT AIR`,
-        onDone: () => _finish(w),
+        sub: w < 0 ? `${top} APIECE` : `${_score[w]} POINTS OF HOT AIR`,
+        onDone: () => _finish(w, [..._score]),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -310,7 +328,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, sub: _sub, round: _round, limit: +_limit.toFixed(1), score: [..._score],
+    return { phase: _phase, n: _n, sub: _sub, round: _round, limit: +_limit.toFixed(1), score: [..._score],
              size: _figs.map(f => +f.size.toFixed(1)), popped: _figs.map(f => f.popped), roundWin: _roundWin, pumping: _figs.map(f => f.pumping),
              gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
