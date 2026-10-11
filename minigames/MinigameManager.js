@@ -11,6 +11,7 @@ import { MG_TYPES, MG_INFO, MG_ORIENTATIONS, MG_ORIENTATION_MAP, MG_WATCHDOG_MS,
          surfacesOf } from '../config/MinigameRegistry.js';
 import { MINIGAME_REWARD, MINIGAME_PLACE_COINS } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
+import { zonesFor } from '../config/MinigameLayout.js';
 import { DualRead } from '../../AppHost.js';
 
 import { loadUIManager } from '../../AppHost.js';
@@ -752,15 +753,22 @@ function _startMinigameLayer() {
 
 // The ready buttons, one per slot, placed where that player is sitting.
 //
-// There were exactly two, written into index.html, at the top and the bottom.
-// That is a fine gate for a face-off and it is the reason a three- or
-// four-player round could not be started by everybody in it — a fault flagged
-// in docs/MINIGAME_RULEBOOK.md §12 and fixed here. The two originals are still
-// the two-seat case, untouched, so every existing probe that presses
-// #mg-ready-1 and #mg-ready-2 still finds them.
+// At two seats it is the original pair written into index.html, top and
+// bottom, untouched.
+//
+// At three or four there is a READY BOARD: the screen split into one tile per
+// seat, each tile laid exactly where that seat plays (MinigameLayout's ring for
+// a face-off game, one strip of the long edge for a side-on one), tinted in
+// the seat's colour, turned to face that player, with their NAME above their
+// READY. It stays up through the countdown, so everybody sees where they are
+// before GO, and then shrinks to a name tag on each seat's edge that fades.
+//
+// #mg-ready-1 / #mg-ready-2 are moved into seat 0's and seat 1's tiles (and
+// put back for a two-seat round), so every probe that presses them by id
+// still finds them.
 function _buildReadyButtons(n) {
     const layer = document.getElementById('minigame-layer');
-    // Anything built for a previous round's seat count.
+    _teardownReadyBoard();
     layer.querySelectorAll('.mg-ready-extra').forEach(el => el.remove());
 
     [1, 2].forEach(i => {
@@ -768,23 +776,124 @@ function _buildReadyButtons(n) {
         if (!rd) return;
         rd.style.display = 'block';
         rd.classList.remove('ready');
-        rd.textContent = n > 2 ? _readyLabel(i - 1) : 'READY';
+        rd.textContent = 'READY';
     });
-    for (let slot = 2; slot < n; slot++) {
-        const b = document.createElement('button');
-        b.className = 'mg-ready-btn mg-ready-extra bfont';
-        b.dataset.slot = String(slot);
-        b.textContent = _readyLabel(slot);
-        // Seats 3 and 4 sit at the corners of the near and far edges — the
-        // ring in MinigameLayout. Slot 2 goes bottom-right, slot 3 top-right,
-        // so the two originals keep the middle of their own edge.
-        const far = slot >= 3;
-        b.style.cssText =
-            'position:absolute;right:16px;z-index:70;padding:10px 18px;font-size:19px;' +
-            (far ? 'top:14%;transform:rotate(180deg);' : 'bottom:14%;');
-        b.addEventListener('pointerdown', e => { e.preventDefault(); setReady(slot); });
-        layer.appendChild(b);
-    }
+    layer.classList.toggle('mg-many', n > 2);
+    if (n <= 2) return;
+
+    const sideon = layer.classList.contains('is-sideon');
+    const W = layer.clientWidth || window.innerWidth, H = layer.clientHeight || window.innerHeight;
+    // Where each seat is, in the layer's own pixels, and which way it faces.
+    const spots = sideon
+        // Side-on: the seats share the long edge, slot 0 at the bottom of the
+        // portrait screen; every tile reads the same way, along that edge.
+        ? Array.from({ length: n }, (_, slot) => ({ slot, x: 0, y: H * (n - 1 - slot) / n, w: W, h: H / n, rot: 90 }))
+        : zonesFor(n, W, H).map(z => ({ slot: z.seat, x: z.rect.x, y: z.rect.y, w: z.rect.w, h: z.rect.h, rot: z.rot }));
+
+    _ensureBoardCss();
+    const board = document.createElement('div');
+    board.id = 'mg-ready-board';
+    board.className = sideon ? 'is-sideon' : '';
+    spots.forEach(sp => {
+        const p = _sp(sp.slot), hex = _hex(p.color);
+        const tile = document.createElement('div');
+        tile.className = 'mg-seat-tile';
+        tile.dataset.slot = String(sp.slot);
+        tile.style.cssText = `left:${sp.x}px;top:${sp.y}px;width:${sp.w}px;height:${sp.h}px;--seat:${hex};`;
+        // The content is laid out upright and turned as a whole to face the
+        // player; a quarter turn swaps the box's width and height.
+        const inner = document.createElement('div');
+        inner.className = 'mg-seat-inner';
+        const quarter = Math.abs(sp.rot) % 180 === 90;
+        inner.style.cssText = `width:${quarter ? sp.h : sp.w}px;height:${quarter ? sp.w : sp.h}px;transform:translate(-50%,-50%) rotate(${sp.rot}deg);`;
+        const name = document.createElement('div');
+        name.className = 'mg-seat-name bfont';
+        name.textContent = _readyLabel(sp.slot);
+        let btn;
+        if (sp.slot < 2) btn = document.getElementById(`mg-ready-${sp.slot + 1}`);
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.className = 'mg-ready-btn mg-ready-extra bfont';
+            btn.addEventListener('pointerdown', e => { e.preventDefault(); setReady(sp.slot); });
+        }
+        btn.dataset.slot = String(sp.slot);
+        btn.textContent = isBotSlot(sp.slot) ? '🤖 READY' : 'READY';
+        inner.append(name, btn);
+        tile.appendChild(inner);
+        board.appendChild(tile);
+    });
+    layer.appendChild(board);
+}
+
+// The board's look ships with the core, so every host gets the same one.
+function _ensureBoardCss() {
+    if (document.getElementById('mg-ready-board-css')) return;
+    const st = document.createElement('style');
+    st.id = 'mg-ready-board-css';
+    st.textContent = `
+#mg-ready-board { position: absolute; inset: 0; z-index: 60; pointer-events: none; }
+#mg-ready-board .mg-seat-tile {
+    position: absolute; box-sizing: border-box; overflow: hidden; pointer-events: auto;
+    background: color-mix(in srgb, var(--seat) 22%, rgba(10,8,24,.55));
+    border: 3px solid var(--seat); border-radius: 18px;
+    box-shadow: inset 0 0 0 3px rgba(0,0,0,.25), inset 0 0 40px color-mix(in srgb, var(--seat) 35%, transparent);
+    transition: background .25s, opacity .5s, transform .5s;
+}
+#mg-ready-board .mg-seat-tile.ready { background: color-mix(in srgb, var(--seat) 45%, rgba(10,8,24,.4)); }
+#mg-ready-board .mg-seat-inner {
+    position: absolute; left: 50%; top: 50%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+}
+#mg-ready-board .mg-seat-name {
+    max-width: 92%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: clamp(22px, 6vw, 40px); line-height: 1; color: #fff; letter-spacing: 2px;
+    padding: 4px 16px; border-radius: 999px; background: var(--seat);
+    text-shadow: 0 2px 0 rgba(0,0,0,.35); box-shadow: 0 4px 0 rgba(0,0,0,.3);
+}
+#mg-ready-board .mg-ready-btn {
+    position: static !important; rotate: none !important; transform: none; display: block;
+    font-size: clamp(22px, 6.5vw, 34px); padding: 14px 34px; border-color: var(--seat);
+    background: rgba(255,255,255,.14);
+}
+#mg-ready-board .mg-ready-btn.ready { border-color: #4ade80; }
+#mg-ready-board .mg-seat-tile.ready .mg-seat-name::after { content: ' ✓'; }
+/* GO: the tiles fold down to a name tag on each seat's edge, then fade. */
+#mg-ready-board.mg-go { pointer-events: none; }
+#mg-ready-board.mg-go .mg-seat-tile { pointer-events: none; background: transparent; border-color: transparent; box-shadow: none;
+    animation: mg-tag-fade 2.6s ease forwards; }
+#mg-ready-board.mg-go .mg-ready-btn { display: none !important; }
+@keyframes mg-tag-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+#minigame-layer.mg-many #mg-neutral, #minigame-layer.mg-many #mg-neutral-mirror { visibility: hidden; }
+#minigame-layer.mg-many #mg-countdown { z-index: 80; }
+`;
+    document.head.appendChild(st);
+}
+
+const _hex = c => '#' + ((typeof c === 'number' ? c : 0x888888) >>> 0).toString(16).padStart(6, '0').slice(-6);
+
+// Put #mg-ready-1/2 back in their own zones and drop the board.
+function _teardownReadyBoard() {
+    const board = document.getElementById('mg-ready-board');
+    if (!board) return;
+    [[1, 'mg-p1'], [2, 'mg-p2']].forEach(([i, zone]) => {
+        const b = document.getElementById(`mg-ready-${i}`), z = document.getElementById(zone);
+        if (b && z && b.parentElement !== z) z.appendChild(b);
+    });
+    board.remove();
+}
+
+// GO: the tiles shrink to a name tag on each seat's edge and fade, so the
+// first seconds of play still say who is where.
+function _releaseReadyBoard() {
+    const board = document.getElementById('mg-ready-board');
+    if (!board) return;
+    board.classList.add('mg-go');
+    setTimeout(() => {
+        if (document.getElementById('mg-ready-board') !== board) return;
+        _teardownReadyBoard();
+        const layer = document.getElementById('minigame-layer');
+        layer && layer.classList.remove('mg-many');
+    }, 2600);
 }
 
 function _readyLabel(slot) {
@@ -801,6 +910,7 @@ export function setReady(pid) {
         ? document.getElementById(`mg-ready-${pid + 1}`)
         : document.querySelector(`.mg-ready-extra[data-slot="${pid}"]`);
     if (btn) { btn.classList.add('ready'); btn.textContent = '✓ READY'; }
+    document.querySelector(`#mg-ready-board .mg-seat-tile[data-slot="${pid}"]`)?.classList.add('ready');
     sfx('countdown');
 
     if (state.mgReady.slice(0, slotCount()).every(Boolean)) {
@@ -821,6 +931,7 @@ export function setReady(pid) {
                 cd.style.display = 'none';
                 [1, 2].forEach(i => { const b = document.getElementById(`mg-ready-${i}`); if (b) b.style.display = 'none'; });
                 document.querySelectorAll('.mg-ready-extra').forEach(b => { b.style.display = 'none'; });
+                _releaseReadyBoard();
                 state.mgActive = true;
                 document.getElementById('mg-neutral').textContent = 'MINIGAME TIME';
                 _launchGame();
