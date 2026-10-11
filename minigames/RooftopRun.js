@@ -17,11 +17,15 @@
 // THE HOLD
 //   SIDE-ON, like High Noon: P1 is the right half of the screen, P2 the left.
 //   Both run to the right; P1's lane is the near one.
+//
+// LIVE (MG_PROFILE.live): two, three or four side by side along one edge, a
+// lane each across the roofs, slot 0 the near one as at two. A slide trips
+// whoever is just in front, in any lane.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
@@ -44,12 +48,13 @@ const ROUND_CAP  = 28;
 const WIN_ROUNDS = 2, MAX_ROUNDS = 3, READY_TIME = 1.3, RESULT_TIME = 2.0;
 const FIG_SCALE  = 0.82;
 const LANE       = [0.9, -0.9]; // z: P1 near the camera
+const LANE_GAP   = 1.1;         // lane to lane at three or four
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _figs = [], _bot = [], _course = null, _hazards = [];
-let _round = 0, _score = [0, 0];
+let _n = 2, _round = 0, _score = [0, 0];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 let _dirOwns = false, _cam = { x: 0, y: 0, d: 13 }, _zones = [];
 let _winner = -1;
@@ -57,8 +62,9 @@ let _winner = -1;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _round = 0; _score = [0, 0]; _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0;
-    _bot = [0, 1].map(() => ({ hold: 0, slide: 0, seen: -1, err: 0, miss: false }));
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _round = 0; _score = _seats().map(() => 0); _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0;
+    _bot = _seats().map(() => ({ hold: 0, slide: 0, seen: -1, err: 0, miss: false }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -73,9 +79,9 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _fx = effects(_stage);
     _dir = createDirector(_stage);
     if (_stage.gl) _set = STAGE_SETS.ba(_stage);
-    _figs = [0, 1].map(_buildFig);
+    _figs = _seats().map(_buildFig);
     _buildZones();
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'SWIPE ▲ JUMP (HOLD = HIGHER) · SWIPE ▼ SLIDE'));
+    _seats().forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? '▲ JUMP · ▼ SLIDE' : 'SWIPE ▲ JUMP (HOLD = HIGHER) · SWIPE ▼ SLIDE'));
 
     _newCourse();
     _resetRound();
@@ -95,7 +101,17 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _figs = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null; _zones = [];
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+
+const _seats = () => Array.from({ length: _n }, (_, i) => i);
+// A lane each: at two the shipped pair, at three or four evenly spaced, slot 0
+// nearest the camera.
+const _lane = slot => (_n === 2 ? LANE[slot] : ((_n - 1) / 2 - slot) * LANE_GAP);
+// The one runner out in front, or -1 if the front is shared within `tie`.
+function _leader(tie) {
+    const best = Math.max(..._figs.map(f => f.x)), front = _figs.filter(f => best - f.x < tie);
+    return front.length === 1 ? front[0].slot : -1;
+}
 
 // ── The course ───────────────────────────────────────────────────────────────
 // Roofs with gaps between them, a step up or down at each, and a vent or a
@@ -150,7 +166,7 @@ function _roofAt(x) {
 
 // ── Figures ──────────────────────────────────────────────────────────────────
 function _buildFig(slot) {
-    const f = { slot, z: LANE[slot] };
+    const f = { slot, z: _lane(slot) };
     if (_stage.gl) {
         const c = _stage.character(slot);
         c.rig.root.scale.setScalar(FIG_SCALE);
@@ -160,7 +176,7 @@ function _buildFig(slot) {
 }
 
 function _resetFig(f) {
-    Object.assign(f, { z: LANE[f.slot], x: 0, y: 0, vy: 0, ground: true, airT: 0, jumpHeld: false,
+    Object.assign(f, { z: _lane(f.slot), x: 0, y: 0, vy: 0, ground: true, airT: 0, jumpHeld: false,
                        slide: 0, slideHeld: false, slideCd: 0, slideQueued: false, tackled: false, coyote: 0, lastFall: null, groundY: 0,
                        stumble: 0, fallT: 0, falling: false, hits: new Set(), done: false, doneT: 0 });
     if (f.rig) {
@@ -205,12 +221,12 @@ function _slide(slot) {
     return true;
 }
 
-function _stumble(f, t, why) {
+function _stumble(f, t, why, by) {
     if (f.stumble > 0.2) return;
     f.stumble = t; f.slide = 0;
     f.anim?.play('hit', { restart: true });
     sfx('slam'); haptic([40]);
-    if (_stage?.gl) _fx.burst(new THREE.Vector3(f.x + 0.4, f.y + 0.8, f.z), why === 'trip' ? seat(1 - f.slot).color : 0xffd27a, 0.35, 0.22);
+    if (_stage?.gl) _fx.burst(new THREE.Vector3(f.x + 0.4, f.y + 0.8, f.z), why === 'trip' ? seat(by).color : 0xffd27a, 0.35, 0.22);
 }
 
 function _onDown(slot) { _in.seat(slot).zone = null; }
@@ -226,7 +242,9 @@ function _swipe(slot, dx, dy) {
 // Reads the next hazard and acts at a distance that is right on average and
 // noisier the weaker it is; now and then it simply misses one.
 function _botStep(slot, dt) {
-    const f = _figs[slot], b = _bot[slot], o = _figs[1 - slot];
+    const f = _figs[slot], b = _bot[slot];
+    // The rival to tackle: the nearest one in front.
+    const o = _figs.filter(q => q !== f && q.x > f.x).sort((p, q) => p.x - q.x)[0] || _figs.find(q => q !== f);
     if (f.fallT > 0 || f.done) return;
     b.hold = Math.max(0, b.hold - dt);
     f.jumpHeld = b.hold > 0;
@@ -265,14 +283,14 @@ function _enter(phase) {
     _phase = phase; _phaseT = 0;
     if (phase === 'ready') {
         _round++;
-        if (_round > 1) { _newCourse(); [0, 1].forEach(s => _hud.hint(s, '')); }
+        if (_round > 1) { _newCourse(); _seats().forEach(s => _hud.hint(s, '')); }
         _resetRound();
         _hud.say(`RACE ${_round}`, 'FIRST TO THE BANNER', READY_TIME * 1000, _t, '#ff7ac0');
     } else if (phase === 'play') { _hud.say('GO!', '', 600, _t, '#34f5a0'); sfx('go'); }
     else if (phase === 'result') {
         const w = _winner;
         if (w >= 0) _score[w]++;
-        _hud.say(w < 0 ? 'DEAD HEAT' : `${seat(w).name} TAKES IT`, `${_score[1]} – ${_score[0]}`, RESULT_TIME * 1000, _t, w >= 0 ? seat(w).css : '');
+        _hud.say(w < 0 ? 'DEAD HEAT' : `${seat(w).name} TAKES IT`, _seats().reverse().map(s => _score[s]).join(' – '), RESULT_TIME * 1000, _t, w >= 0 ? seat(w).css : '');
         sfx(w < 0 ? 'land_bad' : 'coin_gain');
         _figs.forEach(f => { if (f.anim) f.anim.play(f.slot === w ? 'victory' : 'defeat'); });
     }
@@ -357,36 +375,36 @@ function _frame(dt) {
     _hud.tick(_t);
     if (_phase === 'ready' && _phaseT > READY_TIME) _enter('play');
     else if (_phase === 'result' && _phaseT > RESULT_TIME) {
-        if (_score[0] >= WIN_ROUNDS || _score[1] >= WIN_ROUNDS || _round >= MAX_ROUNDS) _end();
+        if (_score.some(v => v >= WIN_ROUNDS) || _round >= MAX_ROUNDS) _end();
         else _enter('ready');
     }
 
     if (_phase === 'play') {
         _clock += dt;
-        [0, 1].forEach(slot => {
+        _seats().forEach(slot => {
             if (isBotSlot(slot)) return _botStep(slot, dt);
             const s = _in.seat(slot);
             if (s.down && !s.zone) _swipe(slot, s.dx, s.dy);
         });
         _figs.forEach(f => _step(f, dt));
         // Slide tackles.
-        _figs.forEach(f => {
-            const o = _figs[1 - f.slot];
+        _figs.forEach(f => _figs.forEach(o => {
+            if (o === f) return;
             if (f.slide <= 0 || f.tackled || SLIDE_T - f.slide > 0.45 || o.fallT > 0 || o.done) return;
             const gap = o.x - f.x;
             if (gap > -0.15 && gap < 0.95 && Math.abs(o.y - f.y) < 0.6 && o.slide <= 0) {
                 f.tackled = true;
-                _stumble(o, TRIP_T, 'trip');
+                _stumble(o, TRIP_T, 'trip', f.slot);
                 _hud.say('TRIPPED!', `${seat(f.slot).name} TOOK ${seat(o.slot).name}'S LEGS`, 900, _t, seat(f.slot).css);
             }
-        });
+        }));
         const fin = _figs.filter(f => f.done);
         if (fin.length) {
-            const [a, b] = _figs;
-            _winner = fin.length === 2 && Math.abs(a.x - b.x) < 0.01 ? -1 : (a.x > b.x ? 0 : 1);
+            if (_n === 2) { const [a, b] = _figs; _winner = fin.length === 2 && Math.abs(a.x - b.x) < 0.01 ? -1 : (a.x > b.x ? 0 : 1); }
+            else { const best = Math.max(...fin.map(f => f.x)); _winner = fin.filter(f => best - f.x < 0.01).length > 1 ? -1 : fin.find(f => f.x === best).slot; }
             _enter('result');
         } else if (_clock >= ROUND_CAP) {
-            _winner = Math.abs(_figs[0].x - _figs[1].x) < 0.3 ? -1 : (_figs[0].x > _figs[1].x ? 0 : 1);
+            _winner = _n === 2 ? (Math.abs(_figs[0].x - _figs[1].x) < 0.3 ? -1 : (_figs[0].x > _figs[1].x ? 0 : 1)) : _leader(0.3);
             _enter('result');
         }
     } else if (_phase === 'result') {
@@ -430,24 +448,29 @@ function _updateCam(dt) {
     const xs = _figs.map(f => f.x), ys = _figs.map(f => f.groundY ?? 0);
     const lead = Math.max(...xs), trail = Math.min(...xs);
     const sep = Math.min(lead - trail, 16);
-    const tx = lead - sep / 2 + 2.2, ty = (ys[0] + ys[1]) / 2;
-    const td = 9.5 + Math.max(0, sep - 3) * 0.6;
+    const tx = lead - sep / 2 + 2.2, ty = ys.reduce((a, b) => a + b, 0) / ys.length;
+    const td = 9.5 + Math.max(0, sep - 3) * 0.6 + (_n > 2 ? 1.5 : 0);
     const k = 1 - Math.exp(-dt * 5);
     _cam.x += (tx - _cam.x) * k; _cam.y += (ty - _cam.y) * (1 - Math.exp(-dt * 4)); _cam.d += (td - _cam.d) * (1 - Math.exp(-dt * 2));
 }
-function _playCam() { return { pos: [_cam.x - 1.2, _cam.y + 2.3, _cam.d], look: [_cam.x + 0.6, _cam.y + 1.1, 0] }; }
+// At three or four the lanes run deeper: look down on them more steeply so the
+// near runners don't hide the far ones.
+function _playCam() { return { pos: [_cam.x - 1.2, _cam.y + 2.3 + (_n > 2 ? 4.5 : 0), _cam.d], look: [_cam.x + 0.6, _cam.y + 1.1, 0] }; }
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
 function _buildZones() {
     const root = _stage.hud;
-    _zones = [0, 1].map(slot => {
+    const many = _n > 2;
+    _zones = _seats().map(slot => {
         if (seat(slot).bot) return null;
         const z = document.createElement('div');
-        z.style.cssText = `position:absolute;top:0;bottom:0;width:50%;${slot === 0 ? 'right:0;' : 'left:0;'}pointer-events:none;`;
-        const lab = 'position:absolute;left:0;right:0;text-align:center;font-size:14px;letter-spacing:3px;color:rgba(255,255,255,.4);';
+        // Over the seat's own strip, slot 0 on the right.
+        z.style.cssText = many ? `position:absolute;top:0;bottom:0;width:${100 / _n}%;left:${(_n - 1 - slot) * 100 / _n}%;pointer-events:none;`
+            : `position:absolute;top:0;bottom:0;width:50%;${slot === 0 ? 'right:0;' : 'left:0;'}pointer-events:none;`;
+        const lab = `position:absolute;left:0;right:0;text-align:center;font-size:${many ? 12 : 14}px;letter-spacing:${many ? 1 : 3}px;color:rgba(255,255,255,.4);`;
         const up = document.createElement('div'), dn = document.createElement('div');
-        up.style.cssText = lab + 'top:22%;'; up.textContent = '⇧ SWIPE UP · JUMP';
-        dn.style.cssText = lab + 'top:66%;'; dn.textContent = '⇩ SWIPE DOWN · SLIDE';
+        up.style.cssText = lab + 'top:22%;'; up.textContent = many ? '⇧ JUMP' : '⇧ SWIPE UP · JUMP';
+        dn.style.cssText = lab + 'top:66%;'; dn.textContent = many ? '⇩ SLIDE' : '⇩ SWIPE DOWN · SLIDE';
         z.append(up, dn);
         root.appendChild(z);
         return z;
@@ -459,34 +482,39 @@ function _renderHud() {
     const stars = n => '★'.repeat(n) + '☆'.repeat(Math.max(0, WIN_ROUNDS - n));
     const pct = f => Math.max(0, Math.min(1, f.x / _course.finish)) * 100;
     const dot = f => `<span style="position:absolute;top:-3px;left:calc(${pct(f)}% - 6px);width:12px;height:12px;border-radius:50%;background:${seat(f.slot).css};box-shadow:0 0 6px ${seat(f.slot).css}"></span>`;
-    _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name}</span><span>${stars(_score[1])}</span>` +
-        `<span style="position:relative;display:inline-block;width:150px;height:6px;border-radius:3px;background:rgba(255,255,255,.25)">` +
-        `<span style="position:absolute;right:-2px;top:-5px;font-size:12px">🏁</span>${_figs.map(dot).join('')}</span>` +
+    const track = `<span style="position:relative;display:inline-block;width:150px;height:6px;border-radius:3px;background:rgba(255,255,255,.25)">` +
+        `<span style="position:absolute;right:-2px;top:-5px;font-size:12px">🏁</span>${_figs.map(dot).join('')}</span>`;
+    // Left to right as they sit, the highest slot on the left: races won.
+    if (_n > 2) _hud.bar(_seats().reverse().map(s => `<span style="color:${seat(s).css}">${stars(_score[s])}</span>`).join('') + track);
+    else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name}</span><span>${stars(_score[1])}</span>` + track +
         `<span>${stars(_score[0])}</span><span style="color:${seat(0).css}">${seat(0).name}</span>`);
     _figs.forEach(f => _hud.lit(f.slot, f.slide > 0 || !f.ground, f.slide > 0 ? 'rgba(52,245,160,.3)' : 'rgba(255,122,192,.3)'));
     _zones.forEach(z => { if (z) z.style.opacity = _phase === 'play' || _phase === 'ready' ? (_round > 1 ? '0.5' : '1') : '0'; });
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `RACE ${_round} · ${seat(1).name} ${_score[1]} – ${_score[0]} ${seat(0).name}`;
+    if (el && _phase === 'play') el.textContent = _n > 2 ? `RACE ${_round} · FIRST TO ${WIN_ROUNDS}`
+        : `RACE ${_round} · ${seat(1).name} ${_score[1]} – ${_score[0]} ${seat(0).name}`;
 }
 
 function _end() {
     _phase = 'over';
     _hud.say('');
     _zones.forEach(z => { if (z) z.style.opacity = '0'; });
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
-    // Both on the finish roof for the verdict.
+    const top = Math.max(..._score), lead = _seats().filter(s => _score[s] === top);
+    const w = lead.length === 1 ? lead[0] : -1, rank = _score.slice();
+    // Everybody on the finish roof for the verdict, in a line, slot 0 on the right.
     const fr = _course.roofs[_course.roofs.length - 1];
+    const off = slot => (_n === 2 ? (slot === 0 ? 1.3 : -1.3) : ((_n - 1) / 2 - slot) * 1.3);
     _figs.forEach(f => {
-        Object.assign(f, { x: _course.finish + 2 + (f.slot === 0 ? 1.3 : -1.3), y: fr.y, z: 0, groundY: fr.y, fallT: 0, slide: 0, stumble: 0 });
-        if (f.rig) { f.rig.root.position.set(f.x, f.y, f.z); f.anim.face(f.slot === 0 ? 0.4 : -0.4, true); }
+        Object.assign(f, { x: _course.finish + 2 + off(f.slot), y: fr.y, z: 0, groundY: fr.y, fallT: 0, slide: 0, stumble: 0 });
+        if (f.rig) { f.rig.root.position.set(f.x, f.y, f.z); f.anim.face(off(f.slot) > 0 ? 0.4 : -0.4, true); }
     });
     _cam.x = _course.finish + 2; _cam.y = fr.y;
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
         sub: w < 0 ? 'NECK AND NECK' : 'FASTEST ON THE ROOFS',
         // From the winner's outer side, so the other one is off the edge of the shot.
-        closeUp: (f, p) => ({ pos: [p.x + (f.slot === 0 ? 1.4 : -1.4), p.y + 1.5, p.z + 4.2], look: [p.x, p.y + 0.8, p.z] }),
-        onDone: () => _finish(w),
+        closeUp: (f, p) => ({ pos: [p.x + (off(f.slot) > 0 ? 1.4 : -1.4), p.y + 1.5, p.z + 4.2], look: [p.x, p.y + 0.8, p.z] }),
+        onDone: () => _finish(w, rank),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -495,7 +523,7 @@ function _end() {
 // For probes.
 export function _debugState() {
     return {
-        phase: _phase, round: _round, score: _score.slice(), clock: +_clock.toFixed(2),
+        phase: _phase, n: _n, round: _round, score: _score.slice(), clock: +_clock.toFixed(2),
         x: _figs.map(f => +f.x.toFixed(2)), y: _figs.map(f => +f.y.toFixed(2)),
         ground: _figs.map(f => f.ground), slide: _figs.map(f => f.slide > 0), stumble: _figs.map(f => f.stumble > 0),
         falling: _figs.map(f => f.fallT > 0), lastFall: _figs.map(f => f.lastFall || null), done: _figs.map(f => f.done),
