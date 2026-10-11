@@ -15,11 +15,14 @@
 //
 // Hay bales cross both lanes. Only a chained hop (two in a row or more) is high
 // enough to clear one; anything lower bounces off it. First to the flag wins.
+//
+// LIVE (MG_PROFILE.live): two, three or four side by side along one edge, a
+// lane each, slot 0 nearest the camera as at two. Time up: furthest wins.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
@@ -27,6 +30,7 @@ import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const START_X = -18, FINISH_X = 18;
 const LANE_Z = [1.1, -1.1];              // P1 near, P2 far
+const LANE_GAP = 1.7;                    // lane to lane at three or four
 const BALES = [-9, 0, 9];                // x of each line of bales, both lanes
 const BALE_W = 0.9, BALE_H = 0.5;
 const HOP_T = 0.42;                      // s in the air, every hop
@@ -47,12 +51,13 @@ const FIG_SCALE = 0.85;
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _look = null, _r = [], _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _winner = -1, _endAt = 0, _count = 0, _frozen = false;
+let _n = 2, _look = null, _r = [], _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _winner = -1, _endAt = 0, _count = 0, _frozen = false;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -1; _endAt = 0; _count = 0; _frozen = false;
+    _n = Math.max(2, Math.min(4, slotCount()));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -65,9 +70,9 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _fx = effects(_stage);
     _dir = createDirector(_stage);
     if (_stage.gl) _buildMeadow();
-    _r = [0, 1].map(_buildRacer);
+    _r = _seats().map(_buildRacer);
     _look = _stage.gl ? new THREE.Vector3(..._cam().look) : null;
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'TAP IN RHYTHM TO HOP'));
+    _seats().forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'TAP IN RHYTHM TO HOP'));
 
     _dir.open({
         place: 'LONGHORN RANCH · THE HAY MEADOW', title: 'SACK RACE',
@@ -85,17 +90,26 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _r = []; _dir = null; _hud = null; _in = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+
+// The lanes: at two the shipped pair, at three or four evenly spaced, slot 0
+// nearest the camera.
+const _seats = () => Array.from({ length: _n }, (_, i) => i);
+const _laneZ = slot => (_n === 2 ? LANE_Z[slot] : ((_n - 1) / 2 - slot) * LANE_GAP);
+const _halfW = () => (_n === 2 ? 2.1 : (_n / 2) * LANE_GAP);   // centre line to the outer chalk
 
 // The camera sits side-on over the middle of the pack, and pulls back as the
 // two racers spread so both stay in frame. It follows where the racers ARE
 // (mid-hop), not where they will land, which jumped a whole hop at a time.
 function _cam() {
     const xs = _r.length ? _r.map(r => (r.drawX != null ? r.drawX : r.x)) : [START_X, START_X];
-    const mid = (xs[0] + xs[1]) / 2, spread = Math.abs(xs[0] - xs[1]);
+    const lo = Math.min(...xs), hi = Math.max(...xs);
+    const mid = (lo + hi) / 2, spread = hi - lo;
     const cx = Math.max(START_X + 5, Math.min(FINISH_X - 4, mid + 1.5));
-    const back = 10.5 + Math.min(10, spread * 0.55);
-    return { pos: [cx, 3.4 + back * 0.12, back], look: [cx, 0.7, 0] };
+    const back = 10.5 + Math.min(10, spread * 0.55) + (_n > 2 ? 2 : 0);
+    // At three or four the lanes run deeper: look down on them more steeply so
+    // the near racers don't hide the far ones.
+    return { pos: [cx, 3.4 + back * 0.12 + (_n > 2 ? 4 : 0), back], look: [cx, 0.7, 0] };
 }
 
 // ── The meadow ───────────────────────────────────────────────────────────────
@@ -110,39 +124,43 @@ function _buildMeadow() {
     grass.rotation.x = -Math.PI / 2; grass.receiveShadow = true;
     // Mown lanes, chalk lines, and each lane's colour at the start.
     const chalk = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    [0, 1].forEach(i => {
-        const lane = add(new THREE.PlaneGeometry(FINISH_X - START_X + 4, 1.9), new THREE.MeshStandardMaterial({ color: i ? 0x6aa842 : 0x86c457, roughness: 1 }), 0, 0.005, LANE_Z[i]);
+    const laneW = _n === 2 ? 1.9 : LANE_GAP - 0.1;
+    _seats().forEach(i => {
+        const lane = add(new THREE.PlaneGeometry(FINISH_X - START_X + 4, laneW), new THREE.MeshStandardMaterial({ color: i % 2 ? 0x6aa842 : 0x86c457, roughness: 1 }), 0, 0.005, _laneZ(i));
         lane.rotation.x = -Math.PI / 2; lane.receiveShadow = true;
-        const tag = add(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: seat(i).color }), START_X - 2.2, 0.25, LANE_Z[i]);
+        const tag = add(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: seat(i).color }), START_X - 2.2, 0.25, _laneZ(i));
         tag.castShadow = true;
     });
-    [-2.1, 0, 2.1].forEach(z => { const l = add(new THREE.PlaneGeometry(FINISH_X - START_X + 4, 0.06), chalk, 0, 0.01, z); l.rotation.x = -Math.PI / 2; });
-    const line = add(new THREE.PlaneGeometry(0.16, 4.2), chalk, START_X, 0.012, 0); line.rotation.x = -Math.PI / 2;
+    const hw = _halfW();
+    (_n === 2 ? [-2.1, 0, 2.1] : Array.from({ length: _n + 1 }, (_, k) => -hw + k * LANE_GAP)).forEach(z => { const l = add(new THREE.PlaneGeometry(FINISH_X - START_X + 4, 0.06), chalk, 0, 0.01, z); l.rotation.x = -Math.PI / 2; });
+    const line = add(new THREE.PlaneGeometry(0.16, hw * 2), chalk, START_X, 0.012, 0); line.rotation.x = -Math.PI / 2;
     // Finish: chequered strip, two poles and a banner.
     const cv = document.createElement('canvas'); cv.width = 128; cv.height = 16;
     const cx = cv.getContext('2d');
     for (let i = 0; i < 16; i++) for (let j = 0; j < 2; j++) { cx.fillStyle = (i + j) % 2 ? '#111' : '#fff'; cx.fillRect(i * 8, j * 8, 8, 8); }
     const tex = new THREE.CanvasTexture(cv);
-    const fin = add(new THREE.PlaneGeometry(4.2, 0.5), new THREE.MeshBasicMaterial({ map: tex }), FINISH_X, 0.013, 0);
+    const fin = add(new THREE.PlaneGeometry(hw * 2, 0.5), new THREE.MeshBasicMaterial({ map: tex }), FINISH_X, 0.013, 0);
     fin.rotation.x = -Math.PI / 2; fin.rotation.z = Math.PI / 2;
     const pole = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
-    [-2.3, 2.3].forEach(z => { const p = add(new THREE.CylinderGeometry(0.1, 0.1, 3.4, 8), pole, FINISH_X, 1.7, z); p.castShadow = true; });
-    const ban = add(new THREE.BoxGeometry(0.06, 0.6, 4.7), new THREE.MeshBasicMaterial({ map: tex }), FINISH_X, 3.1, 0);
+    [-hw - 0.2, hw + 0.2].forEach(z => { const p = add(new THREE.CylinderGeometry(0.1, 0.1, 3.4, 8), pole, FINISH_X, 1.7, z); p.castShadow = true; });
+    const ban = add(new THREE.BoxGeometry(0.06, 0.6, hw * 2 + 0.5), new THREE.MeshBasicMaterial({ map: tex }), FINISH_X, 3.1, 0);
     ban.rotation.x = 0;
-    const flag = add(new THREE.PlaneGeometry(1.1, 0.7), new THREE.MeshStandardMaterial({ color: 0xef4444, side: THREE.DoubleSide }), FINISH_X + 0.55, 3.05, 2.3);
+    const flag = add(new THREE.PlaneGeometry(1.1, 0.7), new THREE.MeshStandardMaterial({ color: 0xef4444, side: THREE.DoubleSide }), FINISH_X + 0.55, 3.05, hw + 0.2);
     flag.userData.flag = true;
     // Hay bales: a line across both lanes at each mark.
     const hay = new THREE.MeshStandardMaterial({ color: 0xe8c15a, roughness: 1 });
     const twine = new THREE.MeshStandardMaterial({ color: 0x9a6b2f });
-    BALES.forEach(x => [0, 1].forEach(i => {
-        const b = add(new THREE.BoxGeometry(BALE_W, BALE_H, 1.6), hay, x, BALE_H / 2, LANE_Z[i]);
+    const baleD = _n === 2 ? 1.6 : LANE_GAP - 0.2;
+    BALES.forEach(x => _seats().forEach(i => {
+        const b = add(new THREE.BoxGeometry(BALE_W, BALE_H, baleD), hay, x, BALE_H / 2, _laneZ(i));
         b.castShadow = true; b.receiveShadow = true;
-        [-0.45, 0.45].forEach(dz => add(new THREE.BoxGeometry(BALE_W + 0.02, BALE_H + 0.02, 0.05), twine, x, BALE_H / 2, LANE_Z[i] + dz));
+        [-0.45, 0.45].forEach(dz => add(new THREE.BoxGeometry(BALE_W + 0.02, BALE_H + 0.02, 0.05), twine, x, BALE_H / 2, _laneZ(i) + dz * baleD / 1.6));
     }));
     // A post-and-rail fence behind, a red barn, a few trees.
     const wood = new THREE.MeshStandardMaterial({ color: 0x9b6b3d, roughness: 0.9 });
-    for (let x = START_X - 6; x <= FINISH_X + 6; x += 3) add(new THREE.BoxGeometry(0.18, 1.2, 0.18), wood, x, 0.6, -3.4);
-    [0.45, 0.95].forEach(y => add(new THREE.BoxGeometry(FINISH_X - START_X + 12, 0.12, 0.08), wood, 0, y, -3.4));
+    const fenceZ = _n === 2 ? -3.4 : -hw - 1;
+    for (let x = START_X - 6; x <= FINISH_X + 6; x += 3) add(new THREE.BoxGeometry(0.18, 1.2, 0.18), wood, x, 0.6, fenceZ);
+    [0.45, 0.95].forEach(y => add(new THREE.BoxGeometry(FINISH_X - START_X + 12, 0.12, 0.08), wood, 0, y, fenceZ));
     const barnM = new THREE.MeshStandardMaterial({ color: 0xb4332b, roughness: 0.8 });
     add(new THREE.BoxGeometry(7, 4.2, 5), barnM, -4, 2.1, -13);
     const gable = new THREE.Shape([new THREE.Vector2(-3.9, 0), new THREE.Vector2(3.9, 0), new THREE.Vector2(0, 2.4)]);
@@ -228,7 +246,7 @@ function _launch(r, onBeat) {
 function _land(r) {
     const h = r.hop;
     r.x = h.x1; r.hop = null; r.landedAt = _t;
-    if (_stage?.gl) _fx.puff(new THREE.Vector3(r.x, 0.1, LANE_Z[r.slot]), 0xd9cfa0, 3, 0.4, 0.3);
+    if (_stage?.gl) _fx.puff(new THREE.Vector3(r.x, 0.1, _laneZ(r.slot)), 0xd9cfa0, 3, 0.4, 0.3);
     if (h.plant) {
         r.plant = PLANT_T; r.streak = 0; r.wobble = 0; r.bot.at = null;
         sfx('land_bad'); if (!isBotSlot(r.slot)) haptic([40, 30, 40]);
@@ -239,7 +257,7 @@ function _land(r) {
         // Start the approach again: back from the bale, chain at zero.
         r.bump = BUMP_T; r.streak = 0;
         sfx('dice_land'); if (!isBotSlot(r.slot)) haptic([30]);
-        if (_stage?.gl) _fx.puff(new THREE.Vector3(h.blocked - 0.5, 0.5, LANE_Z[r.slot]), 0xe8c15a, 5, 0.4, 0.6);
+        if (_stage?.gl) _fx.puff(new THREE.Vector3(h.blocked - 0.5, 0.5, _laneZ(r.slot)), 0xe8c15a, 5, 0.4, 0.6);
         r.anim?.play('hit', { restart: true });
         return;
     }
@@ -307,7 +325,11 @@ function _frame(dt) {
             if (isBotSlot(r.slot)) _botStep(r, dt);
         });
         if (_endAt && _clock >= _endAt) _end();
-        else if (_clock >= MATCH_TIME && _winner < 0) { _winner = _r[0].x > _r[1].x ? 0 : _r[1].x > _r[0].x ? 1 : -1; _end(); }
+        else if (_clock >= MATCH_TIME && _winner < 0) {
+            // Time up: the furthest down the course, unless two share the lead.
+            const best = Math.max(..._r.map(r => r.x)), lead = _r.filter(r => r.x === best);
+            _winner = lead.length === 1 ? lead[0].slot : -1; _end();
+        }
     }
     _r.forEach(r => _draw(r, dt));
     _fx?.update(dt);
@@ -343,7 +365,7 @@ function _draw(r, dt) {
         sq = since < 0.12 ? 1 - Math.sin(since / 0.12 * Math.PI) * 0.18 : 1;
     }
     r.drawX = x;
-    r.g.position.set(x, y, LANE_Z[r.slot]);
+    r.g.position.set(x, y, _laneZ(r.slot));
     r.g.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
     const tilt = r.plant > 0 ? -Math.min(1.35, (PLANT_T - r.plant) * 8) : r.wobble ? Math.sin(_t * 30) * 0.18 : 0;
     r.g.rotation.z = tilt;
@@ -354,7 +376,7 @@ function _draw(r, dt) {
         const left = h ? h.T - h.t : 0;
         cue.visible = !!show;
         if (show) {
-            cue.position.set(x, 2.05 + y, LANE_Z[r.slot]);
+            cue.position.set(x, 2.05 + y, _laneZ(r.slot));
             cue.scale.setScalar(1 + Math.min(1, left / h.T) * 2.2);
             const inWin = left <= EARLY_OK;
             cue.material.color.setHex(h.queued ? 0xfacc15 : inWin ? 0x4ade80 : 0xffffff);
@@ -368,7 +390,9 @@ function _renderHud() {
     if (!_hud) return;
     const m = r => Math.max(0, Math.round(((r.x - START_X) / (FINISH_X - START_X)) * 100));
     const chain = r => (r.streak >= 2 ? ` 🔥${r.streak}` : '');
-    _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${m(_r[1])}%${chain(_r[1])}</span>` +
+    // Left to right as they sit, the highest slot on the left.
+    if (_n > 2) _hud.bar(_seats().reverse().map(s => `<span style="color:${seat(s).css}">${m(_r[s])}%${chain(_r[s])}</span>`).join(''));
+    else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${m(_r[1])}%${chain(_r[1])}</span>` +
         `<span>🥔 SACK RACE</span>` +
         `<span style="color:${seat(0).css}">${chain(_r[0])} ${m(_r[0])}% ${seat(0).name}</span>`);
     _r.forEach(r => {
@@ -378,7 +402,10 @@ function _renderHud() {
         _hud.lit(r.slot, !!(r.hop && r.hop.T - r.hop.t <= EARLY_OK), 'rgba(74,222,128,.35)');
     });
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'race') el.textContent = `${seat(0).name} ${m(_r[0])}% – ${m(_r[1])}% ${seat(1).name}`;
+    if (el && _phase === 'race') {
+        if (_n > 2) { const lead = _r.reduce((a, r) => (r.x > a.x ? r : a)); el.textContent = `${seat(lead.slot).name} LEADS · ${m(lead)}%`; }
+        else el.textContent = `${seat(0).name} ${m(_r[0])}% – ${m(_r[1])}% ${seat(1).name}`;
+    }
 }
 
 function _end() {
@@ -387,10 +414,12 @@ function _end() {
     _hud.say('');
     _r.forEach(r => { if (r.cue) r.cue.visible = false; });
     const w = _winner;
+    // Rank: the finished by finishing time, then the rest by how far they got.
+    const rank = _r.map(r => (r.finished ? 1000 - r.finished : r.x - START_X));
     _dir.close({
         winner: w, figs: _r.filter(r => r.rig).map(r => ({ slot: r.slot, rig: r.rig, anim: r.anim })),
         sub: w < 0 ? 'DEAD HEAT' : 'FIRST TO THE FLAG',
-        onDone: () => _finish(w),
+        onDone: () => _finish(w, rank),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -398,7 +427,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2), winner: _winner,
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2), winner: _winner,
              racers: _r.map(r => ({ x: +r.x.toFixed(2), streak: r.streak, hops: r.hops, perfect: r.perfect, wobble: r.wobble,
                                     plant: +r.plant.toFixed(2), bump: +r.bump.toFixed(2), finished: r.finished,
                                     hop: r.hop ? { t: +r.hop.t.toFixed(3), T: r.hop.T, H: +r.hop.H.toFixed(2), x1: +r.hop.x1.toFixed(2), blocked: r.hop.blocked, queued: r.hop.queued, plant: r.hop.plant } : null })),
