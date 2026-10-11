@@ -624,7 +624,9 @@ export const MG_PROFILE = {
     minigolf: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     bowling: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     sackrace: { genre: 'race', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
-    snowball: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one yard on one screen. At 3-4 each player has the ground under
+    // their zone (a wall each at four), and the last one still in wins.
+    snowball: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     pancakes: { genre: 'aim', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
     shellgame: { genre: 'brain', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
     // A shared tower taken in turns: a third or fourth player is one more
