@@ -10,14 +10,19 @@
 //
 // Five rounds, each shuffle longer and quicker than the last. A right pick
 // scores a point; most points wins, and a tie goes to a sudden-death shuffle.
+//
+// LIVE (MG_PROFILE.live): two, three or four round the table. Each player's
+// buttons sit in their own zone and read the cups from their own end; every
+// pick is secret until all of them are in.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
+import { seatRing, zonesFor } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, faceoffHud, effects, overheadCam } from '../engine/StageKit.js';
+import { seat, seatEdge, faceoffHud, effects, overheadCam } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const CUP_X = [-1.7, 0, 1.7];            // the three positions, P1's left to right
@@ -31,13 +36,14 @@ const FIG_SCALE = 1.05;
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _fx = null;
 let _cups = [], _pea = null, _figs = [], _pads = [], _rings = [];
-let _score = [0, 0], _round = 0, _phase = 'intro', _sub = '', _subT = 0, _t = 0;
+let _n = 2, _score = [0, 0], _round = 0, _phase = 'intro', _sub = '', _subT = 0, _t = 0;
 let _under = 0, _swaps = [], _swapI = 0, _plan = null, _picks = [null, null], _bot = [null, null], _frozen = false;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _score = [0, 0]; _round = 0; _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _picks = [null, null]; _frozen = false;
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _score = new Array(_n).fill(0); _round = 0; _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _picks = new Array(_n).fill(null); _frozen = false;
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -53,9 +59,9 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _buildBooth();
     }
     _cups = CUP_X.map((x, i) => _buildCup(i));
-    _figs = [0, 1].map(_buildFig);
+    _figs = Array.from({ length: _n }, (_, slot) => _buildFig(slot));
     _buildPads();
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'WATCH THE CUP WITH THE PEA'));
+    _seats().forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'WATCH THE CUP WITH THE PEA'));
 
     _dir.open({
         place: "THE MIDWAY · MADAME FORTUNA'S BOOTH", title: 'SHELL GAME',
@@ -73,7 +79,8 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _cups = []; _pea = null; _figs = []; _pads = []; _rings = []; _dir = null; _hud = null; _fx = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+const _seats = () => Array.from({ length: _n }, (_, i) => i);
 
 // ── The booth ────────────────────────────────────────────────────────────────
 function _buildBooth() {
@@ -121,8 +128,10 @@ function _buildFig(slot) {
     if (_stage.gl) {
         const c = _stage.character(slot);
         c.rig.root.scale.setScalar(FIG_SCALE);
-        c.rig.root.position.set(0, 0, (slot === 0 ? 1 : -1) * 2.4);
-        c.anim.face(slot === 0 ? Math.PI : 0, true);
+        // At their own end of the table; two to an end at four, side by side.
+        const near = seatEdge(slot) === 'bottom', [a, b] = _n > 2 ? seatRing(_n)[slot].span : [0, 1];
+        c.rig.root.position.set(((a + b) / 2 - 0.5) * 4, 0, (near ? 1 : -1) * 2.4);
+        c.anim.face(near ? Math.PI : 0, true);
         c.anim.play('ready');
         Object.assign(f, { rig: c.rig, anim: c.anim });
         // The ring that shows, at the reveal, which cup this player picked.
@@ -136,17 +145,25 @@ function _buildFig(slot) {
 // ── The pick buttons: LEFT, MIDDLE, RIGHT as each player sees the table ─────
 function _buildPads() {
     const root = _stage.hud;
-    [0, 1].forEach(slot => {
+    // At two, a row across each half as it shipped; at three or four, a row in
+    // each seat's own zone, turned with it, and narrower buttons to fit.
+    const zones = _n > 2 ? zonesFor(_n, _stage.width, _stage.height) : null;
+    const bw = _n > 2 ? 58 : 92, gap = _n > 2 ? 6 : 12;
+    _seats().forEach(slot => {
         const half = document.createElement('div');
-        half.style.cssText = 'position:absolute;left:0;right:0;height:50%;pointer-events:none;' + (slot === 0 ? 'bottom:0;' : 'top:0;transform:rotate(180deg);');
+        if (zones) {
+            const r = zones[slot].rect;
+            half.style.cssText = `position:absolute;left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;pointer-events:none;` +
+                (zones[slot].rot === 180 ? 'transform:rotate(180deg);' : '');
+        } else half.style.cssText = 'position:absolute;left:0;right:0;height:50%;pointer-events:none;' + (slot === 0 ? 'bottom:0;' : 'top:0;transform:rotate(180deg);');
         const row = document.createElement('div');
-        row.style.cssText = 'position:absolute;left:50%;bottom:112px;transform:translateX(-50%);display:flex;gap:12px;';
+        row.style.cssText = `position:absolute;left:50%;bottom:${zones ? 56 : 112}px;transform:translateX(-50%);display:flex;gap:${gap}px;`;
         const btns = ['LEFT', 'MIDDLE', 'RIGHT'].map((label, k) => {
             const b = document.createElement('button');
             b.className = 'bfont';
             b.dataset.slot = slot; b.dataset.k = k;
-            b.style.cssText = `pointer-events:auto;width:92px;height:62px;border-radius:14px;border:3px solid ${seat(slot).css};` +
-                'background:rgba(40,14,50,.85);color:#fff8ee;font-size:15px;letter-spacing:1.5px;opacity:.4;transition:opacity .15s, transform .15s;touch-action:none;';
+            b.style.cssText = `pointer-events:auto;width:${bw}px;height:62px;border-radius:14px;border:3px solid ${seat(slot).css};` +
+                `background:rgba(40,14,50,.85);color:#fff8ee;font-size:${_n > 2 ? 12 : 15}px;letter-spacing:${_n > 2 ? 1 : 1.5}px;opacity:.4;transition:opacity .15s, transform .15s;touch-action:none;`;
             b.innerHTML = `🥤<br>${label}`;
             b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (!isBotSlot(slot)) _pick(slot, k); });
             row.appendChild(b);
@@ -159,13 +176,13 @@ function _buildPads() {
 }
 
 /** A player's button k (0 = their left) → the position index on the table (0 = P1's left). */
-const _posFor = (slot, k) => (slot === 0 ? k : 2 - k);
+const _posFor = (slot, k) => (seatEdge(slot) === 'bottom' ? k : 2 - k);
 
 // ── Rounds ───────────────────────────────────────────────────────────────────
 function _nextRound() {
     _round++;
     _plan = PLAN(Math.min(_round - 1, ROUNDS + 1));
-    _picks = [null, null]; _bot = [null, null];
+    _picks = new Array(_n).fill(null); _bot = new Array(_n).fill(null);
     _rings.forEach(r => { if (r) r.visible = false; });
     // Cups back in a row; the pea under a random one.
     const order = [0, 1, 2].sort(() => Math.random() - 0.5);
@@ -184,28 +201,35 @@ function _nextRound() {
 function _pick(slot, k) {
     if (_phase !== 'play' || _sub !== 'pick' || _picks[slot] != null) return;
     _picks[slot] = _posFor(slot, k);
-    // Your own button lights; the rival only learns that you have locked in.
+    // Your own button lights; the others only learn that you have locked in.
     _pads[slot].forEach((b, i) => { b.style.opacity = i === k ? '1' : '.25'; b.style.transform = i === k ? 'scale(1.08)' : ''; });
-    _hud.hint(1 - slot, seat(1 - slot).bot ? '' : `${seat(slot).name} HAS PICKED`);
+    const inCount = _picks.filter(p => p != null).length;
+    _seats().forEach(o => {
+        if (o === slot || seat(o).bot) return;
+        _hud.hint(o, _n === 2 ? `${seat(slot).name} HAS PICKED` : `${inCount} OF ${_n} PICKED`);
+    });
     sfx('tick');
     if (!isBotSlot(slot)) haptic([12]);
-    if (_picks[0] != null && _picks[1] != null) _reveal();
+    if (_picks.every(p => p != null)) _reveal();
 }
 
 function _reveal() {
     _sub = 'reveal'; _subT = 0;
     const at = _posIndex(_under);
-    [0, 1].forEach(slot => {
+    _seats().forEach(slot => {
         const right = _picks[slot] === at;
         if (right) _score[slot]++;
         const ring = _rings[slot];
-        if (ring && _picks[slot] != null) { ring.visible = true; ring.position.set(CUP_X[_picks[slot]], 0.87 + slot * 0.005, 0); ring.scale.setScalar(slot === 0 ? 1 : 1.2); }
+        // Rings nest, a size each, so two picks on one cup both show.
+        if (ring && _picks[slot] != null && _picks[slot] >= 0) { ring.visible = true; ring.position.set(CUP_X[_picks[slot]], 0.87 + slot * 0.005, 0); ring.scale.setScalar(1 + slot * 0.2); }
         _figs[slot].anim?.play(right ? 'raise' : 'hit', { restart: true });
     });
-    const both = [0, 1].map(s => _picks[s] === at);
-    sfx(both[0] || both[1] ? 'land_good' : 'land_bad');
-    const txt = both[0] && both[1] ? 'BOTH RIGHT!' : both[0] ? `${seat(0).name} FOUND IT` : both[1] ? `${seat(1).name} FOUND IT` : 'NOBODY FOUND IT';
-    _hud.say(txt, `${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`, REVEAL * 1000, _t, '#9be15d');
+    const rights = _seats().filter(s => _picks[s] === at);
+    sfx(rights.length ? 'land_good' : 'land_bad');
+    const txt = !rights.length ? 'NOBODY FOUND IT'
+        : rights.length === 1 ? `${seat(rights[0]).name} FOUND IT`
+        : rights.length === _n ? (_n === 2 ? 'BOTH RIGHT!' : 'ALL RIGHT!') : `${rights.length} FOUND IT`;
+    _hud.say(txt, _n === 2 ? `${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}` : _score.join(' – '), REVEAL * 1000, _t, '#9be15d');
 }
 
 /** Which table position (0 = P1's left) the cup with index i stands at. */
@@ -222,7 +246,7 @@ function _botPlan(slot) {
     const p = Math.max(0.3, Math.min(0.97, 0.55 + _botSkill * 0.45 - speed * (1 - _botSkill) * 0.6 - _plan.swaps * 0.01));
     const at = _posIndex(_under);
     const guess = Math.random() < p ? at : [0, 1, 2].filter(k => k !== at)[(Math.random() * 2) | 0];
-    _bot[slot] = { k: slot === 0 ? guess : 2 - guess, at: 0.6 + Math.random() * 1.8 };
+    _bot[slot] = { k: seatEdge(slot) === 'bottom' ? guess : 2 - guess, at: 0.6 + Math.random() * 1.8 };
 }
 
 // ── The loop ─────────────────────────────────────────────────────────────────
@@ -251,14 +275,14 @@ function _frame(dt) {
                 if (_swapI >= _swaps.length) {
                     _sub = 'pick';
                     _hud.say('PICK!', 'LEFT · MIDDLE · RIGHT — AS YOU SEE IT', 900, _t, '#ffd166');
-                    [0, 1].forEach(slot => { _hud.hint(slot, seat(slot).bot ? '' : 'TAP THE CUP THE PEA IS UNDER'); if (isBotSlot(slot)) _botPlan(slot); });
+                    _seats().forEach(slot => { _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'TAP THE PEA’S CUP' : 'TAP THE CUP THE PEA IS UNDER'); if (isBotSlot(slot)) _botPlan(slot); });
                     _pads.forEach((p, slot) => p.forEach(b => { b.style.opacity = isBotSlot(slot) ? '.4' : '1'; }));
                 } else _startSwap();
             }
         } else if (_sub === 'pick') {
-            [0, 1].forEach(slot => { const b = _bot[slot]; if (b && _picks[slot] == null && _subT >= b.at) _pick(slot, b.k); });
+            _seats().forEach(slot => { const b = _bot[slot]; if (b && _picks[slot] == null && _subT >= b.at) _pick(slot, b.k); });
             if (_subT >= PICK_TIME && _sub === 'pick') {
-                [0, 1].forEach(slot => { if (_picks[slot] == null) _picks[slot] = -1; });
+                _seats().forEach(slot => { if (_picks[slot] == null) _picks[slot] = -1; });
                 _reveal();
             }
         } else if (_sub === 'reveal') {
@@ -266,7 +290,9 @@ function _frame(dt) {
             _cups.forEach(c => { c.lift = u < 0.2 ? u / 0.2 : u < 0.8 ? 1 : Math.max(0, 1 - (u - 0.8) / 0.2); });
             if (_subT >= REVEAL) {
                 _cups.forEach(c => { c.lift = 0; });
-                const done = _round >= ROUNDS && (_score[0] !== _score[1] || _round >= ROUNDS + SUDDEN_MAX);
+                // Done after the last round with one player on top; level at the
+                // top plays sudden death, up to SUDDEN_MAX more shuffles.
+                const done = _round >= ROUNDS && (_leaders().length === 1 || _round >= ROUNDS + SUDDEN_MAX);
                 if (done) _end(); else _nextRound();
             }
         }
@@ -277,6 +303,8 @@ function _frame(dt) {
     if (_done) return;
     _renderHud();
 }
+
+function _leaders() { const top = Math.max(..._score); return _seats().filter(s => _score[s] === top); }
 
 function _startSwap() {
     const [a, b] = _swaps[_swapI];
@@ -296,10 +324,15 @@ function _draw() {
 
 function _renderHud() {
     if (!_hud) return;
-    [0, 1].forEach(slot => _hud.line(slot, `🥤 ${_round > ROUNDS ? 'SUDDEN DEATH' : `ROUND ${Math.max(1, _round)}/${ROUNDS}`} · ${_score[slot]}–${_score[1 - slot]}` +
+    const rnd = _round > ROUNDS ? 'SUDDEN DEATH' : `ROUND ${Math.max(1, _round)}/${ROUNDS}`;
+    _seats().forEach(slot => _hud.line(slot, (_n > 2 ? `🥤 ${_score[slot]} PTS · ${rnd}` : `🥤 ${rnd} · ${_score[slot]}–${_score[1 - slot]}`) +
         (_sub === 'pick' && _picks[slot] == null ? ` · ${Math.max(0, Math.ceil(PICK_TIME - _subT))}s` : '')));
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
+    if (el && _phase === 'play') {
+        const lead = _leaders();
+        el.textContent = _n > 2 ? `${rnd} · ${lead.length === 1 ? `${seat(lead[0]).name} LEADS` : 'LEVEL AT THE TOP'}`
+                                : `${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
+    }
 }
 
 function _end() {
@@ -307,11 +340,12 @@ function _end() {
     _phase = 'over';
     _hud.say('');
     _pads.forEach(p => p.forEach(b => { b.style.display = 'none'; }));
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
+    const lead = _leaders(), w = lead.length === 1 ? lead[0] : -1;
+    const top = Math.max(..._score), next = w < 0 ? top : Math.max(..._score.filter((_, i) => i !== w));
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? `${_score[0]} EACH` : `${_score[w]} TO ${_score[1 - w]}`,
-        onDone: () => _finish(w),
+        sub: w < 0 ? `${top} EACH` : `${_score[w]} TO ${next}`,
+        onDone: () => _finish(w, [..._score]),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -319,7 +353,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, sub: _sub, round: _round, score: [..._score], picks: [..._picks],
+    return { phase: _phase, n: _n, sub: _sub, round: _round, score: [..._score], picks: [..._picks],
              answer: _cups.length ? _posIndex(_under) : -1, swaps: _plan ? _plan.swaps : 0, dur: _plan ? +_plan.dur.toFixed(2) : 0,
              swapI: _swapI, gl: !!_stage?.gl, turned: !!_stage?.turned };
 }
