@@ -629,7 +629,9 @@ export const MG_PROFILE = {
     // Not roomy: one yard on one screen. At 3-4 each player has the ground under
     // their zone (a wall each at four), and the last one still in wins.
     snowball: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
-    pancakes: { genre: 'aim', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
+    // Not roomy: one counter seen side-on, a plate each along it; a seat needs
+    // only a strip of the shared edge to tap.
+    pancakes: { genre: 'aim', control: 'tap', wire: 'snapshot', seats: [2, 4], live: true },
     // Not roomy: one table everybody watches; a seat needs only its three buttons,
     // read from its own end. Picks stay secret until everybody is in.
     shellgame: { genre: 'brain', control: 'tap', wire: 'snapshot', seats: [2, 4], live: true },
