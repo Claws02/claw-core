@@ -38,6 +38,8 @@ const NECK_Y = {
     slime: null, boxy: null, bunny: null,
     ghost: 1.0, cabbie: 0.98, vendor: 0.98,
     banker: 1.18, bodyguard: 1.32, investor: 1.16,
+    frog: null, octopus: null, donut: null, ufo: null, penguin: null, dino: null,
+    cat: 0.9, duck: 0.92,
 };
 
 const GLOVE = 0xf6f7fb;
