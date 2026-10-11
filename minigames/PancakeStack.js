@@ -12,17 +12,21 @@
 // stack that leans far enough topples. Every pancake that lands makes the
 // next one slide faster. Whoever has the TALLEST stack, plate to top,
 // when the 40 s are up wins.
+//
+// LIVE (MG_PROFILE.live): two, three or four side by side along one edge, a
+// plate each along the counter, slot 0 on the right as at two.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
-const PLATE_X = [2.3, -2.3];             // P1 on the right, P2 on the left
+const PLATE_X = [2.3, -2.3];             // P1 on the right, P2 on the left (at two)
+const GAP = 2.6;                         // plate to plate at three or four, right to left
 const TABLE_Y = 0.9, PLATE_R = 0.8, PLATE_TOP = TABLE_Y + 0.08;
 const R = 0.55, TH = 0.13;               // a pancake
 const BOX = R * 1.55;                    // its physics: a flat square that fits inside it
@@ -37,11 +41,12 @@ const FIG_SCALE = 1.0;
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _world = null, _cakeMat = null, _geo = null, _mats = null;
-let _look = null, _p = [], _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _frozen = false;
+let _n = 2, _look = null, _p = [], _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _frozen = false;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
+    _n = Math.max(2, Math.min(4, slotCount()));
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _frozen = false; _look = null;
     registerMinigameCleanup(_destroy);           // R3
 
@@ -56,8 +61,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _dir = createDirector(_stage);
     _world = typeof CANNON !== 'undefined' ? _buildWorld() : null;
     if (_stage.gl) _buildDiner();
-    _p = [0, 1].map(_buildPlayer);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'TAP TO DROP IT ON THE STACK'));
+    _p = Array.from({ length: _n }, (_, slot) => _buildPlayer(slot));
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'TAP TO DROP' : 'TAP TO DROP IT ON THE STACK');
 
     _dir.open({
         place: 'PERDITION · THE ALL-NIGHT DINER', title: 'PANCAKE STACK',
@@ -75,7 +80,11 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _world = null; _p = []; _dir = null; _hud = null; _in = null; _fx = null; _geo = null; _mats = null;
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+// Where a seat's plate is: as shipped at two; evenly along the counter at
+// three or four, slot 0 on the right like the seats.
+const _plateX = slot => (_n === 2 ? PLATE_X[slot] : ((_n - 1) / 2 - slot) * GAP);
+const _plates = () => Array.from({ length: _n }, (_, s) => _plateX(s));
 
 // The camera rises with the taller stack so both tops stay in view.
 function _cam() {
@@ -102,13 +111,13 @@ function _buildWorld() {
     w.addBody(floor);
     // A pedestal under each plate and nothing else: whatever misses the
     // plate goes to the floor, where it can't prop a stack up.
-    PLATE_X.forEach(x => {
+    _plates().forEach(x => {
         const post = new CANNON.Body({ mass: 0, material: hard });
         post.addShape(new CANNON.Box(new CANNON.Vec3(0.12, TABLE_Y / 2, 0.12)));
         post.position.set(x, TABLE_Y / 2, 0);
         w.addBody(post);
     });
-    PLATE_X.forEach(x => {
+    _plates().forEach(x => {
         const plate = new CANNON.Body({ mass: 0, material: hard });
         plate.addShape(new CANNON.Box(new CANNON.Vec3(PLATE_R * 0.8, 0.04, PLATE_R * 0.8)));
         plate.position.set(x, TABLE_Y + 0.04, 0);
@@ -136,15 +145,15 @@ function _buildDiner() {
     const sg = scv.getContext('2d'); sg.fillStyle = '#ff5fa2'; sg.shadowColor = '#ff5fa2'; sg.shadowBlur = 12;
     sg.font = 'bold 40px sans-serif'; sg.textAlign = 'center'; sg.textBaseline = 'middle'; sg.fillText('PANCAKES', 128, 34);
     add(new THREE.PlaneGeometry(3.6, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(scv), transparent: true }), 3.2, 4.2, -3.0);
-    // Two chrome pedestal tables, each topped by its plate.
+    // A chrome pedestal table for each player, each topped by its plate.
     const chrome = new THREE.MeshStandardMaterial({ color: 0xd9d9df, metalness: 0.7, roughness: 0.25 });
-    PLATE_X.forEach(x => {
+    _plates().forEach(x => {
         add(new THREE.CylinderGeometry(0.1, 0.1, TABLE_Y, 12), chrome, x, TABLE_Y / 2, 0).castShadow = true;
         add(new THREE.CylinderGeometry(0.5, 0.55, 0.06, 24), chrome, x, 0.03, 0);
     });
     // Plates.
     const china = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25 });
-    PLATE_X.forEach((x, slot) => {
+    _plates().forEach((x, slot) => {
         const p = add(new THREE.CylinderGeometry(PLATE_R, PLATE_R * 0.8, 0.08, 32), china, x, TABLE_Y + 0.04, 0); p.receiveShadow = true;
         const rim = add(new THREE.TorusGeometry(PLATE_R * 0.97, 0.03, 6, 32), new THREE.MeshStandardMaterial({ color: seat(slot).color }), x, TABLE_Y + 0.08, 0); rim.rotation.x = Math.PI / 2;
     });
@@ -169,7 +178,8 @@ function _buildPlayer(slot) {
         // The cook behind each plate, watching the stack.
         const c = _stage.character(slot);
         c.rig.root.scale.setScalar(FIG_SCALE);
-        c.rig.root.position.set(PLATE_X[slot] + (slot === 0 ? 1.9 : -1.9), 0, -2.8);
+        // At two, beside the plate on the outside; at three or four, right behind it.
+        c.rig.root.position.set(_plateX(slot) + (_n > 2 ? 0 : slot === 0 ? 1.9 : -1.9), 0, -2.8);
         c.anim.face(0, true);
         c.anim.play('ready');
         Object.assign(p, { rig: c.rig, anim: c.anim });
@@ -190,7 +200,7 @@ function _onPlate(p) {
         if (!c.landed || b.velocity.length() > 0.6) return false;
         // Lying flat, not slumped: a pancake tipped on its edge is a collapse.
         const q = b.quaternion, upY = 1 - 2 * (q.x * q.x + q.z * q.z);
-        return upY > 0.9 && b.position.y > PLATE_TOP + TH * 0.3 && Math.hypot(b.position.x - PLATE_X[p.slot], b.position.z) < PLATE_R + 0.2;
+        return upY > 0.9 && b.position.y > PLATE_TOP + TH * 0.3 && Math.hypot(b.position.x - _plateX(p.slot), b.position.z) < PLATE_R + 0.2;
     });
 }
 function _topY(p) {
@@ -202,7 +212,7 @@ const _count = p => _onPlate(p).length;
 const _height = p => Math.max(0, _topY(p) - PLATE_TOP);
 const _cm = h => `${(h * 10).toFixed(1)} cm`;       // one pancake ≈ 1.3 cm
 const _period = p => Math.max(PERIOD_MIN, PERIOD_0 - _count(p) * 0.09);
-const _heldX = p => PLATE_X[p.slot] + Math.sin(p.phase) * SWING;
+const _heldX = p => _plateX(p.slot) + Math.sin(p.phase) * SWING;
 
 function _drop(slot) {
     const p = _p[slot];
@@ -236,7 +246,7 @@ function _botStep(p, dt) {
     if (p.bot.wait > 0) return;
     const on = _onPlate(p);
     const top = on.length ? on.reduce((a, c) => (c.body && c.body.position.y > (a?.body?.position.y ?? -1) ? c : a), null) : null;
-    const target = top?.body ? top.body.position.x : PLATE_X[p.slot];
+    const target = top?.body ? top.body.position.x : _plateX(p.slot);
     const err = (1 - _botSkill) * 0.55 * (Math.random() - 0.5) * 2;
     if (Math.abs(_heldX(p) - (target + err)) < 0.06 + (1 - _botSkill) * 0.1) { _drop(p.slot); p.bot.wait = 0.2 + (1 - _botSkill) * 0.6; }
 }
@@ -327,7 +337,7 @@ function _draw() {
         if (p.aim) {
             p.aim.visible = !!(p.held && p.held.isObject3D) && _phase === 'play' && !isBotSlot(p.slot);
             p.aim.position.set(_heldX(p), top + 0.01, 0);
-            const off = Math.abs(_heldX(p) - PLATE_X[p.slot]);
+            const off = Math.abs(_heldX(p) - _plateX(p.slot));
             p.aim.material.color.setHex(off < 0.15 ? 0x4ade80 : off < 0.4 ? 0xfacc15 : 0xef4444);
         }
     });
@@ -336,12 +346,15 @@ function _draw() {
 function _renderHud() {
     if (!_hud) return;
     const h = _p.map(_height);
-    _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} 📏 ${_cm(h[1])}</span>` +
-        `<span>⏱ ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s</span>` +
+    const clock = `<span>⏱ ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s</span>`;
+    // Left to right as they sit, the highest slot on the left.
+    if (_n > 2) _hud.bar(Array.from({ length: _n }, (_, k) => _n - 1 - k).map(s => `<span style="color:${seat(s).css}">${_cm(h[s])}</span>`).join('') + clock);
+    else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} 📏 ${_cm(h[1])}</span>` + clock +
         `<span style="color:${seat(0).css}">${_cm(h[0])} 📏 ${seat(0).name}</span>`);
-    if (_clock > 6) [0, 1].forEach(slot => _hud.hint(slot, ''));
+    if (_clock > 6) for (let slot = 0; slot < _n; slot++) _hud.hint(slot, '');
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = `${seat(0).name} ${_cm(h[0])} – ${_cm(h[1])} ${seat(1).name}`;
+    if (el && _phase === 'play') el.textContent = _n > 2 ? `TALLEST STACK · ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s`
+        : `${seat(0).name} ${_cm(h[0])} – ${_cm(h[1])} ${seat(1).name}`;
 }
 
 function _end() {
@@ -349,20 +362,23 @@ function _end() {
     _phase = 'over';
     _hud.say('');
     _p.forEach(p => { if (p.held && p.held.isObject3D) p.held.visible = false; if (p.aim) p.aim.visible = false; });
-    // Tallest stack, plate to top. Within half a pancake is a dead heat.
+    // Tallest stack, plate to top. Two within half a pancake of the tallest is
+    // a dead heat.
     const h = _p.map(_height);
-    const w = Math.abs(h[0] - h[1]) < TH / 2 ? -1 : h[0] > h[1] ? 0 : 1;
+    const tallest = Math.max(...h), best = h.reduce((a, v, i) => (tallest - v < TH / 2 ? a.concat(i) : a), []);
+    const w = best.length === 1 ? best[0] : -1;
+    const next = w < 0 ? tallest : Math.max(...h.filter((_, i) => i !== w));
     // Syrup on the winner's stack.
     if (w >= 0 && _stage?.gl) {
         const top = _topY(_p[w]);
         const syrup = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.7, R * 0.9, 0.05, 20), new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.15, transparent: true, opacity: 0.9 }));
-        syrup.position.set(PLATE_X[w], top + 0.03, 0); _stage.add(syrup);
-        const pat = new THREE.Mesh(_geo.pat, new THREE.MeshStandardMaterial({ color: 0xffe28a })); pat.position.set(PLATE_X[w], top + 0.08, 0); _stage.add(pat);
+        syrup.position.set(_plateX(w), top + 0.03, 0); _stage.add(syrup);
+        const pat = new THREE.Mesh(_geo.pat, new THREE.MeshStandardMaterial({ color: 0xffe28a })); pat.position.set(_plateX(w), top + 0.08, 0); _stage.add(pat);
     }
     _dir.close({
         winner: w, figs: _p.filter(p => p.rig).map(p => ({ slot: p.slot, rig: p.rig, anim: p.anim })),
-        sub: w < 0 ? `BOTH ${_cm(h[0])} TALL` : `${_cm(h[w])} TO ${_cm(h[1 - w])}`,
-        onDone: () => _finish(w),
+        sub: w < 0 ? `${_n === 2 ? 'BOTH' : 'LEVEL AT'} ${_cm(tallest)} TALL` : `${_cm(h[w])} TO ${_cm(next)}`,
+        onDone: () => _finish(w, h),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -370,7 +386,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, clock: +_clock.toFixed(2),
+    return { phase: _phase, n: _n, clock: +_clock.toFixed(2),
              players: _p.map(p => ({ count: _count(p), height: +_height(p).toFixed(3), drops: p.drops, reload: +p.reload.toFixed(2), held: !!p.held,
                                      heldX: +_heldX(p).toFixed(2), top: +_topY(p).toFixed(2) })),
              camY: _stage?.camera ? +_stage.camera.position.y.toFixed(3) : 0,
@@ -383,6 +399,6 @@ export function _debugState() {
 /** Probes: freeze the dropper's swing and the clock. */
 export function _debugFreeze(on) { _frozen = !!on; }
 /** Probes: drop P's next pancake at plate x + dx, from code. */
-export function _debugDropAt(slot, dx) { const p = _p[slot]; if (!p) return; p.reload = 0; p.forceX = PLATE_X[slot] + dx; _drop(slot); }
+export function _debugDropAt(slot, dx) { const p = _p[slot]; if (!p) return; p.reload = 0; p.forceX = _plateX(slot) + dx; _drop(slot); }
 /** Probes: set the clock. */
 export function _debugClock(s) { _clock = s; }

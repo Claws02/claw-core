@@ -24,11 +24,14 @@
 // THE HOLD
 //   SIDE-ON, like High Noon: P1 is the right-hand dancer and the right half
 //   of the screen, P2 the left.
+//
+// LIVE (MG_PROFILE.live): two, three or four side by side along one edge, a
+// dancer each in a line across the floor, slot 0 on the right as at two.
 // ============================================================
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic, beatTrack } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
@@ -52,6 +55,7 @@ const COMBO_PTS = 2;
 const TAP_PX    = 16;
 const FIG_SCALE = 1.05;
 const X         = [1.9, -1.9];  // P1 on the right
+const GAP       = 1.7;          // dancer to dancer at three or four
 
 const MOVES = ['raise', 'drop', 'pointL', 'pointR', 'clap'];
 const GLYPH = { raise: '⬆', drop: '⬇', pointL: '⬅', pointR: '➡', clap: '👏' };
@@ -60,7 +64,7 @@ const JUDGE_CSS = { perfect: '#ffd12d', good: '#34f5a0', ok: '#a3e635', miss: '#
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _figs = [], _dj = null, _bot = [];
+let _n = 2, _figs = [], _dj = null, _bot = [];
 let _plan = [], _ph = -1, _S = 0;              // phrase index and its start beat
 let _starts = [], _tempo = [], _frameT = 0;                 // every phrase's start beat; the tempo map the track plays
 let _beat = 0, _bpm = 96, _lastBeat = -1;
@@ -72,8 +76,9 @@ export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _hold = false;
-    _score = [0, 0]; _phase = 'intro'; _t = 0; _beat = 0; _bpm = PHRASES[0].bpm; _lastBeat = -1; _ph = -1; _stageOf = '';
-    _bot = [0, 1].map(() => ({ queue: [] }));
+    _n = Math.max(2, Math.min(4, slotCount()));
+    _score = _seats().map(() => 0); _phase = 'intro'; _t = 0; _beat = 0; _bpm = PHRASES[0].bpm; _lastBeat = -1; _ph = -1; _stageOf = '';
+    _bot = _seats().map(() => ({ queue: [] }));
     _plan = PHRASES.map(p => {
         const moves = [];
         for (let i = 0; i < p.n; i++) {
@@ -99,7 +104,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
     // A finger's beat is when it came down, from the event's own timestamp
     // (registered after touch(), so it overrides the frame-time guess there).
     _stage.listen('pointerdown', e => {
-        const slot = [0, 1].find(k => _in.seat(k).pid === e.pointerId);
+        const slot = _seats().find(k => _in.seat(k).pid === e.pointerId);
         if (slot != null) _in.seat(slot).downBeat = _beatAtEvent(e);
     });
     _fx = effects(_stage);
@@ -114,12 +119,12 @@ export function start(isBot, onWin, botSkill = 0.55) {
         phones.position.y = _dj.rig.H * 0.95;
         _dj.rig.root.add(phones);
     }
-    _figs = [0, 1].map(slot => {
+    _figs = _seats().map(slot => {
         const f = { slot };
         if (_stage.gl) {
             const c = _stage.character(slot);
-            c.rig.root.scale.setScalar(FIG_SCALE);
-            c.rig.root.position.set(X[slot], 0.17, 0.5);
+            c.rig.root.scale.setScalar(_n > 2 ? FIG_SCALE * 0.88 : FIG_SCALE);
+            c.rig.root.position.set(_x(slot), 0.17, 0.5);
             c.anim.face(0, true);
             c.anim.play('groove', { rate: _bpm / 60 });
             Object.assign(f, { rig: c.rig, anim: c.anim });
@@ -127,17 +132,17 @@ export function start(isBot, onWin, botSkill = 0.55) {
         return f;
     });
     // A ring on the floor under each dancer: flashes green on a hit, red on a miss.
-    _rings = [0, 1].map(slot => {
+    _rings = _seats().map(slot => {
         if (!_stage.gl) return null;
-        const m = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.92, 36),
+        const m = new THREE.Mesh(_n > 2 ? new THREE.RingGeometry(0.5, 0.78, 36) : new THREE.RingGeometry(0.62, 0.92, 36),
             new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
-        m.rotation.x = -Math.PI / 2; m.position.set(X[slot], 0.2, 0.5);
+        m.rotation.x = -Math.PI / 2; m.position.set(_x(slot), 0.2, 0.5);
         _stage.add(m);
         return m;
     });
     _buildCards();
     _buildPops();
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'SWIPE ⬆⬇⬅➡ · TAP 👏'));
+    _seats().forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'SWIPE ⬆⬇⬅➡ · TAP 👏'));
 
     _dir.open({
         place: 'SHOPPING PROMENADE · GOLDEN HOUR', title: 'BLOCK PARTY',
@@ -156,9 +161,14 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _figs = []; _dj = null; _set = null; _dir = null; _hud = null; _in = null; _fx = null; _cards = null; _pops = []; _rings = [];
 }
-function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
+function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 
-function _playCam() { return { pos: [0, 3.2, 9.4], look: [0, 1.6, -1.2] }; }
+// The line of dancers: at two the shipped pair, at three or four evenly
+// spaced, slot 0 on the right.
+const _seats = () => Array.from({ length: _n }, (_, i) => i);
+const _x = slot => (_n === 2 ? X[slot] : ((_n - 1) / 2 - slot) * GAP);
+
+function _playCam() { return _n > 2 ? { pos: [0, 3.5, 10.6], look: [0, 1.5, -1.2] } : { pos: [0, 3.2, 9.4], look: [0, 1.6, -1.2] }; }
 
 // ── Phrases ──────────────────────────────────────────────────────────────────
 function _nextPhrase() {
@@ -167,8 +177,8 @@ function _nextPhrase() {
     const p = _plan[_ph];
     _S = _starts[_ph];
     _bpm = p.bpm;
-    _resp = [0, 1].map(() => p.moves.map(() => null));
-    _clean = [true, true]; _danced = [0, 0];
+    _resp = _seats().map(() => p.moves.map(() => null));
+    _clean = _seats().map(() => true); _danced = _seats().map(() => 0);
     _bot.forEach(b => { b.queue = []; });
     _layCards(p);
     _hud.say(p.hide ? 'FROM MEMORY!' : `PHRASE ${_ph + 1}`, p.hide ? 'THE CARDS GO DARK' : 'WATCH THE DJ', LEAD_IN * 60 / _bpm * 1000, _t, p.hide ? '#ff4fa3' : '#ffd12d');
@@ -254,7 +264,7 @@ function _judge(slot, i, j, why = '') {
     if (j === 'miss') { sfx('land_bad'); f.anim?.flinch(); }
     else {
         sfx('land_good'); haptic([j === 'perfect' ? 18 : 8]);
-        if (_stage?.gl && j === 'perfect') _fx.confetti(new THREE.Vector3(X[slot], 1.8, 0.5), [seat(slot).color, 0xffd12d, 0xffffff], 8, 2);
+        if (_stage?.gl && j === 'perfect') _fx.confetti(new THREE.Vector3(_x(slot), 1.8, 0.5), [seat(slot).color, 0xffd12d, 0xffffff], 8, 2);
     }
     _paintDots();
 }
@@ -304,7 +314,7 @@ function _frame(dt) {
             }
             if (w.part === 'resp' && w.i === 0) {
                 if (p.hide) _darkCards();
-                [0, 1].forEach(s => { if (isBotSlot(s)) _botQueue(s); });
+                _seats().forEach(s => { if (isBotSlot(s)) _botQueue(s); });
             }
             if (w.part === 'tally') _tally();
             if (w.part === 'next') {
@@ -321,7 +331,7 @@ function _frame(dt) {
             if (w.part === 'call') for (let j = 0; j <= w.i; j++) _revealCard(j, false);
             else if (w.part === 'resp' && !p.hide) for (let j = 0; j < p.n; j++) _revealCard(j, false);
             // Swipes, read as soon as they are past the tap threshold.
-            [0, 1].forEach(slot => {
+            _seats().forEach(slot => {
                 if (isBotSlot(slot)) return;
                 const s = _in.seat(slot);
                 if (!s.down || !s.moved || s.swiped) return;
@@ -337,7 +347,7 @@ function _frame(dt) {
                 const pp = _plan[_ph];
                 for (let i = 0; i < pp.n; i++) {
                     if (_beat < _respBeat(i) + REACH) break;
-                    [0, 1].forEach(slot => { if (!_resp[slot][i]) _judge(slot, i, 'miss', 'NO MOVE'); });
+                    _seats().forEach(slot => { if (!_resp[slot][i]) _judge(slot, i, 'miss', 'NO MOVE'); });
                 }
             }
         }
@@ -371,15 +381,17 @@ function _tally() {
     const p = _plan[_ph];
     // From-memory phrases: now show what the moves were.
     if (p.hide) _cards?.list.forEach((k, i) => { k.g.textContent = GLYPH[p.moves[i]]; k.g.style.opacity = '1'; });
-    const msgs = [0, 1].map(slot => {
+    const msgs = _seats().map(slot => {
         if (_clean[slot]) { _score[slot] += COMBO_PTS; return 'FULL COMBO'; }
         return '';
     });
-    const both = msgs[0] && msgs[1];
-    if (msgs[0] || msgs[1]) {
-        _hud.say(both ? 'DOUBLE FULL COMBO!' : `${seat(msgs[0] ? 0 : 1).name}: FULL COMBO!`, `+${COMBO_PTS}`, 60 / p.bpm * 1000 * TALLY, _t, '#ffd12d');
+    const got = _seats().filter(s => msgs[s]);
+    if (got.length) {
+        const head = got.length === 1 ? `${seat(got[0]).name}: FULL COMBO!` : _n === 2 ? 'DOUBLE FULL COMBO!'
+            : got.length === _n ? 'EVERYBODY FULL COMBO!' : `${got.length} FULL COMBOS!`;
+        _hud.say(head, `+${COMBO_PTS}`, 60 / p.bpm * 1000 * TALLY, _t, '#ffd12d');
         sfx('coin_gain');
-        [0, 1].forEach(s => { if (msgs[s]) { _figs[s].anim?.play('victory', { restart: true }); _figs[s].poseUntil = _beat + 0.9; } });
+        _seats().forEach(s => { if (msgs[s]) { _figs[s].anim?.play('victory', { restart: true }); _figs[s].poseUntil = _beat + 0.9; } });
     }
 }
 
@@ -408,24 +420,29 @@ function _layCards(p) {
     _cards.part = '';
     _cards.list = p.moves.map(m => {
         const c = document.createElement('div');
-        c.style.cssText = 'width:54px;height:72px;border-radius:10px;background:rgba(20,12,24,.78);border:3px solid rgba(255,255,255,.25);' +
+        c.style.cssText = `width:${_n > 2 ? 62 : 54}px;height:72px;border-radius:10px;` + 'background:rgba(20,12,24,.78);border:3px solid rgba(255,255,255,.25);' +
             'display:flex;flex-direction:column;align-items:center;justify-content:center;transition:transform .08s,opacity .15s;opacity:.4;';
         const g = document.createElement('div');
         g.style.cssText = 'font-size:30px;line-height:34px;color:#fff;visibility:hidden;';
         g.textContent = GLYPH[m];
-        // One result badge per player, in screen order: P2 (left half) then P1.
+        // One result badge per player, in screen order: the highest slot (left)
+        // to P1 (right).
         const marks = document.createElement('div');
-        marks.style.cssText = 'display:flex;gap:5px;margin-top:3px;';
-        const d = [1, 0].map(slot => {
+        const many = _n > 2;
+        marks.style.cssText = `display:flex;gap:${many ? 2 : 5}px;margin-top:3px;`;
+        const dot = [];
+        _seats().reverse().forEach(slot => {
             const e = document.createElement('div');
-            e.style.cssText = `width:19px;height:19px;border-radius:6px;border:2px solid ${seat(slot).css};font-size:13px;line-height:15px;` +
-                'text-align:center;color:#fff;font-weight:bold;';
+            e.style.cssText = many
+                ? `width:12px;height:12px;border-radius:4px;border:2px solid ${seat(slot).css};font-size:9px;line-height:12px;`
+                : `width:19px;height:19px;border-radius:6px;border:2px solid ${seat(slot).css};font-size:13px;line-height:15px;`;
+            e.style.cssText += 'text-align:center;color:#fff;font-weight:bold;';
             marks.appendChild(e);
-            return e;
+            dot[slot] = e;
         });
         c.append(g, marks);
         _cards.cardRow.appendChild(c);
-        return { c, g, dot: [d[1], d[0]], shown: false };     // dot[slot]
+        return { c, g, dot, shown: false };     // dot[slot]
     });
 }
 function _revealCard(i, pop = true) {
@@ -443,7 +460,7 @@ function _highlight(i) {
 }
 const MARK = { perfect: ['★', '#eab308'], good: ['✓', '#16a34a'], ok: ['✓', '#65a30d'], miss: ['✗', '#dc2626'] };
 function _paintDots() {
-    _cards?.list.forEach((k, i) => [0, 1].forEach(slot => {
+    _cards?.list.forEach((k, i) => _seats().forEach(slot => {
         const j = _resp[slot][i], e = k.dot[slot];
         e.textContent = j ? MARK[j][0] : '';
         e.style.background = j ? MARK[j][1] : 'transparent';
@@ -458,12 +475,13 @@ function _flash(slot, j) {
 }
 // A big verdict over each player's own half, for every move: right or wrong at a glance.
 function _buildPops() {
-    _pops = [0, 1].map(slot => {
+    _pops = _seats().map(slot => {
         const box = document.createElement('div');
-        box.style.cssText = `position:absolute;left:${slot === 0 ? 75 : 25}%;top:44%;transform:translate(-50%,-50%) scale(.8);text-align:center;` +
+        // Over the seat's own strip: slot 0 on the right.
+        box.style.cssText = `position:absolute;left:${100 * (_n - 1 - slot + 0.5) / _n}%;top:44%;transform:translate(-50%,-50%) scale(.8);text-align:center;` +
             'white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s,transform .12s;text-shadow:0 3px 0 rgba(0,0,0,.45),0 0 14px rgba(0,0,0,.35);';
-        const big = document.createElement('div'); big.style.cssText = 'font-size:40px;line-height:44px;';
-        const sub = document.createElement('div'); sub.style.cssText = 'font-size:18px;color:#fff;';
+        const big = document.createElement('div'); big.style.cssText = _n > 2 ? 'font-size:26px;line-height:30px;' : 'font-size:40px;line-height:44px;';
+        const sub = document.createElement('div'); sub.style.cssText = _n > 2 ? 'font-size:14px;color:#fff;' : 'font-size:18px;color:#fff;';
         box.append(big, sub);
         _stage.hud.appendChild(box);
         return { box, big, sub, until: 0, text: '' };
@@ -485,6 +503,12 @@ function _pop(slot, j, why, sub) {
 function _renderHud() {
     if (!_hud) return;
     const n = Math.max(0, _ph + 1);
+    // Left to right as they sit, the highest slot on the left.
+    if (_n > 2) {
+        _hud.bar(_seats().reverse().map(s => `<span style="color:${seat(s).css}">${_score[s]}</span>`).join('') +
+            `<span style="opacity:.7;font-size:14px">${Math.min(n, _plan.length)}/${_plan.length} · ${_bpm} BPM</span>`);
+        return;
+    }
     _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name}</span><span>${_score[1]}</span>` +
         `<span style="opacity:.7;font-size:14px">PHRASE ${Math.min(n, _plan.length)}/${_plan.length} · ${_bpm} BPM</span>` +
         `<span>${_score[0]}</span><span style="color:${seat(0).css}">${seat(0).name}</span>`);
@@ -495,12 +519,13 @@ function _end() {
     beatTrack.stop();
     _hud.say('');
     if (_cards) _cards.row.style.display = 'none';
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
+    const top = Math.max(..._score), lead = _seats().filter(s => _score[s] === top);
+    const w = lead.length === 1 ? lead[0] : -1, rank = _score.slice();
     _dj?.anim.play('clap', { restart: true });
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
         sub: w < 0 ? 'THE FLOOR CALLS IT EVEN' : 'OWNS THE FLOOR',
-        onDone: () => _finish(w),
+        onDone: () => _finish(w, rank),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -510,7 +535,7 @@ function _end() {
 export function _debugState() {
     const p = _plan[_ph];
     return {
-        phase: _phase, phrase: _ph, beat: +_beat.toFixed(3), bpm: _bpm, score: _score.slice(),
+        phase: _phase, n: _n, phrase: _ph, beat: +_beat.toFixed(3), bpm: _bpm, score: _score.slice(),
         part: _ph >= 0 && _ph < _plan.length && _phase === 'dance' ? _where().part : '',
         idx: _ph >= 0 && _ph < _plan.length && _phase === 'dance' ? _where().i : -1, hide: !!p?.hide,
         moves: p ? p.moves.slice() : [], resp: _resp.map(r => r.slice()), danced: _danced.slice(), lastIn: _lastIn,
