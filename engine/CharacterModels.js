@@ -390,7 +390,7 @@ export function createCharacterMesh(type, colorCode) {
         add(new THREE.ConeGeometry(0.26, 0.6, 12), mat, 0, 0.34, -0.72, -Math.PI / 2 + 0.35, 0, 0);
         eyes(1.56, 0.36, 0.14, 0.2);
     } else if (type === 'octopus') {
-        const head = add(new THREE.SphereGeometry(0.6, 22, 18), mat, 0, 0.98);
+        const head = add(new THREE.SphereGeometry(0.6, 22, 18), mat, 0, 1.04);
         head.scale.set(1, 1.08, 0.95);
         [[0.26, 1.4, 0.4, 0.09], [-0.32, 1.26, 0.46, 0.07], [0.42, 1.1, 0.42, 0.06]].forEach(([x, y, z, r]) =>
             add(new THREE.SphereGeometry(r, 10, 10), pale, x, y, z));                      // spots
@@ -398,7 +398,7 @@ export function createCharacterMesh(type, colorCode) {
         for (let i = 0; i < 8; i++) {
             const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
             const arm = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.085, 8, 14, Math.PI * 1.15), mat);
-            arm.position.set(Math.sin(a) * 0.46, 0.24, Math.cos(a) * 0.46);
+            arm.position.set(Math.sin(a) * 0.46, 0.32, Math.cos(a) * 0.46);
             arm.rotation.set(0, a + Math.PI / 2, Math.PI * 0.95);
             group.add(arm);
         }
