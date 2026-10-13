@@ -52,7 +52,11 @@ const TEE_SPREAD = 0.42;
 // ── Configuration (the Mini Golf mode sets it; a party uses the defaults) ─────
 const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns' };
 let _cfg = { ...DEFAULTS };
-/** { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos' } — sticks until changed. */
+/**
+ * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos' }.
+ * The mode sticks until changed (it's a setting); the course and the number of
+ * holes are for the NEXT round only, so a party after a full course is a sampler again.
+ */
 export function configure(o = {}) { _cfg = { ..._cfg, ...o }; return { ..._cfg }; }
 export function configured() { return { ..._cfg }; }
 export function resetConfig() { _cfg = { ...DEFAULTS }; }
@@ -76,6 +80,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _n = Math.max(2, Math.min(4, slotCount()));
     _mode = _cfg.mode === 'chaos' ? 'chaos' : 'turns';
     _list = _pickHoles();
+    _cfg = { ..._cfg, course: null, holes: 'sampler' };
+    _last = null;
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _active = -1;
     _strokes = _seats().map(() => []); _times = _seats().map(() => []);
     _honors = _seats();
@@ -903,6 +909,12 @@ function _end() {
         : tot[w] !== tot[runner] ? `${tot[w]} STROKES (${_fmt(tot[w] - par)}) · ${tot[runner]} NEXT`
         : `LEVEL ON ${tot[w]} · ${_mode === 'turns' ? 'ON COUNTBACK' : `QUICKER BY ${Math.abs(tt[w] - tt[runner]).toFixed(1)}s`}`;
     _kits.forEach((_, s) => _hideKit(s));
+    _last = {
+        course: _list[0]?.course, courseName: _courseName, mode: _mode, full: _list.length >= 9,
+        holes: _list.map(x => x.hole.key), par: _list.map(x => x.hole.par),
+        strokes: _strokes.map(x => [...x]), totals: tot, toPar: tot.map(t => t - par), winner: w,
+        aces: _seats().map(s => _strokes[s].filter(n => n === 1).length),
+    };
     _showCard(true, true);
     setTimeout(() => {
         if (_done || !_dir) return;
@@ -915,6 +927,9 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 let _forceHoles = null;
+let _last = null;
+/** The round just finished: course, par and every player's card (for records and trophies). Null mid-round. */
+export function lastRound() { return _last ? JSON.parse(JSON.stringify(_last)) : null; }
 export function _debugState() {
     return {
         phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view,
