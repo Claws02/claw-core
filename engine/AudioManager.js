@@ -120,6 +120,14 @@ export function sfx(name) {
             // short enough to sit under the call tones and the judgments.
             case 'kick':        _beep(62, 'sine', 0.55, t, 0.13, ctx); _beep(110, 'sine', 0.25, t, 0.04, ctx); break;
             case 'hat':         _noise(0.14, t, 0.03, ctx); break;
+            // Mini golf: the putt's tock, the clack off a rail, the cup's
+            // rattle and plunk, a splash, and a lip-out's ring off the rim.
+            case 'putt':        _beep(1250, 'triangle', 0.32, t, 0.05, ctx); _noise(0.18, t, 0.025, ctx); break;
+            case 'clack':       _beep(900, 'square', 0.12, t, 0.03, ctx); _noise(0.16, t, 0.03, ctx); break;
+            case 'cup':         [0, 0.06, 0.11].forEach((d, i) => _beep(1500 - i * 260, 'triangle', 0.2, t + d, 0.05, ctx)); _beep(180, 'sine', 0.45, t + 0.16, 0.18, ctx); break;
+            case 'lip':         _beep(1900, 'sine', 0.2, t, 0.25, ctx); _beep(1420, 'sine', 0.12, t + 0.04, 0.2, ctx); break;
+            case 'splash':      _noise(0.55, t, 0.35, ctx); _beep(140, 'sine', 0.3, t, 0.2, ctx); break;
+            case 'ace':         [523, 659, 784, 1046, 1319, 1568].forEach((f, i) => _beep(f, 'square', 0.22, t + i * 0.08, 0.2, ctx)); haptic([60, 40, 60, 40, 160]); break;
         }
     } catch (e) {}
 }
