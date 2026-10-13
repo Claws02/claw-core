@@ -536,12 +536,12 @@ const SCENERY = {
 function _palm(scale = 1) {
     const g = new THREE.Group();
     const trunkM = _mat(0x9b6b3d, { roughness: 0.9 });
-    let x = 0, y = 0;
-    for (let i = 0; i < 6; i++) {
-        const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.13 * scale, 0.17 * scale, 0.55 * scale, 7), trunkM);
-        x += 0.07 * i * scale; y += 0.52 * scale;
-        seg.position.set(x, y - 0.26 * scale, 0); seg.rotation.z = -0.07 * i; seg.castShadow = true; g.add(seg);
-    }
+    // A leaning, curved trunk.
+    const pts = [];
+    for (let i = 0; i <= 6; i++) { const u = i / 6; pts.push(new THREE.Vector3(u * u * 0.9 * scale, u * 3.1 * scale, 0)); }
+    const trunk = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 0.15 * scale, 7, false), trunkM);
+    trunk.castShadow = true; g.add(trunk);
+    const x = 0.9 * scale, y = 3.1 * scale;
     const leafM = _mat(0x2f9e44, { roughness: 0.8, side: THREE.DoubleSide });
     for (let k = 0; k < 7; k++) {
         const leaf = new THREE.Mesh(new THREE.PlaneGeometry(1.5 * scale, 0.36 * scale), leafM);

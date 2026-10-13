@@ -217,10 +217,10 @@ function _buildUi() {
     const TXT = 'color:#fff8ee;text-shadow:0 2px 0 rgba(0,0,0,.6),0 0 10px rgba(0,0,0,.5);letter-spacing:2px;';
     _ui = {};
     // The power bar, for the player whose turn it is.
-    _ui.power = el('position:absolute;left:50%;top:52px;transform:translateX(-50%);width:240px;height:16px;border-radius:9px;' +
+    _ui.power = el('position:absolute;left:50%;top:62px;transform:translateX(-50%);width:240px;height:16px;border-radius:9px;' +
         'background:rgba(20,12,24,.6);border:2px solid rgba(255,255,255,.7);overflow:hidden;display:none;');
     _ui.powerFill = el('height:100%;width:0;background:linear-gradient(90deg,#5ee07a,#ffd23f 60%,#ff4d4d);', _ui.power);
-    _ui.powerTxt = el('position:absolute;left:50%;top:70px;transform:translateX(-50%);font-size:13px;display:none;' + TXT);
+    _ui.powerTxt = el('position:absolute;left:50%;top:81px;transform:translateX(-50%);font-size:13px;display:none;' + TXT);
     // Camera buttons (turns): turn left, the whole hole, turn right.
     const btn = (label, css, fn) => {
         const b = el('position:absolute;width:48px;height:48px;border-radius:24px;background:rgba(20,12,24,.55);border:2px solid rgba(255,255,255,.75);' +
