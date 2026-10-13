@@ -541,11 +541,11 @@ function _pickUp(b) {
 function _penalty(b, kind) {
     const mine = b.slot === _shooter || _mode === 'chaos';
     if (mine) _strokes[b.slot][_hole]++;
-    if (kind === 'out') { sfx('land_bad'); _say2Show(`OUT OF BOUNDS${mine ? ' · +1' : ''}`, '#fca5a5'); }
+    if (kind === 'out') { sfx('land_bad'); _say2Show(`${_theme?.scenery === 'space' ? 'LOST IN SPACE' : 'OUT OF BOUNDS'}${mine ? ' · +1' : ''}`, '#fca5a5'); }
     else {
         sfx('splash');
-        if (_stage?.gl) _fx.puff(new THREE.Vector3(b.p.x, b.p.y + 0.2, b.p.z), kind === 'lava' ? 0xff7a1a : kind === 'flowers' ? 0xff8fb1 : 0xbfe8ff, 10, 0.5, 1.2);
-        _say2Show(`${kind === 'flowers' ? 'IN THE FLOWERS' : kind === 'lava' ? 'LAVA!' : 'SPLASH'}${mine ? ' · +1' : ''}`, '#7dd3fc');
+        if (_stage?.gl) _fx.puff(new THREE.Vector3(b.p.x, b.p.y + 0.2, b.p.z), kind === 'lava' ? 0xff7a1a : kind === 'flowers' ? 0xff8fb1 : kind === 'goo' ? 0x7a4a2a : 0xbfe8ff, 10, 0.5, 1.2);
+        _say2Show(`${kind === 'flowers' ? 'IN THE FLOWERS' : kind === 'lava' ? 'LAVA!' : kind === 'goo' ? 'IN THE CHOCOLATE' : _theme?.scenery === 'pirate' ? 'SPLASH! FEED THE SHARKS' : 'SPLASH'}${mine ? ' · +1' : ''}`, '#7dd3fc');
     }
     // Back to where it was played from (a knocked ball, to where it sat).
     const f = b.from || { x: _c.tee.x, y: _c.tee.y, z: _c.tee.z };
@@ -765,7 +765,7 @@ function _drawBalls(dt) {
         else if (p.loop) {
             b.mesh.visible = true;
             const l = p.loop.l, u = p.loop.t / p.loop.dur, n = Math.hypot(l.dir[0], l.dir[1]) || 1;
-            const ang = u * Math.PI * 2, rad = 0.9, along = l.len * u;
+            const ang = u * Math.PI * 2, rad = 0.9, along = l.len * u + Math.sin(ang) * rad * 0.9;
             b.mesh.position.set(l.a[0] + l.dir[0] / n * along, _floorY(l.a[0], l.a[1]) + P.R + rad * (1 - Math.cos(ang)), l.a[1] + l.dir[1] / n * along);
         } else {
             b.mesh.visible = show;
@@ -941,6 +941,8 @@ export function _debugShoot(slot, dx, dz, p) {
     b.state = 'aim'; if (_mode === 'turns') _turnState = 'aim';
     _shoot(slot, dx, dz, p);
 }
+/** Probes: the camera — 'follow' or 'map' (the whole hole). */
+export function _debugView(v) { _view = v; }
 /** Probes: skip the flyover or the scorecard. */
 export function _debugSkip() { if (_sub === 'fly') _subT = FLY_DUR; else if (_sub === 'card') _subT = CARD_DUR; }
 /** Probes: the holes the NEXT start() plays (keys from any course), or null. */
