@@ -675,6 +675,14 @@ function _renderOrientationDiagram(mgTypeKey) {
         return;
     }
     diag.style.width = ''; diag.style.height = '';
+    // Upright, a band each across the middle: P2 the top half, P1 the bottom.
+    if (orient.upright && orient.bands) {
+        const band = (who, col) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:rgba(${col},.14);font:12px 'Bebas Neue';letter-spacing:1px;color:rgba(${col},.95);">${who}<span style="font-size:13px;line-height:1;">⇣</span></div>`;
+        diag.innerHTML = `<div class="ph-body"></div><div class="ph-camera"></div><div class="ph-screen" style="display:flex;flex-direction:column;">` +
+            `${band('P2 · TOP', '59,142,255')}<div style="height:2px;background:rgba(255,255,255,.35)"></div>${band('P1 · BOTTOM', '255,59,59')}` +
+            `</div><div class="ph-home"></div>`;
+        return;
+    }
     // Upright: one phone, held normally, with the slider and DROP at the bottom.
     if (orient.upright) {
         diag.innerHTML = `<div class="ph-body"></div><div class="ph-camera"></div><div class="ph-screen" style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:10px 0 8px;">` +

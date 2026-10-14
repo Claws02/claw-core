@@ -163,6 +163,19 @@ export const MG_ORIENTATIONS = {
         instructions: 'Hold the phone <b>upright</b> and <b>pass it round</b>: one ball at a time, like real golf.<br><br>On your shot, <b>drag back</b> anywhere and <b>let go</b> — the further you pull, the harder. When it says <b>PASS TO…</b>, hand it on.',
         thumbAnim: 'pulse',
     },
+    // Portrait, everyone round the one phone at once (Mini Golf chaos): one
+    // picture of the hole, the screen split across the middle into a band
+    // each to drag in — P1 the bottom.
+    puttall: {
+        name: 'ALL AT ONCE',
+        subtitle: 'Hold it upright between you — everybody putts',
+        huddle: false,
+        upright: true,
+        bands: true,
+        icon: '⛳', drag: true,
+        instructions: 'Hold the phone <b>upright</b> where you can all see it. The screen splits across the <b>middle</b>: <b style="color:#ff3b3b">P1</b> drags in the <b>bottom</b> half, <b style="color:#3b8eff">P2</b> in the <b>top</b> (with more players, a band each from the bottom up).<br><br><b>Drag back</b> in your band and <b>let go</b> to putt — no waiting for turns. Changed your mind? <b>Slide back to where you started</b> and let go: no shot.',
+        thumbAnim: 'pulse',
+    },
     huddle: {
         name: 'HUDDLE',
         subtitle: 'One holder, both players lean in',
@@ -393,7 +406,7 @@ export const MG_PARALLEL = MG_TYPES.filter(t => MG_NET[t] === 'parallel');
 
 /**
  * A game whose hold depends on how it's being played sets it here before the
- * round (Mini Golf: a round from the Mini Golf mode in turns or solo is upright). orientationOf() reads
+ * round (Mini Golf: pass & putt for the Mini Golf mode's turns or solo). orientationOf() reads
  * this first, then MG_ORIENTATION_MAP.
  */
 export const MG_ORIENTATION_OVERRIDE = {};
@@ -436,7 +449,7 @@ export const MG_ORIENTATION_MAP = {
     redlight: 'faceoff',
     tag: 'faceoff',
     balloontoss: 'sideon',
-    minigolf: 'sideon',        // a party's golf is CHAOS; the Mini Golf mode's turns/solo stand it up (MG_ORIENTATION_OVERRIDE)
+    minigolf: 'puttall',       // CHAOS, upright, a band each; the Mini Golf mode's turns/solo pass it round ('putt', via MG_ORIENTATION_OVERRIDE)
     bowling: 'faceoff',
     sackrace: 'sideon',
     snowball: 'faceoff',
