@@ -11,6 +11,7 @@
 // from the hole's `props` and the theme's `scenery`, and never touches the ball.
 // ============================================================
 import { tileHeight, moverWalls, windmillAngle, HAZARD, CUP_R, R } from './Physics.js';
+import * as Toy from './Toys.js';
 
 let _caneTex = null;
 /** Red and white candy stripes, for Candy Land's rails and canes. */
@@ -118,7 +119,7 @@ function _textTex(text, bg, fg, w = 128, h = 80) {
 
 export function buildHole(stage, c, theme, holeNo = 1) {
     const root = new THREE.Group();
-    const live = { windmills: [], sweepers: [], sliders: [], water: [], bumpers: [], flag: null, chevrons: [], doors: [] };
+    const live = { windmills: [], sweepers: [], sliders: [], water: [], bumpers: [], flag: null, chevrons: [], doors: [], pads: [], ripples: [] };
     const edgeMat = _mat(theme.edge, { roughness: 0.8 });
     const railMat = _mat(theme.rail, { roughness: 0.5 });
     const capMat = _mat(theme.accent, { roughness: 0.5 });
@@ -141,19 +142,34 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     }));
     c.tiles.forEach(t => {
         const f = _floor(t, theme); root.add(f);
-        if (f.userData.water) live.water.push(f);
+        if (f.userData.water) {
+            live.water.push(f);
+            // Foam round the edge and rings spreading on the surface.
+            const inner = new THREE.EdgesGeometry(new THREE.PlaneGeometry(t.x1 - t.x0 - 0.12, t.z1 - t.z0 - 0.12).rotateX(-Math.PI / 2));
+            const line = new THREE.LineSegments(inner, new THREE.LineBasicMaterial({ color: t.kind === 'goo' ? 0x8a5a36 : 0xe8f7ff, transparent: true, opacity: 0.7 }));
+            line.position.set(t.cx, t.y + 0.02, t.cz); root.add(line);
+            for (let i = 0; i < 3; i++) {
+                const rp = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.34, 24), new THREE.MeshBasicMaterial({ color: t.kind === 'goo' ? 0x9a6a46 : 0xffffff, transparent: true, opacity: 0.4, depthWrite: false }));
+                rp.rotation.x = -Math.PI / 2;
+                rp.position.set(t.x0 + (t.x1 - t.x0) * (0.25 + 0.25 * i), t.y + 0.03, t.z0 + (t.z1 - t.z0) * (i % 2 ? 0.3 : 0.7));
+                rp.userData.ph = i / 3; root.add(rp); live.ripples.push(rp);
+            }
+        }
         root.add(_skirts(t, edgeMat));
     });
-    if (theme.railGlow) { railMat.emissive = new THREE.Color(theme.rail); railMat.emissiveIntensity = 0.7; }
+    // Rails, rounded, and a post wherever rails meet or end.
+    const mats = { rail: Toy.mat(theme.rail, { roughness: 0.5 }), cap: Toy.mat(theme.accent, { roughness: 0.35 }), railDark: Toy.mat(0x1f2937, { metalness: 0.5, roughness: 0.35 }) };
+    const posts = new Map();
     c.walls.forEach(w => {
-        let mat = w.block ? blockMat : railMat;
-        if (!w.block && theme.railTex === 'cane') {
-            const len = Math.hypot(w.x2 - w.x1, w.z2 - w.z1);
-            const tex = _cane().clone(); tex.needsUpdate = true; tex.repeat.set(Math.max(1, Math.round(len / 0.5)), 1);
-            mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4 });
-        }
-        root.add(_wallMesh(w, mat, theme.railTex === 'cane' || theme.railGlow ? null : capMat));
+        if (w.block) return;
+        root.add(Toy.rail(w, theme, mats));
+        [[w.x1, w.z1, w.b1], [w.x2, w.z2, w.b2]].forEach(([x, z, b]) => {
+            const k = `${Math.round(x * 20)},${Math.round(z * 20)}`;
+            if (!posts.has(k)) posts.set(k, [x, b, z, w.h]);
+        });
     });
+    posts.forEach(([x, y, z, h]) => root.add(Toy.railPost(x, y, z, h, theme, mats)));
+    root.add(Toy.dropEdges(c, theme));
     // Boost pads: chevrons pointing the way they push, pulsing.
     c.tiles.filter(t => t.kind === 'boost' && t.boost).forEach(t => {
         const a = Math.atan2(t.boost[1], t.boost[0]);
@@ -167,50 +183,29 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             m.userData.chev = i / n; root.add(m); live.chevrons.push(m);
         }
     });
-    // Loop-the-loops: two hoops of rail standing over the lane.
+    // Loop-the-loops.
     c.loops.forEach(l => {
-        const n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
-        const mx = l.a[0] + ux * l.len / 2, mz = l.a[1] + uz * l.len / 2;
-        const y = c.tiles.reduce((h, t) => (mx >= t.x0 && mx <= t.x1 && mz >= t.z0 && mz <= t.z1 ? Math.max(h, tileHeight(t, mx, mz)) : h), 0);
-        const lm = _mat(theme.loop ?? theme.accent, { roughness: 0.3, metalness: 0.3 });
-        if (theme.railGlow) { lm.emissive = new THREE.Color(theme.loop ?? theme.rail); lm.emissiveIntensity = 0.6; }
-        [-0.24, 0.24].forEach(o => {
-            const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.9 + R, 0.06, 8, 40), lm);
-            hoop.position.set(mx - uz * o, y + 0.9 + R, mz + ux * o); hoop.rotation.y = -Math.atan2(uz, ux);
-            hoop.castShadow = true; root.add(hoop);
-        });
-        const track = new THREE.Mesh(new THREE.TorusGeometry(0.9 + R * 2, 0.2, 4, 40, Math.PI * 2), _mat(theme.loop ?? theme.accent, { transparent: true, opacity: 0.35 }));
-        track.scale.set(1, 1, 0.6); track.position.set(mx, y + 0.9 + R, mz); track.rotation.y = -Math.atan2(uz, ux); root.add(track);
+        const n = Math.hypot(l.dir[0], l.dir[1]) || 1, mx = l.a[0] + l.dir[0] / n * l.len / 2, mz = l.a[1] + l.dir[1] / n * l.len / 2;
+        root.add(Toy.loop(l, _y0(c, mx, mz), theme));
     });
-    // Solid blocks get a lid.
-    (c.hole.blocks || []).forEach(([x0, z0, x1, z1, h]) => {
-        const hh = h ?? 0.5, base = Math.min(...c.tiles.filter(t => t.x0 <= x1 && t.x1 >= x0 && t.z0 <= z1 && t.z1 >= z0).map(t => t.y), 0);
-        const m = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(x1 - x0), hh, Math.abs(z1 - z0)), blockMat);
-        m.position.set((x0 + x1) / 2, base + hh / 2, (z0 + z1) / 2); m.castShadow = true; m.receiveShadow = true; root.add(m);
+    // Blocks: hedges, crates, rock, bulkheads — and a windmill's walls.
+    const mills = c.movers.filter(m => m.type === 'windmill');
+    const inMill = ([x0, z0, x1, z1]) => mills.find(m => m.axis === 'z'
+        ? (Math.abs(Math.min(x0, x1) - m.x) < 0.35 || Math.abs(Math.max(x0, x1) - m.x) < 0.35) && Math.abs((z0 + z1) / 2 - m.z) < 3
+        : (Math.abs(Math.min(z0, z1) - m.z) < 0.35 || Math.abs(Math.max(z0, z1) - m.z) < 0.35) && Math.abs((x0 + x1) / 2 - m.x) < 3);
+    const millBlocks = new Map();
+    (c.hole.blocks || []).forEach(b => {
+        const [x0, z0, x1, z1, h] = b;
+        const base = Math.min(...c.tiles.filter(t => t.x0 <= Math.max(x0, x1) && t.x1 >= Math.min(x0, x1) && t.z0 <= Math.max(z0, z1) && t.z1 >= Math.min(z0, z1)).map(t => t.y), 0);
+        const m = inMill(b);
+        if (m) { if (!millBlocks.has(m)) millBlocks.set(m, []); millBlocks.get(m).push(b); }
+        root.add(Toy.block(b, base, theme, Toy.blockKind(theme, h ?? 0.5, !!m)));
     });
-    // Bumpers: a post with a glowing band.
+    // Bumpers.
     c.bumpers.forEach(p => {
-        const g = new THREE.Group();
-        const style = theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
-        let post;
-        if (style === 'gumdrop') {
-            const cols = [0xff5fa2, 0x7ed957, 0xffd23f, 0x5fb8ff, 0xb57bff];
-            post = new THREE.Mesh(new THREE.SphereGeometry(p.r * 1.05, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), _mat(cols[Math.round(p.x * 3 + p.z * 7) % 5 + (Math.round(p.x * 3 + p.z * 7) % 5 < 0 ? 5 : 0)], { roughness: 0.3 }));
-            post.scale.y = 1.4;
-        } else if (style === 'rock') {
-            post = new THREE.Mesh(new THREE.DodecahedronGeometry(p.r * 1.08, 0), _mat(theme.bumper, { roughness: 0.9, flatShading: true }));
-            post.position.y = p.r * 0.7; post.rotation.set(p.x, p.z, 0);
-        } else if (style === 'barrel') {
-            post = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.95, p.r * 0.95, 0.5, 16), _mat(theme.bumper, { roughness: 0.8 }));
-            post.position.y = 0.25;
-        } else { post = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r * 1.05, 0.42, 22), _mat(theme.bumper ?? 0xff4f8b, { roughness: 0.35 })); post.position.y = 0.21; }
-        post.castShadow = true; g.add(post);
-        const band = new THREE.Mesh(new THREE.TorusGeometry(p.r * 1.02, 0.05, 8, 24), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe08a, emissiveIntensity: 0.6 }));
-        band.rotation.x = Math.PI / 2; band.position.y = 0.3; g.add(band);
-        const top = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.55, p.r * 0.55, 0.06, 16), new THREE.MeshBasicMaterial({ color: 0xfff3b0 }));
-        top.position.y = 0.44; g.add(top);
-        g.position.set(p.x, p.y, p.z); root.add(g);
-        live.bumpers.push({ p, g, band, t: 0 });
+        const b = Toy.bumper(p, theme);
+        root.add(b.g);
+        live.bumpers.push({ p, g: b.g, flash: b.flash, squash: b.squash, base: b.flash?.emissiveIntensity ?? 0, t: 0 });
     });
     // The cup, its rim and the flag.
     {
@@ -237,80 +232,52 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         const dot = new THREE.Mesh(new THREE.CircleGeometry(0.1, 14), new THREE.MeshBasicMaterial({ color: 0xffffff }));
         dot.rotation.x = -Math.PI / 2; dot.position.set(c.tee.x, c.tee.y + 0.035, c.tee.z); root.add(dot);
     }
-    // Pipes: a mouth and an exit.
-    c.pipes.forEach(p => {
-        [p.a, p.b].forEach((q, k) => {
-            const ring = new THREE.Mesh(new THREE.TorusGeometry(p.r + 0.04, 0.07, 8, 24), _mat(theme.pipe ?? 0x2e9e57, { roughness: 0.4 }));
-            ring.rotation.x = Math.PI / 2;
-            const y = c.tiles.reduce((h, t) => (q[0] >= t.x0 && q[0] <= t.x1 && q[1] >= t.z0 && q[1] <= t.z1 ? Math.max(h, tileHeight(t, q[0], q[1])) : h), -9);
-            ring.position.set(q[0], y + 0.04, q[1]); root.add(ring);
-            if (!k) {
-                const mouth = new THREE.Mesh(new THREE.CircleGeometry(p.r, 20), new THREE.MeshBasicMaterial({ color: 0x08130c }));
-                mouth.rotation.x = -Math.PI / 2; mouth.position.set(q[0], y + 0.01, q[1]); root.add(mouth);
-            }
-        });
-    });
+    // Pipes: a mouth and an exit (a hose, a cannon and its target, teleport pads).
+    c.pipes.forEach(p => ['a', 'b'].forEach(end => {
+        const q = end === 'a' ? p.a : p.b;
+        const o = Toy.pipeEnd(p, end, _y0(c, q[0], q[1]), theme);
+        root.add(o);
+        if (o.userData.pulse) live.pads.push(o.userData.pulse);
+    }));
     // Movers.
     c.movers.forEach(m => {
         const base = c.tiles.reduce((h, t) => (m.x >= t.x0 && m.x <= t.x1 && m.z >= t.z0 && m.z <= t.z1 ? Math.max(h, tileHeight(t, m.x, m.z)) : h), 0);
         if (m.type === 'windmill' && theme.windmill === 'airlock') {
-            // A door that drops shut and lifts open, in time with the physics' door.
-            const w = (m.w || 0.55) * 2;
-            const door = new THREE.Mesh(new THREE.BoxGeometry(m.axis === 'z' ? 0.2 : w, 1.1, m.axis === 'z' ? w : 0.2), _mat(theme.slider ?? 0xef4444, { roughness: 0.4, emissive: new THREE.Color(theme.slider ?? 0xef4444), emissiveIntensity: 0.35 }));
-            door.position.set(m.x, base + 0.55, m.z); door.castShadow = true; root.add(door);
-            const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), new THREE.MeshBasicMaterial({ color: 0x22c55e }));
-            lamp.position.set(m.x - (m.axis === 'z' ? 0.15 : 0), base + 1.35, m.z - (m.axis === 'z' ? 0 : 0.15)); root.add(lamp);
-            live.doors.push({ m, door, lamp, base });
+            const a = Toy.airlock(m, base, theme);
+            root.add(a.g);
+            live.doors.push({ m, door: a.door, lamp: a.lamp, base });
         } else if (m.type === 'windmill') {
-            const holder = new THREE.Group();
-            const sails = new THREE.Group();
-            const sailM = _mat(theme.sail ?? 0xfffaf0, { side: THREE.DoubleSide, roughness: 0.6 });
-            const sparM = _mat(0x6b3f1d);
-            for (let k = 0; k < 4; k++) {
-                const arm = new THREE.Group();
-                const spar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.9, 0.06), sparM); spar.position.y = 0.95; arm.add(spar);
-                const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 1.4), sailM); cloth.position.set(0.24, 1.1, 0.03); arm.add(cloth);
-                arm.rotation.z = k * Math.PI / 2; sails.add(arm);
-            }
-            const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.2, 12), sparM); hub.rotation.x = Math.PI / 2; sails.add(hub);
-            holder.add(sails);
-            // The sails face the way the ball comes: across the door axis.
-            const hubY = base + 2.05;
-            if (m.axis === 'z') { holder.position.set(m.x - 0.12, hubY, m.z); holder.rotation.y = -Math.PI / 2; }
-            else { holder.position.set(m.x, hubY, m.z - 0.12); }
-            root.add(holder);
-            const gate = new THREE.Mesh(new THREE.BoxGeometry(m.axis === 'z' ? 0.14 : (m.w || 0.55) * 2, 0.06, m.axis === 'z' ? (m.w || 0.55) * 2 : 0.14),
-                new THREE.MeshBasicMaterial({ color: 0xffd23f }));
-            gate.position.set(m.x, base + 0.01, m.z); root.add(gate);
-            live.windmills.push({ m, sails, gate });
+            const w = Toy.windmill(m, base, theme, millBlocks.get(m) || []);
+            root.add(w.g);
+            live.windmills.push({ m, sails: w.sails, gate: w.gate });
         } else if (m.type === 'sweeper') {
-            const g = new THREE.Group();
-            const bar = new THREE.Mesh(new THREE.BoxGeometry((m.len || 2) * 2, 0.22, 0.18), _mat(theme.sweeper ?? 0xffd23f, { roughness: 0.4 }));
-            bar.position.y = 0.16; bar.castShadow = true; g.add(bar);
-            const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.32, 0.4, 16), _mat(theme.accent));
-            hub.position.y = 0.2; g.add(hub);
+            const s2 = Toy.sweeper(m, theme);
             if (theme.scenery === 'pirate') {
                 // A ship's wheel: a rim and handles on the spokes.
-                const rim = new THREE.Mesh(new THREE.TorusGeometry((m.len || 2) * 0.55, 0.06, 6, 28), _mat(0x8b5a2b));
-                rim.rotation.x = Math.PI / 2; rim.position.y = 0.2; g.add(rim);
-                [-1, 1].forEach(sd => { const hd = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.3, 8), _mat(0xd9a514)); hd.position.set(sd * (m.len || 2), 0.3, 0); g.add(hd); });
+                const rim = new THREE.Mesh(new THREE.TorusGeometry((m.len || 2) * 0.55, 0.07, 8, 28), Toy.mat(0x8b5a2b));
+                rim.rotation.x = Math.PI / 2; rim.position.y = 0.2; s2.g.add(rim);
+                for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2, hd = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.3, 8), Toy.mat(0xd9a514, { roughness: 0.3 })); hd.position.set(Math.cos(a) * (m.len || 2) * 0.55, 0.32, Math.sin(a) * (m.len || 2) * 0.55); s2.g.add(hd); }
             } else if (theme.scenery === 'candy') {
-                [-1, 1].forEach(sd => { const pop = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.1, 20), _mat(sd > 0 ? 0xffd23f : 0x7ed957)); pop.rotation.x = Math.PI / 2; pop.position.set(sd * (m.len || 2), 0.45, 0); pop.rotation.z = Math.PI / 2; g.add(pop); });
-            } else if (theme.railGlow) { bar.material.emissive = new THREE.Color(theme.sweeper); bar.material.emissiveIntensity = 0.8; }
-            g.position.set(m.x, base, m.z); root.add(g);
-            live.sweepers.push({ m, g });
+                [-1, 1].forEach(sd => { const pop = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.12, 22), Toy.mat(sd > 0 ? 0xffd23f : 0x7ed957, { roughness: 0.25 })); pop.rotation.z = Math.PI / 2; pop.position.set(sd * (m.len || 2), 0.5, 0); s2.g.add(pop); });
+            }
+            s2.g.position.set(m.x, base, m.z); root.add(s2.g);
+            live.sweepers.push({ m, g: s2.g });
         } else if (m.type === 'slider') {
-            const L = m.len || 1.6;
-            const box = new THREE.Mesh(new THREE.BoxGeometry((m.bar || 'z') === 'x' ? L : 0.3, 0.4, (m.bar || 'z') === 'x' ? 0.3 : L), _mat(theme.slider ?? 0x7c4dff, { roughness: 0.4 }));
-            box.castShadow = true; box.position.y = base + 0.2; root.add(box);
-            if (theme.railGlow) { box.material.emissive = new THREE.Color(theme.slider); box.material.emissiveIntensity = 0.9; box.scale.y = 0.6; }
+            const box = Toy.slider(m, theme);
+            box.position.y = base; root.add(box);
             live.sliders.push({ m, box });
         }
     });
     // Props and the world round the course.
     (c.hole.props || []).forEach(p => { const o = PROPS[p.type]?.(p, c, theme); if (o) root.add(o); });
     const world = SCENERY[theme.scenery]?.(c, theme);
-    if (world) root.add(world);
+    if (world) {
+        // Keep the camera's spot behind the tee clear of trees and palms.
+        const f = c.path[1] || [c.cup.x, c.cup.z], dx = f[0] - c.tee.x, dz = f[1] - c.tee.z, n = Math.hypot(dx, dz) || 1;
+        const sx = c.tee.x - dx / n * 6.4, sz = c.tee.z - dz / n * 6.4;
+        world.children.slice().forEach(o => { if (!o.isPoints && o.position.y > -5 && Math.hypot(o.position.x - sx, o.position.z - sz) < 3.2 && !o.geometry?.parameters?.width && !o.geometry?.parameters?.radius && !o.geometry?.parameters?.innerRadius) world.remove(o); });
+        root.add(world);
+    }
 
     stage.add(root);
 
@@ -343,10 +310,20 @@ export function buildHole(stage, c, theme, holeNo = 1) {
                 pos.needsUpdate = true;
             }
             live.bumpers.forEach(b => {
-                if (b.t > 0) { b.t = Math.max(0, b.t - dt); }
+                if (b.t > 0) b.t = Math.max(0, b.t - dt);
                 const k = b.t / 0.25;
-                b.g.scale.set(1 + k * 0.18, 1, 1 + k * 0.18);
-                b.band.material.emissiveIntensity = 0.6 + k * 2.5;
+                if (b.squash) b.g.scale.set(1 + k * 0.15, 1 - k * 0.25, 1 + k * 0.15);
+                else b.g.scale.set(1 + k * 0.16, 1 + k * 0.06, 1 + k * 0.16);
+                if (b.flash) b.flash.emissiveIntensity = b.base + k * 1.6;
+                if (b.g.userData.spin) b.g.rotation.y += dt * b.g.userData.spin;
+            });
+            live.pads.forEach((p, i) => {
+                const k = 0.5 + 0.5 * Math.sin(t * 4 + i);
+                p.disc.material.opacity = 0.35 + 0.35 * k; p.beam.material.opacity = 0.1 + 0.14 * k; p.ring.rotation.z = t * 1.5;
+            });
+            live.ripples.forEach(r => {
+                const k = ((t * 0.5 + r.userData.ph) % 1);
+                r.scale.setScalar(0.3 + k * 1.6); r.material.opacity = 0.5 * (1 - k);
             });
         },
         pulse(p) { const b = live.bumpers.find(x => x.p === p); if (b) b.t = 0.25; },
@@ -474,7 +451,8 @@ const PROPS = {
         g.userData.spray = drops;
         return g;
     },
-    windmill: (p, c) => {
+    windmill: () => null,
+    _oldWindmill: (p, c) => {
         // The roof and the brickwork over the door; the walls are the blocks.
         const g = new THREE.Group();
         const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 1.2), _mat(0xc2410c, { roughness: 0.8 }));
@@ -599,16 +577,10 @@ Object.assign(PROPS, {
         g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = 0.4; return g;
     },
     cannon: (p, c) => {
-        const g = new THREE.Group();
-        const iron = _mat(0x2b2b30, { metalness: 0.6, roughness: 0.4 });
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 1.6, 16, 1, true), iron); barrel.material.side = THREE.DoubleSide;
-        barrel.rotation.z = -Math.PI / 2 + 0.45; barrel.position.set(0.85, 0.55, 0); g.add(barrel);
-        const cart = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.35, 0.8), _mat(0x6b3f1d)); cart.position.set(1.1, 0.18, 0); g.add(cart);
-        [-0.42, 0.42].forEach(z => { const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.08, 14), _mat(0x3b2412)); wh.rotation.x = Math.PI / 2; wh.position.set(1.1, 0.2, z); g.add(wh); });
-        g.children.forEach(o => { o.castShadow = true; });
+        const g = Toy.cannon();
         g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]);
-        if (p.to && !p.deco) g.rotation.y = -Math.atan2(p.to[1] - p.at[1], p.to[0] - p.at[0]) * 0;
-        if (p.deco) g.rotation.y = Math.PI / 2;
+        // Aimed at where it fires you (the pipe's far end), or standing guard.
+        g.rotation.y = p.deco ? Math.PI / 2 : p.to ? -Math.atan2(p.to[1] - p.at[1], p.to[0] - p.at[0]) : 0;
         return g;
     },
     flagpole: (p, c) => {

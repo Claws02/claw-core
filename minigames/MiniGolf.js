@@ -31,7 +31,8 @@ import { sfx, haptic } from '../engine/AudioManager.js';
 import { registerMinigameCleanup, isBotSlot, slotCount, extendWatchdog } from './MinigameManager.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, sideHud, effects } from '../engine/StageKit.js';
+import { seat, sideHud, uprightHud, effects } from '../engine/StageKit.js';
+import { MG_ORIENTATION_OVERRIDE } from '../config/MinigameRegistry.js';
 import * as P from './golf/Physics.js';
 import { plan } from './golf/Bot.js';
 import { COURSES, courseByKey, coursePar } from './golf/Courses.js';
@@ -46,7 +47,7 @@ const ROLL_MAX = 14;                   // s a ball may roll before it's called s
 const FLY_DUR = 3.2;
 const CARD_DUR = 4.6, CARD_MIN = 1.0;
 const HOLE_WATCHDOG = 6 * 60 * 1000;   // the manager's backstop, pushed on at every hole
-const CAM_BACK = 5.6, CAM_UP = 3.3, CAM_AHEAD = 2.6;
+const CAM_BACK = 6.4, CAM_UP = 4.1, CAM_AHEAD = 3.6;   // behind the ball, portrait
 const TEE_SPREAD = 0.42;
 
 // ── Configuration (the Mini Golf mode sets it; a party uses the defaults) ─────
@@ -57,7 +58,12 @@ let _cfg = { ...DEFAULTS };
  * The mode sticks until changed (it's a setting); the course and the number of
  * holes are for the NEXT round only, so a party after a full course is a sampler again.
  */
-export function configure(o = {}) { _cfg = { ..._cfg, ...o }; return { ..._cfg }; }
+export function configure(o = {}) {
+    _cfg = { ..._cfg, ...o };
+    // Turns is passed round upright; chaos is everyone at once, sideways.
+    if (_cfg.mode === 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = 'sideon'; else delete MG_ORIENTATION_OVERRIDE.minigolf;
+    return { ..._cfg };
+}
 export function configured() { return { ..._cfg }; }
 export function resetConfig() { _cfg = { ...DEFAULTS }; }
 export const COURSE_LIST = COURSES.map(c => ({ key: c.key, name: c.name, blurb: c.blurb, holes: c.holes.length, par: coursePar(c) }));
@@ -68,7 +74,7 @@ let _overlay = null, _stage = null, _dir = null, _hud = null, _fx = null, _light
 let _n = 2, _mode = 'turns', _list = [], _hole = -1, _c = null, _built = null, _theme = null, _courseName = '';
 let _balls = [], _figs = [], _kits = [], _strokes = [], _times = [], _honors = [];
 let _phase = 'intro', _sub = '', _subT = 0, _t = 0, _holeT = 0;
-let _active = -1, _turnT = 0, _turnState = 'aim', _botThink = null, _shooter = -1, _nextWait = 0.7;
+let _active = -1, _turnT = 0, _turnState = 'aim', _botThink = null, _shooter = -1, _nextWait = 0.7, _holder = -1, _pass = null;
 let _cam = null, _yaw = 0, _view = 'follow', _drag = new Map(), _ui = null, _card = null, _say2 = null;
 
 const _seats = () => Array.from({ length: _n }, (_, i) => i);
@@ -94,12 +100,14 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _overlay = document.createElement('div');
     _overlay.style.cssText = `position:absolute;inset:0;overflow:hidden;background:#${_theme.sky.toString(16).padStart(6, '0')};z-index:5;`;
     mg.appendChild(_overlay);
-    _stage = createStage(_overlay, { hold: 'side', fov: 50, background: _theme.sky });
-    _hud = sideHud(_stage, { padWidth: 230 });
+    // Turns: the phone stands up and is passed round. Chaos: sideways, a strip each.
+    _stage = createStage(_overlay, _mode === 'turns' ? { hold: 'upright', fov: 56, background: _theme.sky } : { hold: 'side', fov: 50, background: _theme.sky });
+    _hud = _mode === 'turns' ? _turnsHud(_stage) : sideHud(_stage, { padWidth: 230 });
+    _holder = -1; _pass = null;
     _fx = effects(_stage);
     _dir = createDirector(_stage);
     if (_stage.gl) {
-        _lights = _stage.light({ span: 16, dir: [-9, 16, 11], sunI: 1.2, sky: 0xdfefff, ground: 0x5a7a3a, hemiI: 0.55, rimI: 0.3 });
+        _lights = _stage.light({ span: 16, dir: [-9, 16, 11], sunI: 1.1, sky: 0xdfefff, ground: 0x5a7a3a, hemiI: 0.5, rimI: 0.3 });
         if (_lights) _stage.scene.add(_lights.key.target);
         _stage.scene.fog = new THREE.Fog(_theme.fog ?? _theme.sky, 38, 90);
         _cam = { pos: new THREE.Vector3(0, 10, 10), look: new THREE.Vector3() };
@@ -143,7 +151,7 @@ function _pickHoles() {
 
 function _destroy() {
     _done = true;
-    _built?.dispose?.(); _built = null;
+    _built?.dispose?.(); _built = null; _pass = null;
     if (_stage) { _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _balls = []; _figs = []; _kits = []; _dir = null; _hud = null; _fx = null; _ui = null; _card = null; _say2 = null; _c = null; _lights = null;
@@ -211,16 +219,74 @@ function _buildKit(slot) {
     return k;
 }
 
+/**
+ * The HUD for turns (upright, passed round): the bar and the big message, and
+ * a row of chips under the bar, one per player — their colour, name and how
+ * they stand — the one whose shot it is lit. Same calls as sideHud.
+ */
+function _turnsHud(stage) {
+    const base = uprightHud(stage);
+    const row = document.createElement('div');
+    row.style.cssText = 'position:absolute;top:calc(86px + env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;' +
+        'justify-content:center;gap:5px;width:calc(100% - 16px);pointer-events:none;';
+    stage.hud.appendChild(row);
+    const chips = _seats().map(slot => {
+        const st = seat(slot);
+        const c = document.createElement('div');
+        c.style.cssText = `display:flex;align-items:center;gap:5px;padding:2px 9px 2px 4px;border-radius:12px;background:rgba(20,12,24,.55);border:2px solid ${st.css};` +
+            'color:#fff8ee;font-size:12px;letter-spacing:1px;white-space:nowrap;transition:transform .15s,background .15s;text-shadow:0 1px 0 rgba(0,0,0,.6);';
+        c.innerHTML = `<span style="width:12px;height:12px;border-radius:6px;background:${st.css};"></span><b style="font-weight:400"></b><span style="opacity:.85"></span>`;
+        c.children[1].textContent = st.name + (st.bot ? ' 🤖' : '');
+        row.appendChild(c);
+        return c;
+    });
+    return {
+        ...base,
+        hint(slot, text) { const c = chips[slot]; if (c && c.children[2].textContent !== text) c.children[2].textContent = text ? '· ' + text : ''; },
+        lit(slot, on, color) { const c = chips[slot]; if (!c) return; c.style.background = on ? (color || 'rgba(250,204,21,.45)') : 'rgba(20,12,24,.55)'; c.style.transform = on ? 'scale(1.08)' : ''; },
+    };
+}
+
+/** "PASS TO …": the card between two people's shots, until the next one taps. */
+function _showPass(slot) {
+    if (!_stage) return;
+    const st = seat(slot), b = _balls[slot];
+    const left = b?.on ? P.pathLeft(_c, b.p.x, b.p.z) : P.pathLeft(_c, _c.tee.x, _c.tee.z);
+    const el = document.createElement('div');
+    el.style.cssText = `position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;pointer-events:auto;` +
+        `background:radial-gradient(circle at 50% 40%, ${st.css}ee 0%, ${st.css}aa 45%, rgba(10,6,20,.92) 100%);color:#fff8ee;text-align:center;` +
+        'text-shadow:0 3px 0 rgba(0,0,0,.45);letter-spacing:2px;animation:countPop .35s ease;z-index:6;';
+    el.innerHTML = `<div style="font-size:22px;opacity:.9">${_holder < 0 ? 'FIRST UP' : 'PASS THE PHONE TO'}</div>` +
+        `<div class="pp-name" style="font-size:64px;line-height:1;padding:0 12px;word-break:break-word;"></div>` +
+        `<div style="font-size:17px;opacity:.95">HOLE ${_hole + 1} · STROKE ${_strokes[slot][_hole] + 1} · ${b?.on ? `${Math.round(left)} TO GO` : 'ON THE TEE'}</div>` +
+        `<div style="margin-top:26px;font-size:20px;padding:8px 22px;border-radius:999px;background:rgba(255,255,255,.18);border:2px solid rgba(255,255,255,.7);">TAP WHEN YOU'VE GOT IT</div>`;
+    el.querySelector('.pp-name').textContent = st.name;
+    const go = e => { e.preventDefault(); e.stopPropagation(); _takePass(); };
+    el.addEventListener('pointerdown', go);
+    _hud.say('');
+    _stage.hud.appendChild(el);
+    _pass = { el, slot };
+    sfx('whistle');
+}
+function _takePass() {
+    if (!_pass) return;
+    _pass.el.remove();
+    _holder = _pass.slot; _pass = null;
+    _turnState = 'aim'; _turnT = 0;
+    sfx('go');
+}
+
 function _buildUi() {
     const root = _stage.hud;
     const el = (css, parent = root) => { const e = document.createElement('div'); e.style.cssText = css; parent.appendChild(e); return e; };
     const TXT = 'color:#fff8ee;text-shadow:0 2px 0 rgba(0,0,0,.6),0 0 10px rgba(0,0,0,.5);letter-spacing:2px;';
     _ui = {};
     // The power bar, for the player whose turn it is.
-    _ui.power = el('position:absolute;left:50%;top:62px;transform:translateX(-50%);width:240px;height:16px;border-radius:9px;' +
+    const up = _mode === 'turns';
+    _ui.power = el(`position:absolute;left:50%;${up ? 'bottom:calc(46px + env(safe-area-inset-bottom, 0px))' : 'top:62px'};transform:translateX(-50%);width:240px;height:16px;border-radius:9px;` +
         'background:rgba(20,12,24,.6);border:2px solid rgba(255,255,255,.7);overflow:hidden;display:none;');
     _ui.powerFill = el('height:100%;width:0;background:linear-gradient(90deg,#5ee07a,#ffd23f 60%,#ff4d4d);', _ui.power);
-    _ui.powerTxt = el('position:absolute;left:50%;top:81px;transform:translateX(-50%);font-size:13px;display:none;' + TXT);
+    _ui.powerTxt = el(`position:absolute;left:50%;${up ? 'bottom:calc(66px + env(safe-area-inset-bottom, 0px))' : 'top:81px'};transform:translateX(-50%);font-size:13px;display:none;` + TXT);
     // Camera buttons (turns): turn left, the whole hole, turn right.
     const btn = (label, css, fn) => {
         const b = el('position:absolute;width:48px;height:48px;border-radius:24px;background:rgba(20,12,24,.55);border:2px solid rgba(255,255,255,.75);' +
@@ -276,8 +342,9 @@ function _loadHole(i) {
     const fw = _forward(_c.tee.x, _c.tee.z);
     _seats().forEach(s => {
         const f = _figs[s];
-        const side = (s - (_n - 1) / 2) * 0.85;
-        f.x = f.tx = _c.tee.x - fw[0] * 1.6 - fw[1] * side; f.z = f.tz = _c.tee.z - fw[1] * 1.6 + fw[0] * side;
+        // Off to the sides of the tee, out of the camera's way behind the ball.
+        const sgn = s % 2 ? 1 : -1, side = sgn * (2.4 + Math.floor(s / 2) * 0.8);
+        f.x = f.tx = _c.tee.x - fw[0] * (0.4 + Math.floor(s / 2) * 0.7) - fw[1] * side; f.z = f.tz = _c.tee.z - fw[1] * (0.4 + Math.floor(s / 2) * 0.7) + fw[0] * side;
         f.aimYaw = null;
         if (f.rig) { f.rig.root.position.set(f.x, _figY(f.x, f.z), f.z); f.anim.face(Math.atan2(fw[0], fw[1]), true); f.anim.play('idle'); }
     });
@@ -366,7 +433,11 @@ function _nextTurn() {
     _yaw = Math.atan2(fw[1], fw[0]);
     _view = 'follow';
     const s = seat(next);
-    _hud.say(s.name, isBotSlot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
+    // Hand the phone over when a different person has to play.
+    const humans = _seats().filter(k => !isBotSlot(k)).length;
+    if (!isBotSlot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
+    else _hud.say(s.name, isBotSlot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
+    if (!isBotSlot(next) && humans <= 1) _holder = next;
     _seats().forEach(k => _hud.lit(k, k === next, k === next ? s.css + '66' : undefined));
     _walkTo(next, b.p.x, b.p.z, _yaw);
 }
@@ -452,6 +523,7 @@ function _shoot(slot, dx, dz, power) {
     b.state = 'roll'; b.rollT = 0; if (b.trailPts) b.trailPts = [];
     _strokes[slot][_hole]++;
     _shooter = slot;
+    if (!isBotSlot(slot)) _holder = slot;
     if (_mode === 'turns') { _turnState = 'roll'; _showBtns(false); _view = 'follow'; }
     sfx('putt'); if (!isBotSlot(slot)) haptic([14]);
     const f = _figs[slot];
@@ -686,6 +758,7 @@ function _botTurn(dt, b) {
 // ── Cameras ──────────────────────────────────────────────────────────────────
 /** The whole hole, from above and a little in front, fitted to the screen. */
 function _fitCam() {
+    if (_mode === 'turns') return _fitCamUpright();
     const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
     const w = B.x1 - B.x0 + 1.5, d = B.z1 - B.z0 + 1.5;
     const fov = (_stage?.camera?.fov ?? 50) * Math.PI / 180, A = (_stage?.width || 892) / Math.max(1, _stage?.height || 412);
@@ -693,6 +766,24 @@ function _fitCam() {
     const h = Math.max(d / 2 / t * 1.25, w / 2 / (t * A) * 1.08) + 1.5;
     const tilt = 0.42;
     return { pos: [cx, h * Math.cos(tilt), cz + h * Math.sin(tilt)], look: [cx, 0, cz + 0.4] };
+}
+/** The whole hole standing up the portrait screen: tee at the bottom, cup toward the top. */
+function _fitCamUpright() {
+    const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
+    // Up the screen is the way the hole mostly goes, snapped square to the course.
+    let ax = _c.cup.x - _c.tee.x, az = _c.cup.z - _c.tee.z;
+    if (Math.abs(ax) >= Math.abs(az)) { ax = Math.sign(ax) || 1; az = 0; } else { az = Math.sign(az); ax = 0; }
+    const rx = -az, rz = ax;
+    let hf = 0, hr = 0;
+    for (const [x, z] of [[B.x0, B.z0], [B.x1, B.z0], [B.x0, B.z1], [B.x1, B.z1]]) {
+        hf = Math.max(hf, Math.abs((x - cx) * ax + (z - cz) * az));
+        hr = Math.max(hr, Math.abs((x - cx) * rx + (z - cz) * rz));
+    }
+    const fov = (_stage?.camera?.fov ?? 56) * Math.PI / 180, A = (_stage?.width || 412) / Math.max(1, _stage?.height || 892);
+    const t = Math.tan(fov / 2);
+    const h = Math.max((hf + 0.8) / t * 1.12, (hr + 0.8) / (t * A) * 1.05) + 1;
+    const tilt = 0.38;
+    return { pos: [cx - ax * h * Math.sin(tilt), h * Math.cos(tilt), cz - az * h * Math.sin(tilt)], look: [cx + ax * 0.6, 0, cz + az * 0.6] };
 }
 function _aimPose(x, y, z, yaw, back = 1) {
     const dx = Math.cos(yaw), dz = Math.sin(yaw);
@@ -736,7 +827,7 @@ function _camera(dt) {
     } else if (_mode === 'chaos' || _sub === 'card' || _view === 'map' || _active < 0) {
         const f = _fitCam();
         _cam.pos.lerp(new THREE.Vector3(...f.pos), k); _cam.look.lerp(new THREE.Vector3(...f.look), k);
-    } else if (_turnState === 'aim') {
+    } else if (_turnState === 'aim' || _turnState === 'pass') {
         const b = _balls[_active].p;
         const a = _aimPose(b.x, b.y, b.z, _yaw);
         if (!_drag.size) { _cam.pos.lerp(a.pos, k); _cam.look.lerp(a.look, k); }
@@ -838,7 +929,7 @@ function _renderHud() {
         if (_mode === 'turns') {
             _hud.hint(s, s === _active && _turnState === 'aim'
                 ? (_hole === 0 && now === 0 ? 'DRAG BACK · LET GO' : `YOUR SHOT · ${Math.max(0, Math.ceil(CLOCK_TURNS - _turnT))}s`)
-                : `${now} SO FAR · ${_fmt(_toPar(s))}`);
+                : `${now} · ${_fmt(_toPar(s))}`);
         } else if (![..._drag.values()].some(d => d.slot === s)) {
             _hud.hint(s, b.state === 'aim' ? (_hole === 0 && now === 0 ? 'DRAG BACK ON YOUR STRIP' : `STROKE ${now + 1} · ${Math.max(0, Math.ceil(CLOCK_CHAOS - b.clock))}s`) : `ROLLING · ${now}`);
         }
@@ -857,7 +948,8 @@ function _showCard(on, final = false) {
         setTimeout(() => { if (_card && _card.style.opacity === '0') _card.style.display = 'none'; }, 220);
         return;
     }
-    const cell = 'padding:3px 5px;text-align:center;min-width:22px;font-size:15px;';
+    const narrow = (_stage?.width || 900) < 520;
+    const cell = narrow ? 'padding:2px 3px;text-align:center;min-width:17px;font-size:13px;' : 'padding:3px 5px;text-align:center;min-width:22px;font-size:15px;';
     const mark = (n, par) => {
         if (!n) return '';
         const d = n - par;
@@ -938,7 +1030,7 @@ export function _debugState() {
         balls: _balls.map(b => ({ x: +b.p.x.toFixed(2), y: +b.p.y.toFixed(2), z: +b.p.z.toFixed(2), v: +Math.hypot(b.p.vx, b.p.vz).toFixed(2), state: b.state, holed: b.done && !b.picked, picked: b.picked, on: b.on, air: b.p.air })),
         cup: _c ? [_c.cup.x, _c.cup.z] : null, tee: _c ? [_c.tee.x, _c.tee.z] : null,
         views: 1, gl: !!_stage?.gl, turned: !!_stage?.turned, card: !!_card && _card.style.display === 'block',
-        aiming: _kits.map(k => k.on), dots: _kits.map(k => k.dots.filter(d => d.visible).length),
+        aiming: _kits.map(k => k.on), pass: _pass ? _pass.slot : -1, dots: _kits.map(k => k.dots.filter(d => d.visible).length),
     };
 }
 /** Probes: put a ball at rest at (x, z), on the course. */
@@ -956,6 +1048,8 @@ export function _debugShoot(slot, dx, dz, p) {
     b.state = 'aim'; if (_mode === 'turns') _turnState = 'aim';
     _shoot(slot, dx, dz, p);
 }
+/** Probes: take the phone (dismiss the PASS TO card). */
+export function _debugTakePass() { _takePass(); }
 /** Probes: the camera — 'follow' or 'map' (the whole hole). */
 export function _debugView(v) { _view = v; }
 /** Probes: skip the flyover or the scorecard. */
