@@ -148,8 +148,10 @@ function _pickHoles() {
         const i = COURSES.indexOf(course);
         return [...nine(course), ...nine(COURSES[(i + 1) % COURSES.length])];
     }
-    // A sampler: three holes from one course, played in the course's order.
-    const idx = course.holes.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, SAMPLER).sort((a, b) => a - b);
+    // A sampler: three of the course's short holes (par 3 or less — a party
+    // game, not a round), played in the course's order.
+    const short = course.holes.map((h, i) => (h.par <= 3 ? i : -1)).filter(i => i >= 0);
+    const idx = short.sort(() => Math.random() - 0.5).slice(0, SAMPLER).sort((a, b) => a - b);
     return idx.map(i => ({ course: course.key, hole: course.holes[i] }));
 }
 
@@ -524,6 +526,8 @@ function _shoot(slot, dx, dz, power) {
     const b = _balls[slot];
     if (!b || b.state !== 'aim' || b.done) return;
     if (_mode === 'turns' && slot !== _active) return;
+    // Play is going on: the manager's backstop only fires after a long quiet.
+    extendWatchdog(HOLE_WATCHDOG);
     b.from = { x: b.p.x, y: b.p.y, z: b.p.z };
     P.strike(b.p, dx, dz, power);
     b.state = 'roll'; b.rollT = 0; if (b.trailPts) b.trailPts = [];
@@ -769,10 +773,12 @@ function _play(dt, pdt = dt) {
                 _showBtns(!d);
                 if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL) _drawKit(_active, a); else { _hideKit(_active); _hidePower(); } }
                 if (_turnT >= CLOCK_TURNS) {
-                    const pl = plan(_c, b.p, _pt, 0.15);
+                    // Out of time: a fair, unspectacular putt toward the cup —
+                    // the stroke is the penalty, not a hole that never ends.
+                    const pl = plan(_c, b.p, _pt, 0.35);
                     _say2Show('TIME! A PUTT FOR YOU', '#fca5a5');
                     _drag.clear(); _hideKit(_active);
-                    _shoot(_active, pl.dx, pl.dz, pl.power * 0.6);
+                    _shoot(_active, pl.dx, pl.dz, pl.power * 0.85);
                 }
             }
         }
