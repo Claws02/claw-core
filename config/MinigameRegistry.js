@@ -393,7 +393,7 @@ export const MG_PARALLEL = MG_TYPES.filter(t => MG_NET[t] === 'parallel');
 
 /**
  * A game whose hold depends on how it's being played sets it here before the
- * round (Mini Golf: upright in turns, side-on in chaos). orientationOf() reads
+ * round (Mini Golf: a round from the Mini Golf mode in turns or solo is upright). orientationOf() reads
  * this first, then MG_ORIENTATION_MAP.
  */
 export const MG_ORIENTATION_OVERRIDE = {};
@@ -436,7 +436,7 @@ export const MG_ORIENTATION_MAP = {
     redlight: 'faceoff',
     tag: 'faceoff',
     balloontoss: 'sideon',
-    minigolf: 'putt',          // CHAOS mode turns it sideways (MG_ORIENTATION_OVERRIDE)
+    minigolf: 'sideon',        // a party's golf is CHAOS; the Mini Golf mode's turns/solo stand it up (MG_ORIENTATION_OVERRIDE)
     bowling: 'faceoff',
     sackrace: 'sideon',
     snowball: 'faceoff',

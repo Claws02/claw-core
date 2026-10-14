@@ -51,17 +51,21 @@ const CAM_BACK = 6.4, CAM_UP = 4.1, CAM_AHEAD = 3.6;   // behind the ball, portr
 const TEE_SPREAD = 0.42;
 
 // ── Configuration (the Mini Golf mode sets it; a party uses the defaults) ─────
-const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns' };
+// `round`: the next game is the Mini Golf mode's own round, played in its saved
+// mode. Anything else — a party, Quick Play, HundredBlockDash — is CHAOS, so
+// golf takes about as long as the games around it.
+const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns', round: false };
 let _cfg = { ...DEFAULTS };
 /**
- * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos' }.
- * The mode sticks until changed (it's a setting); the course and the number of
- * holes are for the NEXT round only, so a party after a full course is a sampler again.
+ * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos', round }.
+ * The mode sticks until changed (it's a setting) but only applies with `round`
+ * (the Mini Golf mode's own round). The course, the number of holes and `round`
+ * are for the NEXT game only: a party after a full course is a chaos sampler again.
  */
 export function configure(o = {}) {
     _cfg = { ..._cfg, ...o };
     // Turns is passed round upright; chaos is everyone at once, sideways.
-    if (_cfg.mode === 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = 'sideon'; else delete MG_ORIENTATION_OVERRIDE.minigolf;
+    if (_cfg.round && _cfg.mode !== 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = 'putt'; else delete MG_ORIENTATION_OVERRIDE.minigolf;
     return { ..._cfg };
 }
 export function configured() { return { ..._cfg }; }
@@ -87,9 +91,9 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _done = false; _onWin = onWin; _botSkill = botSkill;
     // Solo (the Mini Golf mode only): one ball against par, played like turns.
     _n = Math.max(1, Math.min(4, slotCount()));
-    _mode = _cfg.mode === 'chaos' && _n > 1 ? 'chaos' : 'turns';
+    _mode = _n === 1 ? 'turns' : _cfg.round ? (_cfg.mode === 'chaos' ? 'chaos' : 'turns') : 'chaos';
     _list = _pickHoles();
-    _cfg = { ..._cfg, course: null, holes: 'sampler' };
+    _cfg = { ..._cfg, course: null, holes: 'sampler', round: false };
     _last = null;
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _active = -1;
     _pt = 0; _slow = 1; _shake = 0; _ace = null;
@@ -157,6 +161,8 @@ function _pickHoles() {
 
 function _destroy() {
     _done = true;
+    delete MG_ORIENTATION_OVERRIDE.minigolf;   // the next golf is a party's (chaos, side-on) unless the mode says otherwise
+
     _built?.dispose?.(); _built = null; _pass = null;
     if (_stage) { _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
