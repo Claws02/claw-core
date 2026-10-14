@@ -163,6 +163,19 @@ export const MG_ORIENTATIONS = {
         instructions: 'Hold the phone <b>upright</b> and <b>pass it round</b>: one ball at a time, like real golf.<br><br>On your shot, <b>drag back</b> anywhere and <b>let go</b> — the further you pull, the harder. When it says <b>PASS TO…</b>, hand it on.',
         thumbAnim: 'pulse',
     },
+    // Portrait, everyone round the one phone at once (Mini Golf chaos): one
+    // picture of the hole, the screen split across the middle into a band
+    // each to drag in — P1 the bottom.
+    puttall: {
+        name: 'ALL AT ONCE',
+        subtitle: 'Hold it upright between you — everybody putts',
+        huddle: false,
+        upright: true,
+        bands: true,
+        icon: '⛳', drag: true,
+        instructions: 'Hold the phone <b>upright</b> where you can all see it. The screen splits across the <b>middle</b>: <b style="color:#ff3b3b">P1</b> drags in the <b>bottom</b> half, <b style="color:#3b8eff">P2</b> in the <b>top</b> (with more players, a band each from the bottom up).<br><br><b>Drag back</b> in your band and <b>let go</b> to putt — no waiting for turns. Changed your mind? <b>Slide back to where you started</b> and let go: no shot.',
+        thumbAnim: 'pulse',
+    },
     huddle: {
         name: 'HUDDLE',
         subtitle: 'One holder, both players lean in',
@@ -263,7 +276,7 @@ export const MG_NET = {
     redlight: 'local',
     tag: 'local',
     balloontoss: 'local',
-    minigolf: 'local',
+    minigolf: 'parallel',     // across phones: the same three holes on each, one ball each, Stableford points
     bowling: 'local',
     sackrace: 'local',
     snowball: 'local',
@@ -283,6 +296,15 @@ export const MG_NET = {
 // The cap matters. A score is reported by a client, and a client is a device
 // somebody else is holding: an uncapped payout would make "how many coins do I
 // have" a thing another player's phone gets to assert.
+// How long one parallel round may take on a phone, for a game that is longer
+// than the usual half-minute solitaire (three holes of golf at your own pace).
+// SoloArena's deadline and the hosts' round cap and grace read it: the grace is
+// how long the rest get once somebody has finished, which for golf has to be
+// most of a round, not a few seconds.
+export const MG_SOLO_MS = { minigolf: 240000 };
+export const soloRoundMs = (type, fallback) => Math.max(fallback, MG_SOLO_MS[type] || 0);
+export const soloGraceMs = (type, fallback) => Math.max(fallback, (MG_SOLO_MS[type] || 0) * 0.6);
+
 export const MG_PAYOUT = {
     // Each game's own ceiling, matched to the MAX_PAYOUT it enforces offline —
     // a cap here that is higher than the one the game applies would pay out
@@ -304,6 +326,7 @@ export const MG_NET_INFO = {
     steadyhand:  'A target drifts around your screen — keep your finger on it to bank time. It speeds up as the round goes on. The same target, on the same path, on every phone: whoever holds it longest wins.',
     oddoneout:   'Every tile on your grid is the same shade except one. Tap the odd tile and a fresh, harder grid appears — more tiles, subtler difference. A wrong tap locks you out briefly and deals a new grid, so you are never stuck staring at one you cannot see. Most found in 30 seconds wins.',
     snapstrike:  'A needle sweeps your bar — tap to lock it on the bullseye. PERFECT, GREAT and GOOD snaps score 3, 2 and 1. Five rounds, the bar speeding up and the target shrinking. The same bullseye on every phone: highest total wins.',
+    minigolf:    'Three holes of mini golf, the same three on every phone, played on your own phone with the whole screen to yourself — no waiting for turns. Drag back and let go to putt; slide back to where you started to call a shot off. Scored in golf points: 2 for a par, 3 for a birdie, 4 for an eagle, 1 for a bogey, nothing worse. Most points wins.',
     treeclimb:   '🪙 PAYDAY — 30 seconds, and coins bank as you climb. A leaf sprouts LEFT or RIGHT: tap that side to jump onto it. Sides do not just alternate, so watch it. Grab the wrong side and you fall to the last branch on THAT side — but a fall never takes your coins back. Everyone climbs the same tree; highest takes the round.',
 };
 
@@ -393,7 +416,7 @@ export const MG_PARALLEL = MG_TYPES.filter(t => MG_NET[t] === 'parallel');
 
 /**
  * A game whose hold depends on how it's being played sets it here before the
- * round (Mini Golf: upright in turns, side-on in chaos). orientationOf() reads
+ * round (Mini Golf: pass & putt for the Mini Golf mode's turns or solo). orientationOf() reads
  * this first, then MG_ORIENTATION_MAP.
  */
 export const MG_ORIENTATION_OVERRIDE = {};
@@ -436,7 +459,7 @@ export const MG_ORIENTATION_MAP = {
     redlight: 'faceoff',
     tag: 'faceoff',
     balloontoss: 'sideon',
-    minigolf: 'putt',          // CHAOS mode turns it sideways (MG_ORIENTATION_OVERRIDE)
+    minigolf: 'puttall',       // CHAOS, upright, a band each; the Mini Golf mode's turns/solo pass it round ('putt', via MG_ORIENTATION_OVERRIDE)
     bowling: 'faceoff',
     sackrace: 'sideon',
     snowball: 'faceoff',
@@ -645,7 +668,7 @@ export const MG_PROFILE = {
     tag: { genre: 'scramble', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
     balloontoss: { genre: 'nerve', control: 'tap', wire: 'snapshot', seats: [2, 2], live: false },
     // Live at 3-4: one shared course, a strip each along one edge (MiniGolf.js header).
-    minigolf: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 4], live: true },
+    minigolf: { genre: 'aim', control: 'thumb', wire: 'none', seats: [2, 4], live: true },   // across phones: each plays the same holes alone (parallel)
     bowling: { genre: 'aim', control: 'thumb', wire: 'snapshot', seats: [2, 2], live: false },
     // Live at 3-4: a lane each, side by side along one edge (SackRace.js header).
     sackrace: { genre: 'race', control: 'tap', wire: 'snapshot', seats: [2, 4], live: true },

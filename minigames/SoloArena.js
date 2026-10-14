@@ -24,7 +24,7 @@
 // only two functions a game has to call to support this.
 
 import { state, setBoardPaused } from '../../AppHost.js';
-import { MG_INFO, MG_NET } from '../config/MinigameRegistry.js';
+import { MG_INFO, MG_NET, soloRoundMs } from '../config/MinigameRegistry.js';
 import * as MinigameManager from './MinigameManager.js';
 
 // ── The seeded random every device shares ───────────────────────────────────
@@ -155,6 +155,7 @@ export function soloFinish(score) {
  * the game had banked, which for every parallel game is a real partial score.
  */
 export async function play(type, seed, onScore, deadlineMs = 90000) {
+    deadlineMs = soloRoundMs(type, deadlineMs);   // a longer game (golf) brings its own
     _solo = true;
     _scored = false;
     _rng = seedRandom(seed);

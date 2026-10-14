@@ -28,10 +28,11 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot, slotCount, extendWatchdog } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot as _botSlot, slotCount, extendWatchdog } from './MinigameManager.js';
+import * as Solo from './SoloArena.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
-import { seat, sideHud, uprightHud, effects } from '../engine/StageKit.js';
+import { seat, uprightHud, effects } from '../engine/StageKit.js';
 import { MG_ORIENTATION_OVERRIDE } from '../config/MinigameRegistry.js';
 import * as P from './golf/Physics.js';
 import { plan, planSteps } from './golf/Bot.js';
@@ -51,17 +52,21 @@ const CAM_BACK = 6.4, CAM_UP = 4.1, CAM_AHEAD = 3.6;   // behind the ball, portr
 const TEE_SPREAD = 0.42;
 
 // ── Configuration (the Mini Golf mode sets it; a party uses the defaults) ─────
-const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns' };
+// `round`: the next game is the Mini Golf mode's own round, played in its saved
+// mode. Anything else — a party, Quick Play, HundredBlockDash — is CHAOS, so
+// golf takes about as long as the games around it.
+const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns', round: false };
 let _cfg = { ...DEFAULTS };
 /**
- * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos' }.
- * The mode sticks until changed (it's a setting); the course and the number of
- * holes are for the NEXT round only, so a party after a full course is a sampler again.
+ * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos', round }.
+ * The mode sticks until changed (it's a setting) but only applies with `round`
+ * (the Mini Golf mode's own round). The course, the number of holes and `round`
+ * are for the NEXT game only: a party after a full course is a chaos sampler again.
  */
 export function configure(o = {}) {
     _cfg = { ..._cfg, ...o };
-    // Turns is passed round upright; chaos is everyone at once, sideways.
-    if (_cfg.mode === 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = 'sideon'; else delete MG_ORIENTATION_OVERRIDE.minigolf;
+    // Turns is passed round; chaos is everyone at once round the one phone. Both upright.
+    if (_cfg.round && _cfg.mode !== 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = 'putt'; else delete MG_ORIENTATION_OVERRIDE.minigolf;   // 'puttall' otherwise
     return { ..._cfg };
 }
 export function configured() { return { ..._cfg }; }
@@ -80,16 +85,22 @@ let _active = -1, _turnT = 0, _turnState = 'aim', _botThink = null, _shooter = -
 let _cam = null, _yaw = 0, _view = 'follow', _drag = new Map(), _ui = null, _card = null, _say2 = null;
 
 const _seats = () => Array.from({ length: _n }, (_, i) => i);
+// Across phones (SoloArena) the one ball is always the person holding it.
+const _isBot = slot => !Solo.isSolo() && _botSlot(slot);
+/** Stableford: 2 for a par, one more for each under, one less over, never below 0. */
+const _stableford = slot => _list.reduce((a, x, i) => a + (_strokes[slot]?.[i] ? Math.max(0, 2 + x.hole.par - _strokes[slot][i]) : 0), 0);
+/** SoloArena: the points banked so far (a round cut off still counts what's done). */
+export function soloScore() { return _strokes.length ? _stableford(0) : 0; }
 const _limit = h => h.par + 3;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     // Solo (the Mini Golf mode only): one ball against par, played like turns.
-    _n = Math.max(1, Math.min(4, slotCount()));
-    _mode = _cfg.mode === 'chaos' && _n > 1 ? 'chaos' : 'turns';
+    _n = Solo.isSolo() ? 1 : Math.max(1, Math.min(4, slotCount()));
+    _mode = _n === 1 ? 'turns' : _cfg.round ? (_cfg.mode === 'chaos' ? 'chaos' : 'turns') : 'chaos';
     _list = _pickHoles();
-    _cfg = { ..._cfg, course: null, holes: 'sampler' };
+    _cfg = { ..._cfg, course: null, holes: 'sampler', round: false };
     _last = null;
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _active = -1;
     _pt = 0; _slow = 1; _shake = 0; _ace = null;
@@ -104,9 +115,10 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _overlay = document.createElement('div');
     _overlay.style.cssText = `position:absolute;inset:0;overflow:hidden;background:#${_theme.sky.toString(16).padStart(6, '0')};z-index:5;`;
     mg.appendChild(_overlay);
-    // Turns: the phone stands up and is passed round. Chaos: sideways, a strip each.
-    _stage = createStage(_overlay, _mode === 'turns' ? { hold: 'upright', fov: 56, background: _theme.sky } : { hold: 'side', fov: 50, background: _theme.sky });
-    _hud = _mode === 'turns' ? _turnsHud(_stage) : sideHud(_stage, { padWidth: 230 });
+    // Upright either way. Turns: passed round. Chaos: one picture of the hole,
+    // the screen split across the middle into a band each to drag in.
+    _stage = createStage(_overlay, { hold: 'upright', fov: 56, background: _theme.sky });
+    _hud = _mode === 'turns' ? _turnsHud(_stage) : _chaosHud(_stage);
     _holder = -1; _pass = null;
     _fx = effects(_stage);
     _dir = createDirector(_stage);
@@ -141,26 +153,37 @@ function _pickHoles() {
         const got = _forceHoles.map(k => all.find(x => x.hole.key === k)).filter(Boolean);
         if (got.length) return got;
     }
-    const course = _cfg.course ? courseByKey(_cfg.course) : COURSES[Math.floor(Math.random() * COURSES.length)];
+    // Across phones every device has to get the same holes: the round's shared draw, not Math.random.
+    const rnd = Solo.isSolo() ? (() => { let i = 0; return () => Solo.draw(100 + i++); })() : Math.random;
+    const course = _cfg.course && !Solo.isSolo() ? courseByKey(_cfg.course) : COURSES[Math.floor(rnd() * COURSES.length)];
     const nine = c => c.holes.map(h => ({ course: c.key, hole: h }));
-    if (+_cfg.holes === 9) return nine(course);
-    if (+_cfg.holes === 18) {
+    if (+_cfg.holes === 9 && !Solo.isSolo()) return nine(course);
+    if (+_cfg.holes === 18 && !Solo.isSolo()) {
         const i = COURSES.indexOf(course);
         return [...nine(course), ...nine(COURSES[(i + 1) % COURSES.length])];
     }
-    // A sampler: three holes from one course, played in the course's order.
-    const idx = course.holes.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, SAMPLER).sort((a, b) => a - b);
+    // A sampler: three of the course's short holes (par 3 or less — a party
+    // game, not a round), played in the course's order.
+    const short = course.holes.map((h, i) => (h.par <= 3 ? i : -1)).filter(i => i >= 0);
+    const idx = short.map(i => [rnd(), i]).sort((a, b) => a[0] - b[0]).map(x => x[1]).slice(0, SAMPLER).sort((a, b) => a - b);
     return idx.map(i => ({ course: course.key, hole: course.holes[i] }));
 }
 
 function _destroy() {
     _done = true;
+    delete MG_ORIENTATION_OVERRIDE.minigolf;   // the next golf is a party's (chaos) unless the mode says otherwise
+
     _built?.dispose?.(); _built = null; _pass = null;
     if (_stage) { _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _balls = []; _figs = []; _kits = []; _dir = null; _hud = null; _fx = null; _ui = null; _card = null; _say2 = null; _c = null; _lights = null;
 }
-function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+function _finish(w, rank) {
+    if (_done) return;
+    _destroy();
+    if (Solo.isSolo()) { Solo.soloFinish(_stableford(0)); return; }
+    _onWin?.(w, null, rank);
+}
 
 // ── Building ─────────────────────────────────────────────────────────────────
 function _ballTex(color) {
@@ -228,7 +251,7 @@ function _buildKit(slot) {
 /**
  * The HUD for turns (upright, passed round): the bar and the big message, and
  * a row of chips under the bar, one per player — their colour, name and how
- * they stand — the one whose shot it is lit. Same calls as sideHud.
+ * they stand — the one whose shot it is lit. Same calls as uprightHud, plus hint and lit.
  */
 function _turnsHud(stage) {
     const base = uprightHud(stage);
@@ -251,6 +274,45 @@ function _turnsHud(stage) {
         hint(slot, text) { const c = chips[slot]; if (c && c.children[2].textContent !== text) c.children[2].textContent = text ? '· ' + text : ''; },
         lit(slot, on, color) { const c = chips[slot]; if (!c) return; c.style.background = on ? (color || 'rgba(250,204,21,.45)') : 'rgba(20,12,24,.55)'; c.style.transform = on ? 'scale(1.08)' : ''; },
     };
+}
+
+/** Which band of the screen (chaos) a point is in: P1 the bottom, then up. */
+const _bandOf = y => Math.max(0, Math.min(_n - 1, _n - 1 - Math.floor(y / (_stage.height / _n))));
+/**
+ * Chaos: the chips of turns, plus the bands — a line across between each, and
+ * at the inside edge of each a tag in that player's colour: whose band it is.
+ */
+function _chaosHud(stage) {
+    const base = _turnsHud(stage);
+    const marks = _seats().map(slot => {
+        const st = seat(slot);
+        const tag = document.createElement('div');
+        tag.style.cssText = `position:absolute;left:8px;padding:2px 10px;border-radius:10px;background:${st.css}cc;color:#fff;font-size:13px;letter-spacing:1px;` +
+            'pointer-events:none;white-space:nowrap;text-shadow:0 1px 0 rgba(0,0,0,.5);transition:opacity .2s;';
+        tag.textContent = `${st.name}${st.bot ? ' 🤖' : ' · DRAG HERE'}`;
+        stage.hud.appendChild(tag);
+        const edge = document.createElement('div');
+        edge.style.cssText = `position:absolute;left:0;width:5px;background:${st.css};opacity:.75;pointer-events:none;`;
+        stage.hud.appendChild(edge);
+        return { tag, edge };
+    });
+    const lines = _seats().slice(1).map(() => {
+        const l = document.createElement('div');
+        l.style.cssText = 'position:absolute;left:0;right:0;height:0;border-top:2px dashed rgba(255,255,255,.45);pointer-events:none;';
+        stage.hud.appendChild(l);
+        return l;
+    });
+    stage.onResize((w, h) => {
+        const bh = h / _n;
+        marks.forEach((m, slot) => {
+            const top = (_n - 1 - slot) * bh;
+            m.edge.style.top = top + 'px'; m.edge.style.height = bh + 'px';
+            // Under the line above (the top band: under the score bar and chips).
+            m.tag.style.top = (slot === _n - 1 ? Math.max(top + 8, _n > 2 ? 146 : 122) : top + 8) + 'px';
+        });
+        lines.forEach((l, i) => { l.style.top = ((i + 1) * bh) + 'px'; });
+    });
+    return base;
 }
 
 /** "PASS TO …": the card between two people's shots, until the next one taps. */
@@ -440,10 +502,10 @@ function _nextTurn() {
     _view = 'follow';
     const s = seat(next);
     // Hand the phone over when a different person has to play.
-    const humans = _seats().filter(k => !isBotSlot(k)).length;
-    if (!isBotSlot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
-    else _hud.say(s.name, isBotSlot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
-    if (!isBotSlot(next) && humans <= 1) _holder = next;
+    const humans = _seats().filter(k => !_isBot(k)).length;
+    if (!_isBot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
+    else _hud.say(s.name, _isBot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
+    if (!_isBot(next) && humans <= 1) _holder = next;
     _seats().forEach(k => _hud.lit(k, k === next, k === next ? s.css + '66' : undefined));
     _walkTo(next, b.p.x, b.p.z, _yaw);
 }
@@ -474,24 +536,58 @@ function _input() {
         const p = _stage.toLocal(e.clientX, e.clientY);
         let slot;
         if (_mode === 'turns') { slot = _active; if (_turnState !== 'aim') return; }
-        else slot = Math.max(0, Math.min(_n - 1, _n - 1 - Math.floor(p.x / (_stage.width / _n))));
-        if (slot < 0 || isBotSlot(slot) || _balls[slot].state !== 'aim' || [..._drag.values()].some(d => d.slot === slot)) return;
+        else slot = _bandOf(p.y);
+        if (slot < 0 || _isBot(slot) || _balls[slot].state !== 'aim' || [..._drag.values()].some(d => d.slot === slot)) return;
         if (_view === 'map') _view = 'follow';
-        _drag.set(e.pointerId, { slot, ax: p.x, ay: p.y, x: p.x, y: p.y });
+        _drag.set(e.pointerId, { slot, ax: p.x, ay: p.y, x: p.x, y: p.y, armed: false, ring: _cancelRing(slot, p.x, p.y) });
     });
     _stage.listen('pointermove', e => {
         const d = _drag.get(e.pointerId); if (!d) return;
         const p = _stage.toLocal(e.clientX, e.clientY); d.x = p.x; d.y = p.y;
+        const pw = _aimOf(d).power;
+        if (pw >= MIN_PULL * 2) d.armed = true;
+        _cancelShow(d, d.armed && pw < MIN_PULL * 2);
     });
     _stage.listen('pointerup', e => {
         const d = _drag.get(e.pointerId); if (!d) return;
         _drag.delete(e.pointerId);
         const a = _aimOf(d);
+        d.ring?.remove();
         _hideKit(d.slot); _hidePower();
-        if (!a || a.power < MIN_PULL) return;
+        // Back where it started: no shot, no stroke.
+        if (!a || a.power < MIN_PULL * 2) {
+            if (d.armed) { _hud.hint(d.slot, 'NO SHOT'); _say2Show('NO SHOT', '#e5e7eb', 600); sfx('tick'); }
+            return;
+        }
         _shoot(d.slot, a.dx, a.dz, a.power);
     });
-    _stage.listen('pointercancel', e => { const d = _drag.get(e.pointerId); if (d) { _drag.delete(e.pointerId); _hideKit(d.slot); _hidePower(); } });
+    _stage.listen('pointercancel', e => { const d = _drag.get(e.pointerId); if (d) { _drag.delete(e.pointerId); d.ring?.remove(); _hideKit(d.slot); _hidePower(); } });
+}
+/**
+ * Where a drag started: a faint ring, the way out of a shot. Pull back into it
+ * once you've wound up and it turns into a red ✕ — let go there and nothing is
+ * played. (The shot itself is drawn by the kit; this only marks the start.)
+ */
+function _cancelRing(slot, x, y) {
+    if (!_stage?.hud) return null;
+    const el = document.createElement('div');
+    const r = Math.max(26, MIN_PULL * 2 * PULL * Math.min(_stage.width, _stage.height));
+    el.style.cssText = `position:absolute;left:${x - r}px;top:${y - r}px;width:${r * 2}px;height:${r * 2}px;border-radius:50%;box-sizing:border-box;` +
+        `border:3px dashed ${seat(slot).css};opacity:0;display:flex;align-items:center;justify-content:center;flex-direction:column;` +
+        'color:#fff;font-size:22px;line-height:1;pointer-events:none;transition:opacity .12s,background .12s,transform .12s;text-shadow:0 1px 0 rgba(0,0,0,.6);';
+    el.innerHTML = '<span>✕</span><span style="font-size:10px;letter-spacing:1px;margin-top:2px;white-space:nowrap;">NO SHOT</span>';
+    el.children[0].style.visibility = el.children[1].style.visibility = 'hidden';
+    _stage.hud.appendChild(el);
+    return el;
+}
+function _cancelShow(d, on) {
+    const el = d.ring; if (!el) return;
+    el.style.opacity = d.armed ? (on ? '1' : '.55') : '0';
+    el.style.background = on ? 'rgba(220,38,38,.75)' : 'transparent';
+    el.style.borderStyle = on ? 'solid' : 'dashed';
+    el.style.transform = on ? 'scale(1.12)' : '';
+    el.children[0].style.visibility = el.children[1].style.visibility = on ? 'visible' : 'hidden';
+    if (on) { _hideKit(d.slot); _hidePower(); }
 }
 
 // A drag on the screen, as a shot: the ball goes away from the pull, along the
@@ -524,14 +620,16 @@ function _shoot(slot, dx, dz, power) {
     const b = _balls[slot];
     if (!b || b.state !== 'aim' || b.done) return;
     if (_mode === 'turns' && slot !== _active) return;
+    // Play is going on: the manager's backstop only fires after a long quiet.
+    extendWatchdog(HOLE_WATCHDOG);
     b.from = { x: b.p.x, y: b.p.y, z: b.p.z };
     P.strike(b.p, dx, dz, power);
     b.state = 'roll'; b.rollT = 0; if (b.trailPts) b.trailPts = [];
     _strokes[slot][_hole]++;
     _shooter = slot;
-    if (!isBotSlot(slot)) _holder = slot;
+    if (!_isBot(slot)) _holder = slot;
     if (_mode === 'turns') { _turnState = 'roll'; _showBtns(false); _view = 'follow'; }
-    sfx('putt'); if (!isBotSlot(slot)) haptic([14]);
+    sfx('putt'); if (!_isBot(slot)) haptic([14]);
     const f = _figs[slot];
     if (f) { f.swing = 1; f.swingFrom = f.club ? f.club.rotation.x : 0.25; f.aimP = null; f.shotFrom = { x: b.p.x, z: b.p.z }; f.anim?.play('shove', { restart: true }); }
     b.sq = 0.6;
@@ -574,7 +672,7 @@ function _drawKit(slot, a) {
     }
     for (; di < k.dots.length; di++) k.dots[di].visible = false;
     if (_figs[slot]) _figs[slot].aimP = a.power;
-    if (_mode === 'turns' && _ui && !isBotSlot(slot)) {
+    if (_mode === 'turns' && _ui && !_isBot(slot)) {
         _ui.power.style.display = 'block'; _ui.powerTxt.style.display = 'block';
         _ui.powerFill.style.width = Math.round(a.power * 100) + '%';
         _ui.powerTxt.textContent = `POWER ${Math.round(a.power * 100)}%`;
@@ -600,7 +698,7 @@ function _sunk(b, knocked) {
     const [txt, col] = _label(n, h.par);
     sfx('cup');
     const s = seat(b.slot);
-    if (!isBotSlot(b.slot)) haptic([40]);
+    if (!_isBot(b.slot)) haptic([40]);
     _nextWait = 1.8;
     if (_stage?.gl) {
         const at = new THREE.Vector3(_c.cup.x, _c.cup.y + 0.4, _c.cup.z);
@@ -763,16 +861,18 @@ function _play(dt, pdt = dt) {
         const b = _balls[_active];
         if (b && _turnState === 'aim') {
             _turnT += dt;
-            if (isBotSlot(_active)) _botTurn(dt, b);
+            if (_isBot(_active)) _botTurn(dt, b);
             else {
                 const d = [..._drag.values()].find(x => x.slot === _active);
                 _showBtns(!d);
-                if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL) _drawKit(_active, a); else { _hideKit(_active); _hidePower(); } }
+                if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL * 2) _drawKit(_active, a); else { _hideKit(_active); _hidePower(); } }
                 if (_turnT >= CLOCK_TURNS) {
-                    const pl = plan(_c, b.p, _pt, 0.15);
+                    // Out of time: a fair, unspectacular putt toward the cup —
+                    // the stroke is the penalty, not a hole that never ends.
+                    const pl = plan(_c, b.p, _pt, 0.35);
                     _say2Show('TIME! A PUTT FOR YOU', '#fca5a5');
                     _drag.clear(); _hideKit(_active);
-                    _shoot(_active, pl.dx, pl.dz, pl.power * 0.6);
+                    _shoot(_active, pl.dx, pl.dz, pl.power * 0.85);
                 }
             }
         }
@@ -780,13 +880,13 @@ function _play(dt, pdt = dt) {
         _balls.forEach(b => {
             if (b.state !== 'aim' || b.done) return;
             b.clock += dt;
-            if (isBotSlot(b.slot)) {
+            if (_isBot(b.slot)) {
                 b.bot.wait -= dt;
                 if (b.bot.wait <= 0) { const pl = plan(_c, b.p, _pt, _botSkill); _shoot(b.slot, pl.dx, pl.dz, pl.power); b.bot.wait = 0.9 + Math.random() * 0.8 + (1 - _botSkill); }
                 return;
             }
             const d = [..._drag.values()].find(x => x.slot === b.slot);
-            if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL) _drawKit(b.slot, a); else _hideKit(b.slot); }
+            if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL * 2) _drawKit(b.slot, a); else _hideKit(b.slot); }
             if (b.clock >= CLOCK_CHAOS) {
                 const pl = plan(_c, b.p, _pt, 0.15);
                 [..._drag.entries()].forEach(([id, x]) => { if (x.slot === b.slot) _drag.delete(id); });
@@ -852,33 +952,62 @@ function _botTurn(dt, b) {
 
 // ── Cameras ──────────────────────────────────────────────────────────────────
 /** The whole hole, from above and a little in front, fitted to the screen. */
-function _fitCam() {
-    if (_mode === 'turns') return _fitCamUpright();
-    const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
-    const w = B.x1 - B.x0 + 1.5, d = B.z1 - B.z0 + 1.5;
-    const fov = (_stage?.camera?.fov ?? 50) * Math.PI / 180, A = (_stage?.width || 892) / Math.max(1, _stage?.height || 412);
-    const t = Math.tan(fov / 2);
-    const h = Math.max(d / 2 / t * 1.25, w / 2 / (t * A) * 1.08) + 1.5;
-    const tilt = 0.42;
-    return { pos: [cx, h * Math.cos(tilt), cz + h * Math.sin(tilt)], look: [cx, 0, cz + 0.4] };
-}
-/** The whole hole standing up the portrait screen: tee at the bottom, cup toward the top. */
-function _fitCamUpright() {
-    const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
-    // Up the screen is the way the hole mostly goes, snapped square to the course.
+function _fitCam() { return _fitCamUpright(); }
+/** Up the portrait screen: the way the hole mostly goes, snapped square to the course. */
+function _upAxis() {
     let ax = _c.cup.x - _c.tee.x, az = _c.cup.z - _c.tee.z;
     if (Math.abs(ax) >= Math.abs(az)) { ax = Math.sign(ax) || 1; az = 0; } else { az = Math.sign(az); ax = 0; }
-    const rx = -az, rz = ax;
-    let hf = 0, hr = 0;
-    for (const [x, z] of [[B.x0, B.z0], [B.x1, B.z0], [B.x0, B.z1], [B.x1, B.z1]]) {
-        hf = Math.max(hf, Math.abs((x - cx) * ax + (z - cz) * az));
-        hr = Math.max(hr, Math.abs((x - cx) * rx + (z - cz) * rz));
-    }
+    return [ax, az];
+}
+/** A camera on (cx, cz) that fits hf along the up axis and hr across it, in portrait. */
+function _uprightPose(cx, cz, hf, hr) {
+    const [ax, az] = _upAxis();
     const fov = (_stage?.camera?.fov ?? 56) * Math.PI / 180, A = (_stage?.width || 412) / Math.max(1, _stage?.height || 892);
     const t = Math.tan(fov / 2);
     const h = Math.max((hf + 0.8) / t * 1.12, (hr + 0.8) / (t * A) * 1.05) + 1;
     const tilt = 0.38;
-    return { pos: [cx - ax * h * Math.sin(tilt), h * Math.cos(tilt), cz - az * h * Math.sin(tilt)], look: [cx + ax * 0.6, 0, cz + az * 0.6] };
+    return { h, pos: [cx - ax * h * Math.sin(tilt), h * Math.cos(tilt), cz - az * h * Math.sin(tilt)], look: [cx + ax * 0.6, 0, cz + az * 0.6] };
+}
+/** Half-extents of some points about their middle, along and across the up axis. */
+function _extent(pts) {
+    const [ax, az] = _upAxis(), rx = -az, rz = ax;
+    let f0 = 1e9, f1 = -1e9, r0 = 1e9, r1 = -1e9;
+    for (const [x, z] of pts) {
+        const f = x * ax + z * az, r = x * rx + z * rz;
+        f0 = Math.min(f0, f); f1 = Math.max(f1, f); r0 = Math.min(r0, r); r1 = Math.max(r1, r);
+    }
+    const fm = (f0 + f1) / 2, rm = (r0 + r1) / 2;
+    return { cx: fm * ax + rm * rx, cz: fm * az + rm * rz, hf: (f1 - f0) / 2, hr: (r1 - r0) / 2 };
+}
+/** The whole hole standing up the portrait screen: tee at the bottom, cup toward the top. */
+function _fitCamUpright() {
+    const B = _c.bounds;
+    const e = _extent([[B.x0, B.z0], [B.x1, B.z0], [B.x0, B.z1], [B.x1, B.z1]]);
+    return _uprightPose(e.cx, e.cz, e.hf, e.hr);
+}
+/**
+ * Chaos: one camera for everybody. It frames the balls still in play and the
+ * cup — in close while they're together, pulling out as they spread — but never
+ * tighter than about half the hole, and never wider than all of it.
+ */
+function _chaosCam() {
+    const live = _balls.filter(b => b.on && !b.done).map(b => {
+        const m = b.mesh?.visible ? b.mesh.position : b.p;
+        return [m.x, m.z];
+    });
+    const whole = _fitCamUpright();
+    if (!live.length) return whole;
+    const e = _extent([...live, [_c.cup.x, _c.cup.z]]);
+    const pose = _uprightPose(e.cx, e.cz, Math.max(3.5, e.hf + 2.2), Math.max(2.5, e.hr + 1.6));
+    const B = _extent([[_c.bounds.x0, _c.bounds.z0], [_c.bounds.x1, _c.bounds.z1]]);
+    // Show as much of the course as the balls allow: at least ~55% of the whole view.
+    const h = Math.min(whole.h, Math.max(pose.h, whole.h * 0.55));
+    if (h >= whole.h - 0.01) return whole;
+    // Keep the centre on the course so the extra room shows course, not sky.
+    const k = (h - pose.h) / Math.max(0.01, whole.h - pose.h);
+    const cx = e.cx + (B.cx - e.cx) * k, cz = e.cz + (B.cz - e.cz) * k;
+    const [ax, az] = _upAxis(), tilt = 0.38;
+    return { h, pos: [cx - ax * h * Math.sin(tilt), h * Math.cos(tilt), cz - az * h * Math.sin(tilt)], look: [cx + ax * 0.6, 0, cz + az * 0.6] };
 }
 function _aimPose(x, y, z, yaw, back = 1) {
     const dx = Math.cos(yaw), dz = Math.sin(yaw);
@@ -919,7 +1048,10 @@ function _camera(dt) {
         }
         if (_subT < dt * 1.5) { _cam.pos.copy(pos); _cam.look.copy(look); }
         _cam.pos.lerp(pos, Math.min(1, dt * 4)); _cam.look.lerp(look, Math.min(1, dt * 4));
-    } else if (_mode === 'chaos' || _sub === 'card' || _view === 'map' || _active < 0) {
+    } else if (_mode === 'chaos' && _sub !== 'card') {
+        const f = _chaosCam();
+        _cam.pos.lerp(new THREE.Vector3(...f.pos), k * 0.7); _cam.look.lerp(new THREE.Vector3(...f.look), k * 0.7);
+    } else if (_sub === 'card' || _view === 'map' || _active < 0) {
         const f = _fitCam();
         _cam.pos.lerp(new THREE.Vector3(...f.pos), k); _cam.look.lerp(new THREE.Vector3(...f.look), k);
     } else if (_turnState === 'aim' || _turnState === 'pass') {
@@ -1141,7 +1273,8 @@ function _end() {
     const rank = _seats().map(s => -(tot[s] * 1000 + order.indexOf(s)));
     const runner = order[1];
     const par = _list.reduce((a, x) => a + x.hole.par, 0);
-    const sub = _n === 1 ? `${tot[w]} STROKES · ${_fmt(tot[w] - par)} ON PAR ${par}`
+    const sub = Solo.isSolo() ? `${_stableford(0)} POINTS · ${tot[w]} STROKES (${_fmt(tot[w] - par)})`
+        : _n === 1 ? `${tot[w]} STROKES · ${_fmt(tot[w] - par)} ON PAR ${par}`
         : w < 0 ? `LEVEL ON ${tot[order[0]]}`
         : tot[w] !== tot[runner] ? `${tot[w]} STROKES (${_fmt(tot[w] - par)}) · ${tot[runner]} NEXT`
         : `LEVEL ON ${tot[w]} · ${_mode === 'turns' ? 'ON COUNTBACK' : `QUICKER BY ${Math.abs(tt[w] - tt[runner]).toFixed(1)}s`}`;
