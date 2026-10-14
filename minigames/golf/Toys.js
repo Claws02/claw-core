@@ -60,8 +60,19 @@ export function resetTextures() { _tex = {}; }
 export function rail(w, theme, mats) {
     const len = Math.hypot(w.x2 - w.x1, w.z2 - w.z1), th = 0.13;
     const g = new THREE.Group();
+    if (w.mat === 'hedge') {
+        // A clipped hedge: a rounded green block with leafy lumps along the top.
+        const hedge = rbox(len + 0.1, w.h + 0.1, 0.34, 0.14, mat(0x2f8f3a, { roughness: 0.95 }));
+        g.add(hedge);
+        const leaf = mat(0x3fa548, { roughness: 1 });
+        const n = Math.max(2, Math.round(len / 0.45));
+        for (let i = 0; i < n; i++) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), leaf); b.position.set(-len / 2 + len * (i + 0.5) / n, w.h / 2 + 0.02, (i % 2 ? 0.05 : -0.05)); b.scale.y = 0.7; g.add(b); }
+        g.position.set((w.x1 + w.x2) / 2, (w.b1 + w.b2) / 2 + w.h / 2, (w.z1 + w.z2) / 2);
+        g.rotation.y = -Math.atan2(w.z2 - w.z1, w.x2 - w.x1);
+        return shadowed(g);
+    }
     let m = mats.rail;
-    if (theme.railTex === 'cane') {
+    if (theme.railTex === 'cane' || w.mat === 'candy') {
         const t = caneTex().clone(); t.needsUpdate = true; t.repeat.set(2, 2);
         m = glossy(0xffffff, { map: t });
     }
@@ -167,6 +178,16 @@ export function block([x0, z0, x1, z1, h], base, theme, kind) {
 /** A bumper in the course's style. Returns { g, flash: a material to light up on a hit, squash }. */
 export function bumper(p, theme) {
     const g = new THREE.Group();
+    if (p.kick === 0 && p.r < 0.25) {
+        // A peg: a gumball on a stick (candy), a lit post (space), a little post.
+        const cols = [0xff5fa2, 0xffd23f, 0x5fb8ff, 0x7ed957, 0xb57bff, 0xff8a3d];
+        const k = ((Math.round(p.x * 5 + p.z * 3) % cols.length) + cols.length) % cols.length;
+        const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 6), mat(0xffffff)); stick.position.y = 0.15; g.add(stick);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(p.r + 0.02, 14, 10), theme.railGlow ? glow(theme.rail, 0.8) : glossy(cols[k], { roughness: 0.15, emissive: cols[k], emissiveIntensity: 0.05 }));
+        head.position.y = 0.3; g.add(head);
+        g.position.set(p.x, p.y, p.z);
+        return { g: shadowed(g), flash: head.material, squash: false };
+    }
     const style = theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
     let flash;
     if (style === 'gumdrop') {
@@ -380,8 +401,12 @@ export function cannon() {
     const ball = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), iron); ball.position.y = -0.06;
     const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.13, 16), new THREE.MeshBasicMaterial({ color: 0x050505 })); mouth.rotation.x = -Math.PI / 2; mouth.position.y = 1.33;
     const b = new THREE.Group(); b.add(barrel, ball, mouth);
+    const tip = new THREE.Object3D(); tip.position.y = 1.36; b.add(tip);
     b.rotation.z = -Math.PI / 2 + 0.4; b.position.set(0.25, 0.55, 0);
     g.add(b);
+    // For the firing: the barrel kicks back, the ball leaves from the tip.
+    g.userData.barrel = b; g.userData.barrelX = b.position.x;
+    g.userData.muzzle = () => { g.updateMatrixWorld(true); return tip.getWorldPosition(new THREE.Vector3()); };
     const cart = rbox(1.0, 0.32, 0.62, 0.06, mat(0x7a4a1e)); cart.position.set(0.55, 0.3, 0); g.add(cart);
     [-0.36, 0.36].forEach(z => [0.2, 0.9].forEach(x => {
         const wheel = new THREE.Group();

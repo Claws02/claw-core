@@ -12,6 +12,7 @@
 // ============================================================
 import { tileHeight, moverWalls, windmillAngle, HAZARD, CUP_R, R } from './Physics.js';
 import * as Toy from './Toys.js';
+import * as Moving from './Moving.js';
 
 let _caneTex = null;
 /** Red and white candy stripes, for Candy Land's rails and canes. */
@@ -38,7 +39,7 @@ const _shade = (hex, k) => {
 /** A tile's floor as a mesh: a grid whose heights are the tile's own. */
 function _floor(t, theme) {
     const w = t.x1 - t.x0, d = t.z1 - t.z0;
-    const hilly = t.hills.length > 0;
+    const hilly = t.hills.length > 0 || t.ridges.length > 0 || !!t.trough;
     const sx = Math.max(1, Math.ceil(w / (hilly ? 0.25 : 1))), sz = Math.max(1, Math.ceil(d / (hilly ? 0.25 : 1)));
     const geo = new THREE.PlaneGeometry(w, d, sx, sz);
     geo.rotateX(-Math.PI / 2);
@@ -46,6 +47,8 @@ function _floor(t, theme) {
     const turfA = new THREE.Color(theme.turf[0]), turfB = new THREE.Color(theme.turf[1]);
     const base = new THREE.Color(t.kind === 'sand' ? theme.sand : t.kind === 'wood' ? theme.wood : t.kind === 'ice' ? (theme.ice ?? 0xdff4ff)
         : t.kind === 'boost' ? (theme.boost ?? 0xffd23f) : t.kind === 'carpet' ? (theme.carpet ?? 0xc0392b) : t.kind === 'rough' ? (theme.rough ?? 0x2e7d32)
+        : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? 0x9aa3b5
+        : t.kind === 'conveyor' ? (theme.conveyor ?? 0x374151) : t.kind === 'creek' ? (theme.creek ?? 0x7a4a26) : t.kind === 'jelly' ? (theme.turf[0])
         : HAZARD[t.kind] ? (theme[t.kind] ?? theme.water) : theme.turf[0]);
     for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i) + t.cx, z = pos.getZ(i) + t.cz;
@@ -55,11 +58,18 @@ function _floor(t, theme) {
         if (t.kind === 'wood') c = _shade(theme.wood, Math.floor(x / 0.4) % 2 ? 1 : 0.88);
         if (t.kind === 'sand') c = _shade(theme.sand, 0.95 + 0.1 * Math.abs(Math.sin(x * 7.1 + z * 3.3)));
         if (t.kind === 'ice') c = _shade(theme.ice ?? 0x8fd0f2, Math.floor((x + z) / 0.7) % 2 ? 1.12 : 0.96);
+        if (t.kind === 'felt') c = _shade(theme.felt ?? 0x2f9a45, Math.floor(Math.hypot(x - t.cx, z - t.cz) / 0.8) % 2 ? 1.06 : 0.97);
+        if (t.kind === 'rough') c = _shade(theme.rough ?? theme.turf[1], 0.85 + 0.12 * Math.abs(Math.sin(x * 5.3 + z * 4.1)));
+        if (t.kind === 'turf' && (t.ridges.length || t.trough)) {
+            // Shade the slopes so a bump or a bank reads.
+            const k = 1 + (tileHeight(t, x, z) - t.y) * 0.35;
+            c = _shade(c.getHex(), k);
+        }
         cols.push(c.r, c.g, c.b);
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
     geo.computeVertexNormals();
-    const water = !!HAZARD[t.kind];
+    const water = !!HAZARD[t.kind] || t.kind === 'puddle';
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: water ? 0.15 : t.kind === 'ice' ? 0.2 : 0.9,
         metalness: water ? 0.1 : 0, transparent: water, opacity: water ? 0.85 : 1,
         emissive: water ? new THREE.Color(theme[t.kind] ?? theme.water).multiplyScalar(0.25) : 0x000000 });
@@ -141,8 +151,9 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         }
     }));
     c.tiles.forEach(t => {
+        if (t.move || t.lift) return;            // drawn by Moving: a raft, a drawbridge
         const f = _floor(t, theme); root.add(f);
-        if (f.userData.water) {
+        if (f.userData.water && t.kind !== 'puddle') {
             live.water.push(f);
             // Foam round the edge and rings spreading on the surface.
             const inner = new THREE.EdgesGeometry(new THREE.PlaneGeometry(t.x1 - t.x0 - 0.12, t.z1 - t.z0 - 0.12).rotateX(-Math.PI / 2));
@@ -268,8 +279,23 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             live.sliders.push({ m, box });
         }
     });
+    // Things that move or flow (belts, turntables, rafts, drawbridges, jelly, hammers, gates, fans, magnets).
+    const moving = Moving.make(c, theme);
+    root.add(moving.group);
     // Props and the world round the course.
-    (c.hole.props || []).forEach(p => { const o = PROPS[p.type]?.(p, c, theme); if (o) root.add(o); });
+    const cannons = [], hoses = [];
+    (c.hole.props || []).forEach(p => {
+        const o = PROPS[p.type]?.(p, c, theme);
+        if (!o) return;
+        root.add(o);
+        if (p.type === 'cannon' && !p.deco) cannons.push({ p, o });
+        if (p.type === 'hose') {
+            // A bulge that runs down the hose with the ball inside.
+            const ball = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 10), _mat(0x34b866, { roughness: 0.35 }));
+            ball.visible = false; root.add(ball);
+            hoses.push({ p, curve: o.userData.curve, mesh: o, ball });
+        }
+    });
     const world = SCENERY[theme.scenery]?.(c, theme);
     if (world) {
         // Keep the camera's spot behind the tee clear of trees and palms.
@@ -283,7 +309,49 @@ export function buildHole(stage, c, theme, holeNo = 1) {
 
     return {
         root,
+        /**
+         * Where a ball in a pipe is, u 0..1 of the way through, for drawing:
+         * along the hose, on its arc out of the cannon, or null (a teleporter: it's nowhere).
+         */
+        pipeAt(pipe, u) {
+            const style = pipe.style || (theme.scenery === 'space' ? 'teleport' : 'hose');
+            if (style === 'teleport') return null;
+            if (style === 'cannon') {
+                const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
+                const from = cn ? cn.o.userData.muzzle() : new THREE.Vector3(pipe.a[0], 1, pipe.a[1]);
+                const to = new THREE.Vector3(pipe.b[0], _y0(c, pipe.b[0], pipe.b[1]) + R, pipe.b[1]);
+                const p = from.clone().lerp(to, u);
+                p.y += Math.sin(u * Math.PI) * (2.4 + from.distanceTo(to) * 0.12);
+                return p;
+            }
+            const h = hoses.find(k => k.curve && Math.hypot(k.p.from[0] - pipe.a[0], k.p.from[1] - pipe.a[1]) < 1);
+            if (!h) return null;
+            const p = h.curve.getPointAt(Math.min(1, u));
+            h.bulge = u;
+            return p;
+        },
+        /** The cannon fires: recoil and smoke. Returns the muzzle, for the puff. */
+        fire(pipe) {
+            const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
+            if (!cn) return null;
+            cn.o.userData.recoil = 1;
+            return cn.o.userData.muzzle();
+        },
+        /** A ball bounced on a jelly pad. */
+        jelly(x, z) { moving.jelly(x, z); },
         update(dt, t) {
+            moving.update(dt, t);
+            cannons.forEach(k => {
+                const u = k.o.userData;
+                if (u.recoil > 0) { u.recoil = Math.max(0, u.recoil - dt * 2.2); }
+                u.barrel.position.x = u.barrelX - Math.sin(Math.min(1, u.recoil) * Math.PI) * 0.35;
+            });
+            hoses.forEach(h => {
+                if (!h.mesh) return;
+                const k = h.bulge;
+                if (k != null && h.ball) { h.ball.visible = k > 0 && k < 1; if (h.ball.visible) h.ball.position.copy(h.curve.getPointAt(Math.min(1, k))); }
+                h.bulge = null;
+            });
             live.windmills.forEach(w => { w.sails.rotation.z = windmillAngle(w.m, t); w.gate.visible = moverWalls({ movers: [w.m], tiles: c.tiles }, t).length > 0; });
             live.sweepers.forEach(s => { s.g.rotation.y = -t * (s.m.speed || 1.2); });
             live.doors.forEach(d => {
@@ -308,6 +376,16 @@ export function buildHole(stage, c, theme, holeNo = 1) {
                 const { flag, base } = live.flag, pos = flag.geometry.attributes.position;
                 for (let i = 0; i < pos.count; i++) { const x = base[i * 3]; pos.array[i * 3 + 2] = Math.sin(t * 5 - x * 4) * 0.08 * x; }
                 pos.needsUpdate = true;
+                // A sink: the flag hops out of the cup and spins.
+                const F = live.flag;
+                if (F.pop > 0) {
+                    F.pop = Math.max(0, F.pop - dt / 1.1);
+                    const u = 1 - F.pop, h = Math.sin(Math.min(1, u * 1.4) * Math.PI) * 0.9;
+                    F.pole.visible = F.flag.visible = true;
+                    F.pole.position.y = 1.05 + h; F.flag.position.y = 1.8 + h;
+                    F.flag.rotation.y = u * Math.PI * 4;
+                    if (F.pop === 0) F.flag.rotation.y = 0;
+                }
             }
             live.bumpers.forEach(b => {
                 if (b.t > 0) b.t = Math.max(0, b.t - dt);
@@ -328,6 +406,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         },
         pulse(p) { const b = live.bumpers.find(x => x.p === p); if (b) b.t = 0.25; },
         /** Lift the flag out while a ball is on the green close by. */
+        flagPop() { if (live.flag) live.flag.pop = 1; },
         flagOut(on) { if (live.flag) live.flag.cupG.children.slice(2).forEach(o => { o.visible = !on; }); },
         dispose() {
             stage.scene.remove(root);
@@ -426,11 +505,22 @@ const PROPS = {
         g.position.set(p.at[0], _y0(c, ...p.at), 0); return g;
     },
     hose: (p, c) => {
-        const a = p.from, b = p.to;
-        const pts = [new THREE.Vector3(a[0], -0.05, a[1]), new THREE.Vector3(a[0] + 0.9, -0.3, a[1]), new THREE.Vector3((a[0] + b[0]) / 2 + 1.4, -0.35, (a[1] + b[1]) / 2),
-                     new THREE.Vector3(b[0] + 0.9, -0.3, b[1]), new THREE.Vector3(b[0], -0.05, b[1])];
-        const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 48, 0.3, 10, false), _mat(0x2e9e57, { roughness: 0.4 }));
-        m.castShadow = true; return m;
+        // A garden hose snaking round outside the course, from its mouth to where it comes out.
+        const a = p.from, b = p.to, B = c.bounds;
+        const side = B.x1 - a[0] < a[0] - B.x0 ? 1 : -1;
+        const ox = (side > 0 ? B.x1 : B.x0) + side * 1.0;
+        const ya = _y0(c, a[0], a[1]), yb = _y0(c, b[0], b[1]);
+        const pts = [new THREE.Vector3(a[0], ya - 0.1, a[1]), new THREE.Vector3((a[0] + ox) / 2, -0.45, a[1] + 0.3), new THREE.Vector3(ox, -0.55, a[1] + (b[1] - a[1]) * 0.25),
+                     new THREE.Vector3(ox + side * 0.6, -0.55, (a[1] + b[1]) / 2), new THREE.Vector3(ox, -0.55, a[1] + (b[1] - a[1]) * 0.75),
+                     new THREE.Vector3((b[0] + ox) / 2, -0.45, b[1] - 0.3), new THREE.Vector3(b[0] + side * 0.4, yb - 0.1, b[1])];
+        const curve = new THREE.CatmullRomCurve3(pts);
+        const m = new THREE.Mesh(new THREE.TubeGeometry(curve, 80, 0.26, 12, false), _mat(0x2e9e57, { roughness: 0.35 }));
+        m.castShadow = true;
+        // A tap at the outside bend.
+        const tap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5, 10), _mat(0xd9a514, { metalness: 0.7, roughness: 0.3 }));
+        tap.position.copy(pts[3]).add(new THREE.Vector3(side * 0.4, 0.3, 0)); tap.rotation.z = Math.PI / 2; m.add(tap.clone()); 
+        m.userData.curve = curve;
+        return m;
     },
     shed: (p) => {
         const g = new THREE.Group();
@@ -559,6 +649,70 @@ function _cupcake(scale = 1) {
     return g;
 }
 Object.assign(PROPS, {
+    rocks: (p, c) => {
+        const g = new THREE.Group();
+        const m = _mat(0x9a948a, { roughness: 1, flatShading: true });
+        [[0, 0, 0.7], [0.8, 0.3, 0.5], [-0.6, 0.4, 0.45], [0.3, -0.6, 0.4]].forEach(([x, z, r], i) => {
+            const rk = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), m); rk.position.set(x, r * 0.5, z); rk.rotation.set(i, i * 2, 0); rk.castShadow = true; g.add(rk);
+        });
+        const f = _flowers(5, 0.6); f.position.set(0.2, 0.5, 0.2); g.add(f);
+        g.position.set(p.at[0], _y0(c, ...p.at) - 0.3, p.at[1]); return g;
+    },
+    fort: (p) => {
+        const g = new THREE.Group();
+        const stone = _mat(0xb9a98a, { roughness: 0.95 });
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(10, 1.6, 0.8), stone); wall.position.y = 1.2; g.add(wall);
+        for (let i = 0; i < 9; i++) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.8), stone); m.position.set(-4.6 + i * 1.15, 2.25, 0); g.add(m); }
+        [-5, 5].forEach(x => { const t = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 3.4, 10), stone); t.position.set(x, 1.3, 0); g.add(t);
+            const r = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.2, 10), _mat(0x8a2e1d)); r.position.set(x, 3.6, 0); g.add(r); });
+        g.children.forEach(o => { o.castShadow = true; });
+        g.position.set(p.at[0], 0, p.at[1]); return g;
+    },
+    cave: (p) => {
+        // A rough rock roof arching over the passage (open at the sides so the camera sees in).
+        const [x0, z0, x1, z1] = p.r;
+        const g = new THREE.Group();
+        const rock = _mat(0x6f6a62, { roughness: 1, flatShading: true });
+        const n = Math.round((x1 - x0) / 1.6);
+        for (let i = 0; i <= n; i++) {
+            const arch = new THREE.Mesh(new THREE.TorusGeometry((z1 - z0) / 2 + 0.4, 0.45, 5, 10, Math.PI), rock);
+            arch.position.set(x0 + (x1 - x0) * i / n, 0.1, (z0 + z1) / 2); arch.rotation.y = Math.PI / 2; arch.castShadow = true; g.add(arch);
+        }
+        // Glowing crystals in the dark.
+        for (let i = 0; i < 6; i++) { const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x38bdf8, emissiveIntensity: 1 })); cr.position.set(x0 + 1 + i * (x1 - x0 - 2) / 5, 0.25, i % 2 ? z0 + 0.25 : z1 - 0.25); g.add(cr); }
+        return g;
+    },
+    cookie: (p, c) => {
+        const g = new THREE.Group();
+        const ck = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.14, 20), _mat(0xd49a5a, { roughness: 0.9 })); g.add(ck);
+        for (let i = 0; i < 6; i++) { const ch = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 4), _mat(0x3b2412)); ch.position.set(Math.cos(i * 2.1) * 0.4, 0.07, Math.sin(i * 2.1) * 0.4); g.add(ch); }
+        g.position.set(p.at[0], _y0(c, ...p.at) + 0.04, p.at[1]); g.userData.bob = true; return g;
+    },
+    ginger: (p, c) => {
+        // A gingerbread arch over a turnstile's doorway, iced.
+        const g = new THREE.Group();
+        const gb = _mat(0xb0703a, { roughness: 0.8 });
+        const arch = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.22, 8, 20, Math.PI), gb); arch.rotation.y = Math.PI / 2; arch.position.y = 0.8; g.add(arch);
+        const icing = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.08, 6, 30, Math.PI), _mat(0xffffff, { roughness: 0.3 })); icing.rotation.y = Math.PI / 2; icing.position.set(-0.2, 0.8, 0); g.add(icing);
+        [0xff5fa2, 0x7ed957, 0xffd23f].forEach((col, i) => { const d = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), _mat(col, { roughness: 0.2 })); d.position.set(-0.2, 0.8 + Math.sin((i + 1) / 4 * Math.PI) * 1.15, Math.cos((i + 1) / 4 * Math.PI) * 1.15); g.add(d); });
+        g.children.forEach(o => { o.castShadow = true; });
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); return g;
+    },
+    gumballs: (p, c) => {
+        const g = new THREE.Group();
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.7, 14), _mat(0xe8243c, { roughness: 0.3 })); base.position.y = 0.35; g.add(base);
+        const globe = new THREE.Mesh(new THREE.SphereGeometry(0.6, 20, 14), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, roughness: 0.05 })); globe.position.y = 1.2; g.add(globe);
+        const cols = [0xff5fa2, 0xffd23f, 0x5fb8ff, 0x7ed957, 0xb57bff];
+        for (let i = 0; i < 18; i++) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), _mat(cols[i % 5], { roughness: 0.2 })); const a = i * 2.4, r = 0.35 * Math.sqrt(i / 18); b.position.set(Math.cos(a) * r, 0.85 + (i % 4) * 0.1, Math.sin(a) * r); g.add(b); }
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.15, 12), _mat(0xe8243c)); cap.position.y = 1.85; g.add(cap);
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); return g;
+    },
+    crate: (p, c) => {
+        const g = Toy.block([-0.5, -0.5, 0.5, 0.5, 0.9], 0, { scenery: 'pirate' }, 'crate');
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); return g;
+    },
+    fan: () => null,
+
     palm: (p, c) => { const t = _palm(p.scale || 1); t.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); t.rotation.y = p.at[0] * 1.7; return t; },
     barrel: (p, c) => {
         const g = new THREE.Group();
@@ -578,7 +732,10 @@ Object.assign(PROPS, {
     },
     cannon: (p, c) => {
         const g = Toy.cannon();
-        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]);
+        // Just past its mouth on the deck, aimed at where it fires you.
+        const dx = p.to ? p.to[0] - p.at[0] : 1, dz = p.to ? p.to[1] - p.at[1] : 0, n = Math.hypot(dx, dz) || 1;
+        const off = p.deco ? 0 : 0.55;
+        g.position.set(p.at[0] + dx / n * off, _y0(c, ...p.at), p.at[1] + dz / n * off);
         // Aimed at where it fires you (the pipe's far end), or standing guard.
         g.rotation.y = p.deco ? Math.PI / 2 : p.to ? -Math.atan2(p.to[1] - p.at[1], p.to[0] - p.at[0]) : 0;
         return g;
