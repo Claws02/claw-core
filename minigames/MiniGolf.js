@@ -52,7 +52,11 @@ const TEE_SPREAD = 0.42;
 // ── Configuration (the Mini Golf mode sets it; a party uses the defaults) ─────
 const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns' };
 let _cfg = { ...DEFAULTS };
-/** { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos' } — sticks until changed. */
+/**
+ * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos' }.
+ * The mode sticks until changed (it's a setting); the course and the number of
+ * holes are for the NEXT round only, so a party after a full course is a sampler again.
+ */
 export function configure(o = {}) { _cfg = { ..._cfg, ...o }; return { ..._cfg }; }
 export function configured() { return { ..._cfg }; }
 export function resetConfig() { _cfg = { ...DEFAULTS }; }
@@ -76,6 +80,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _n = Math.max(2, Math.min(4, slotCount()));
     _mode = _cfg.mode === 'chaos' ? 'chaos' : 'turns';
     _list = _pickHoles();
+    _cfg = { ..._cfg, course: null, holes: 'sampler' };
+    _last = null;
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _active = -1;
     _strokes = _seats().map(() => []); _times = _seats().map(() => []);
     _honors = _seats();
@@ -211,10 +217,10 @@ function _buildUi() {
     const TXT = 'color:#fff8ee;text-shadow:0 2px 0 rgba(0,0,0,.6),0 0 10px rgba(0,0,0,.5);letter-spacing:2px;';
     _ui = {};
     // The power bar, for the player whose turn it is.
-    _ui.power = el('position:absolute;left:50%;top:52px;transform:translateX(-50%);width:240px;height:16px;border-radius:9px;' +
+    _ui.power = el('position:absolute;left:50%;top:62px;transform:translateX(-50%);width:240px;height:16px;border-radius:9px;' +
         'background:rgba(20,12,24,.6);border:2px solid rgba(255,255,255,.7);overflow:hidden;display:none;');
     _ui.powerFill = el('height:100%;width:0;background:linear-gradient(90deg,#5ee07a,#ffd23f 60%,#ff4d4d);', _ui.power);
-    _ui.powerTxt = el('position:absolute;left:50%;top:70px;transform:translateX(-50%);font-size:13px;display:none;' + TXT);
+    _ui.powerTxt = el('position:absolute;left:50%;top:81px;transform:translateX(-50%);font-size:13px;display:none;' + TXT);
     // Camera buttons (turns): turn left, the whole hole, turn right.
     const btn = (label, css, fn) => {
         const b = el('position:absolute;width:48px;height:48px;border-radius:24px;background:rgba(20,12,24,.55);border:2px solid rgba(255,255,255,.75);' +
@@ -541,11 +547,11 @@ function _pickUp(b) {
 function _penalty(b, kind) {
     const mine = b.slot === _shooter || _mode === 'chaos';
     if (mine) _strokes[b.slot][_hole]++;
-    if (kind === 'out') { sfx('land_bad'); _say2Show(`OUT OF BOUNDS${mine ? ' · +1' : ''}`, '#fca5a5'); }
+    if (kind === 'out') { sfx('land_bad'); _say2Show(`${_theme?.scenery === 'space' ? 'LOST IN SPACE' : 'OUT OF BOUNDS'}${mine ? ' · +1' : ''}`, '#fca5a5'); }
     else {
         sfx('splash');
-        if (_stage?.gl) _fx.puff(new THREE.Vector3(b.p.x, b.p.y + 0.2, b.p.z), kind === 'lava' ? 0xff7a1a : kind === 'flowers' ? 0xff8fb1 : 0xbfe8ff, 10, 0.5, 1.2);
-        _say2Show(`${kind === 'flowers' ? 'IN THE FLOWERS' : kind === 'lava' ? 'LAVA!' : 'SPLASH'}${mine ? ' · +1' : ''}`, '#7dd3fc');
+        if (_stage?.gl) _fx.puff(new THREE.Vector3(b.p.x, b.p.y + 0.2, b.p.z), kind === 'lava' ? 0xff7a1a : kind === 'flowers' ? 0xff8fb1 : kind === 'goo' ? 0x7a4a2a : 0xbfe8ff, 10, 0.5, 1.2);
+        _say2Show(`${kind === 'flowers' ? 'IN THE FLOWERS' : kind === 'lava' ? 'LAVA!' : kind === 'goo' ? 'IN THE CHOCOLATE' : _theme?.scenery === 'pirate' ? 'SPLASH! FEED THE SHARKS' : 'SPLASH'}${mine ? ' · +1' : ''}`, '#7dd3fc');
     }
     // Back to where it was played from (a knocked ball, to where it sat).
     const f = b.from || { x: _c.tee.x, y: _c.tee.y, z: _c.tee.z };
@@ -765,7 +771,7 @@ function _drawBalls(dt) {
         else if (p.loop) {
             b.mesh.visible = true;
             const l = p.loop.l, u = p.loop.t / p.loop.dur, n = Math.hypot(l.dir[0], l.dir[1]) || 1;
-            const ang = u * Math.PI * 2, rad = 0.9, along = l.len * u;
+            const ang = u * Math.PI * 2, rad = 0.9, along = l.len * u + Math.sin(ang) * rad * 0.9;
             b.mesh.position.set(l.a[0] + l.dir[0] / n * along, _floorY(l.a[0], l.a[1]) + P.R + rad * (1 - Math.cos(ang)), l.a[1] + l.dir[1] / n * along);
         } else {
             b.mesh.visible = show;
@@ -903,6 +909,12 @@ function _end() {
         : tot[w] !== tot[runner] ? `${tot[w]} STROKES (${_fmt(tot[w] - par)}) · ${tot[runner]} NEXT`
         : `LEVEL ON ${tot[w]} · ${_mode === 'turns' ? 'ON COUNTBACK' : `QUICKER BY ${Math.abs(tt[w] - tt[runner]).toFixed(1)}s`}`;
     _kits.forEach((_, s) => _hideKit(s));
+    _last = {
+        course: _list[0]?.course, courseName: _courseName, mode: _mode, full: _list.length >= 9,
+        holes: _list.map(x => x.hole.key), par: _list.map(x => x.hole.par),
+        strokes: _strokes.map(x => [...x]), totals: tot, toPar: tot.map(t => t - par), winner: w,
+        aces: _seats().map(s => _strokes[s].filter(n => n === 1).length),
+    };
     _showCard(true, true);
     setTimeout(() => {
         if (_done || !_dir) return;
@@ -915,6 +927,9 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 let _forceHoles = null;
+let _last = null;
+/** The round just finished: course, par and every player's card (for records and trophies). Null mid-round. */
+export function lastRound() { return _last ? JSON.parse(JSON.stringify(_last)) : null; }
 export function _debugState() {
     return {
         phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view,
@@ -941,6 +956,8 @@ export function _debugShoot(slot, dx, dz, p) {
     b.state = 'aim'; if (_mode === 'turns') _turnState = 'aim';
     _shoot(slot, dx, dz, p);
 }
+/** Probes: the camera — 'follow' or 'map' (the whole hole). */
+export function _debugView(v) { _view = v; }
 /** Probes: skip the flyover or the scorecard. */
 export function _debugSkip() { if (_sub === 'fly') _subT = FLY_DUR; else if (_sub === 'card') _subT = CARD_DUR; }
 /** Probes: the holes the NEXT start() plays (keys from any course), or null. */

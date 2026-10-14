@@ -49,7 +49,8 @@ const FLOOR_OUT = -6;                  // below this, the ball is lost
  *   hole.blocks [[x0, z0, x1, z1, h?]]  solid boxes
  *   hole.bumpers [[x, z, r]]
  *   hole.movers [{ type: 'windmill'|'sweeper'|'slider', ... }]
- *   hole.pipes  [{ a: [x, z], b: [x, z], dir: [dx, dz], r? }]
+ *   hole.pipes  [{ a: [x, z], b: [x, z], dir: [dx, dz], r?, delay?, keep?, out? }]  out: a fixed exit speed (a cannon)
+ *   hole.gravity  a multiplier (low gravity on the space station)
  *   hole.loops  [{ a: [x, z], dir: [dx, dz], len, minV }]  a loop-the-loop: in at a, out len further on
  *   hole.cup [x, z], hole.tee [x, z]
  */
@@ -64,7 +65,8 @@ export function compile(hole) {
             rail: t.rail ?? true,
         };
     });
-    const c = { hole, tiles, walls: [], bumpers: [], pipes: [], loops: [], movers: hole.movers || [] };
+    const g = hole.gravity || 1;
+    const c = { hole, tiles, walls: [], bumpers: [], pipes: [], loops: [], movers: hole.movers || [], G: G * g, RG: ROLL_G * g };
     // Rails round every tile edge where the floor beyond is missing or out of
     // a rolling ball's reach (and the edge isn't marked open).
     tiles.forEach(t => {
@@ -275,7 +277,7 @@ function _sub(c, b, d, t, movers, others, ev) {
     if (!b.rest) {
         if (b.air) {
             const y0 = b.y;
-            b.vy -= G * d;
+            b.vy -= c.G * d;
             b.x += b.vx * d; b.y += b.vy * d; b.z += b.vz * d;
             // The floor it fell through this step, if any: one no higher than where it was.
             const f = floorAt(c, b.x, b.z, y0, 0.02);
@@ -298,7 +300,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             b.kind = f.kind;
             if (HAZARD[f.kind]) { ev.push({ type: 'water', kind: f.kind }); return; }
             // Gravity down the slope, rolling resistance against the roll.
-            let ax = -ROLL_G * f.gx, az = -ROLL_G * f.gz;
+            let ax = -c.RG * f.gx, az = -c.RG * f.gz;
             if (f.kind === 'boost' && f.tile.boost) { ax += f.tile.boost[0]; az += f.tile.boost[1]; }
             b.vx += ax * d; b.vz += az * d;
             const hs = Math.hypot(b.vx, b.vz);
@@ -317,7 +319,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             } else {
                 const vyNew = b.vx * g2.gx + b.vz * g2.gz;
                 // Over a crest faster than gravity can hold it down: airborne.
-                if ((vyNew - vyOld) / d < -G * 1.15 && hs > 2) {
+                if ((vyNew - vyOld) / d < -c.G * 1.15 && hs > 2) {
                     b.x = nx; b.z = nz; b.y = Math.max(g2.h, yPred); b.vy = vyOld; b.air = true;
                 } else { b.x = nx; b.z = nz; b.y = g2.h; b.vy = vyNew; }
             }
@@ -347,7 +349,7 @@ function _sub(c, b, d, t, movers, others, ev) {
     // Pipes and loops: a mouth on the floor.
     for (const p of c.pipes) {
         if (Math.hypot(b.x - p.a[0], b.z - p.a[1]) < p.r && !b.air) {
-            b.pipe = { p, t: p.delay ?? 0.6, v: Math.max(3, Math.hypot(b.vx, b.vz) * (p.keep ?? 0.9)) };
+            b.pipe = { p, t: p.delay ?? 0.6, v: p.out ?? Math.max(3, Math.hypot(b.vx, b.vz) * (p.keep ?? 0.9)) };
             ev.push({ type: 'pipe' }); return;
         }
     }
@@ -372,7 +374,7 @@ function _sub(c, b, d, t, movers, others, ev) {
     if (!b.air) {
         const v = Math.hypot(b.vx, b.vz);
         const f = floorAt(c, b.x, b.z, b.y + 0.001);
-        const pull = f ? ROLL_G * Math.hypot(f.gx, f.gz) : 0;
+        const pull = f ? c.RG * Math.hypot(f.gx, f.gz) : 0;
         const hold = C0 * (KIND[f?.kind] ?? 1);
         if (v < STOP_V && (pull < hold || b.touch) && !(f?.kind === 'boost')) { b.vx = b.vz = b.vy = 0; b.rest = true; }
     }
