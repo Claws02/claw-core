@@ -117,9 +117,9 @@ export function isBotSlot(slot) {
 /** The slots a game should simulate, in order. */
 export function slots() { return _seats.map((_, i) => i); }
 
-function _setRoster(seats) {
+function _setRoster(seats, min = 2) {
     const n = state.players.length;
-    const ok = Array.isArray(seats) && seats.length >= 2 && seats.length <= 4
+    const ok = Array.isArray(seats) && seats.length >= min && seats.length <= 4
         && seats.every(i => typeof i === 'number' && i >= 0 && i < n)
         && new Set(seats).size === seats.length;
     const out = ok ? seats.slice() : [0, Math.min(1, n - 1)];
@@ -338,13 +338,14 @@ export function triggerStandalone(mgType, isBotOpponent = false, seats = 2, opts
     state.gameState   = 'MINIGAME_INTRO';
     state.cameraState = 'MINIGAME';
     state.mgType      = mgType;
-    const n = Math.max(2, Math.min(4, seats | 0));
+    // opts.solo: a game played alone (Mini Golf against par) — one seat.
+    const n = Math.max(opts.solo ? 1 : 2, Math.min(4, seats | 0));
     // The arcade opens with the default two seats, so asking for four has to
     // grow the table first — a roster naming a seat that does not exist is
     // rejected by _setRoster and silently falls back to a duel.
     if (state.players.length < n) setPlayerCount(n);
-    _setRoster(Array.from({ length: n }, (_, i) => i));
-    state.players[1].isBot = !!isBotOpponent;
+    _setRoster(Array.from({ length: n }, (_, i) => i), n);
+    if (n > 1) state.players[1].isBot = !!isBotOpponent;
     // Slots 2 and 3 are never a person standing at the arcade, so give them a
     // bot rather than a zone that never moves.
     for (let i = 2; i < n; i++) state.players[i].isBot = true;

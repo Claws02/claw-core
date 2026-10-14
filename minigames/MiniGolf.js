@@ -85,8 +85,9 @@ const _limit = h => h.par + 3;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _n = Math.max(2, Math.min(4, slotCount()));
-    _mode = _cfg.mode === 'chaos' ? 'chaos' : 'turns';
+    // Solo (the Mini Golf mode only): one ball against par, played like turns.
+    _n = Math.max(1, Math.min(4, slotCount()));
+    _mode = _cfg.mode === 'chaos' && _n > 1 ? 'chaos' : 'turns';
     _list = _pickHoles();
     _cfg = { ..._cfg, course: null, holes: 'sampler' };
     _last = null;
@@ -126,7 +127,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
     const B = _c.bounds;
     _dir.open({
         place: `${_courseName} · MINI GOLF`, title: 'MINI GOLF',
-        sub: `${_list.length} HOLE${_list.length > 1 ? 'S' : ''} · ${_mode === 'turns' ? 'TAKE TURNS' : 'CHAOS — ALL AT ONCE'} · PAR ${_list.reduce((a, h) => a + h.hole.par, 0)}`,
+        sub: `${_list.length} HOLE${_list.length > 1 ? 'S' : ''} · ${_n === 1 ? 'SOLO' : _mode === 'turns' ? 'TAKE TURNS' : 'CHAOS — ALL AT ONCE'} · PAR ${_list.reduce((a, h) => a + h.hole.par, 0)}`,
         from: { pos: [(B.x0 + B.x1) / 2 - 14, 16, (B.z0 + B.z1) / 2 + 18], look: [(B.x0 + B.x1) / 2, 0, (B.z0 + B.z1) / 2] },
         to: _fitCam(),
         onDone: () => { if (_done) return; _phase = 'play'; _beginHole(); },
@@ -1103,7 +1104,7 @@ function _showCard(on, final = false) {
     const parT = _list.reduce((a, x) => a + x.hole.par, 0);
     let html = '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:6px;">' +
         `<div style="font-size:22px;letter-spacing:2px;">${final ? 'FINAL CARD' : `AFTER HOLE ${_hole + 1}`}</div>` +
-        `<div style="font-size:13px;opacity:.7;letter-spacing:1px;">${_courseName} · ${_mode === 'turns' ? 'TURNS' : 'CHAOS'}</div></div>`;
+        `<div style="font-size:13px;opacity:.7;letter-spacing:1px;">${_courseName} · ${_n === 1 ? 'SOLO' : _mode === 'turns' ? 'TURNS' : 'CHAOS'}</div></div>`;
     html += '<div style="overflow-x:auto;"><table style="border-collapse:collapse;">';
     html += `<tr style="background:#1f5130;color:#fff;"><td style="${cell}text-align:left;">HOLE</td>` +
         _list.map((_, i) => `<td style="${cell}${i === _hole && !final ? 'background:#3f9d4f;' : ''}">${i + 1}</td>`).join('') + `<td style="${cell}">TOT</td><td style="${cell}">±</td></tr>`;
@@ -1113,7 +1114,7 @@ function _showCard(on, final = false) {
     order.forEach((s, r) => {
         const st = seat(s), tp = _toPar(s);
         html += `<tr style="border-top:1px solid rgba(0,0,0,.1);"><td style="${cell}text-align:left;white-space:nowrap;">` +
-            `<span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${st.css};margin-right:6px;"></span>${r === 0 ? '👑 ' : ''}${st.name}</td>` +
+            `<span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${st.css};margin-right:6px;"></span>${r === 0 && _n > 1 ? '👑 ' : ''}${st.name}</td>` +
             _list.map((x, i) => `<td style="${cell}">${i <= _hole ? mark(_strokes[s][i], x.hole.par) : ''}</td>`).join('') +
             `<td style="${cell}font-size:17px;">${_total(s)}</td><td style="${cell}font-size:17px;color:${tp < 0 ? '#15803d' : tp > 0 ? '#b91c1c' : '#1d2a1f'};">${_fmt(tp)}</td></tr>`;
     });
@@ -1140,7 +1141,8 @@ function _end() {
     const rank = _seats().map(s => -(tot[s] * 1000 + order.indexOf(s)));
     const runner = order[1];
     const par = _list.reduce((a, x) => a + x.hole.par, 0);
-    const sub = w < 0 ? `LEVEL ON ${tot[order[0]]}`
+    const sub = _n === 1 ? `${tot[w]} STROKES · ${_fmt(tot[w] - par)} ON PAR ${par}`
+        : w < 0 ? `LEVEL ON ${tot[order[0]]}`
         : tot[w] !== tot[runner] ? `${tot[w]} STROKES (${_fmt(tot[w] - par)}) · ${tot[runner]} NEXT`
         : `LEVEL ON ${tot[w]} · ${_mode === 'turns' ? 'ON COUNTBACK' : `QUICKER BY ${Math.abs(tt[w] - tt[runner]).toFixed(1)}s`}`;
     _kits.forEach((_, s) => _hideKit(s));
@@ -1157,7 +1159,7 @@ function _end() {
         _dir.close({ winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub, onDone: () => _finish(w, rank) });
     }, _forceHoles ? 400 : 3200);
     const el = document.getElementById('mg-neutral');
-    if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
+    if (el) el.textContent = _n === 1 ? `${_fmt(tot[w] - par)} ON PAR` : w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
 }
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
