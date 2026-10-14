@@ -7,7 +7,7 @@
 
 import { state, playerCount, setPlayerCount } from '../../AppHost.js';
 import { Bot } from '../../AppHost.js';
-import { MG_TYPES, MG_INFO, MG_ORIENTATIONS, MG_ORIENTATION_MAP, MG_WATCHDOG_MS,
+import { MG_TYPES, MG_INFO, MG_ORIENTATIONS, orientationOf, MG_WATCHDOG_MS,
          surfacesOf } from '../config/MinigameRegistry.js';
 import { MINIGAME_REWARD, MINIGAME_PLACE_COINS } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
@@ -657,7 +657,7 @@ function mgIntroNext() {
 }
 
 function _renderOrientationDiagram(mgTypeKey) {
-    const orientKey = MG_ORIENTATION_MAP[mgTypeKey] || 'faceoff';
+    const orientKey = orientationOf(mgTypeKey);
     const orient    = MG_ORIENTATIONS[orientKey];
     document.getElementById('orient-name').textContent    = orient.name;
     document.getElementById('orient-subtitle').textContent = orient.subtitle;
@@ -678,9 +678,11 @@ function _renderOrientationDiagram(mgTypeKey) {
     if (orient.upright) {
         diag.innerHTML = `<div class="ph-body"></div><div class="ph-camera"></div><div class="ph-screen" style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:10px 0 8px;">` +
             `<span style="font-size:11px;font-family:'Bebas Neue';letter-spacing:1px;color:rgba(255,255,255,.75);">YOUR TURN</span>` +
-            `<span style="font-size:26px;">🗼</span>` +
-            `<span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:80%;"><span style="width:30px;height:30px;border-radius:50%;background:#ffde59;font:11px 'Bebas Neue';color:#1a1033;display:flex;align-items:center;justify-content:center;">DROP</span>` +
-            `<span style="position:relative;width:100%;height:5px;border-radius:3px;background:rgba(255,255,255,.3);"><span style="position:absolute;left:62%;top:-5px;width:14px;height:14px;border-radius:50%;background:#ff3b3b;"></span></span></span>` +
+            `<span style="font-size:26px;">${orient.icon || '🗼'}</span>` +
+            (orient.drag
+                ? `<span style="display:flex;flex-direction:column;align-items:center;gap:2px;font:11px 'Bebas Neue';letter-spacing:1px;color:#ffde59;"><span style="width:12px;height:12px;border-radius:50%;background:#fff;"></span><span style="font-size:16px;line-height:1;">⇣</span>DRAG BACK</span>`
+                : `<span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:80%;"><span style="width:30px;height:30px;border-radius:50%;background:#ffde59;font:11px 'Bebas Neue';color:#1a1033;display:flex;align-items:center;justify-content:center;">DROP</span>` +
+                  `<span style="position:relative;width:100%;height:5px;border-radius:3px;background:rgba(255,255,255,.3);"><span style="position:absolute;left:62%;top:-5px;width:14px;height:14px;border-radius:50%;background:#ff3b3b;"></span></span></span>`) +
             `</div><div class="ph-home"></div><div class="ph-thumb p1 pulse" style="left:62%;transform:translateX(-50%);">👆</div>`;
         return;
     }
@@ -732,8 +734,9 @@ function _startMinigameLayer() {
     // The landscape hold turns the manager's own chrome — ready buttons,
     // countdown — to face players sitting side by side, and hides the two
     // status pills, which sit on the short edges (css: #minigame-layer.is-sideon).
-    layer.classList.toggle('is-sideon', MG_ORIENTATION_MAP[state.mgType] === 'sideon');
-    layer.classList.toggle('is-upright', MG_ORIENTATION_MAP[state.mgType] === 'upright');
+    const hold = MG_ORIENTATIONS[orientationOf(state.mgType)] || {};
+    layer.classList.toggle('is-sideon', !!hold.sideon);
+    layer.classList.toggle('is-upright', !!hold.upright);
     const n = slotCount();
     state.mgReady  = new Array(n).fill(false);
     state.mgActive = false;

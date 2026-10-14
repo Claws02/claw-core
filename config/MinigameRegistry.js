@@ -152,6 +152,17 @@ export const MG_ORIENTATIONS = {
         instructions: 'Hold the phone <b>upright</b>, the normal way, and <b>pass it round</b>.<br><br>You take it in <b>turns</b>: the bar at the top shows whose go it is. Slide to aim, press <b>DROP</b>, then hand it on.',
         thumbAnim: 'pulse',
     },
+    // Mini golf in turns: upright and passed to whoever's up, the hole running
+    // away up the screen behind your ball.
+    putt: {
+        name: 'PASS & PUTT',
+        subtitle: 'Hold it upright — pass it to whoever\'s up',
+        huddle: false,
+        upright: true,
+        icon: '⛳', drag: true,
+        instructions: 'Hold the phone <b>upright</b> and <b>pass it round</b>: one ball at a time, like real golf.<br><br>On your shot, <b>drag back</b> anywhere and <b>let go</b> — the further you pull, the harder. When it says <b>PASS TO…</b>, hand it on.',
+        thumbAnim: 'pulse',
+    },
     huddle: {
         name: 'HUDDLE',
         subtitle: 'One holder, both players lean in',
@@ -380,6 +391,14 @@ export const shapeIs = shape => MG_TYPES.filter(t => MG_SHAPE[t] === shape);
 /** The games that can be played across phones, in registry order. */
 export const MG_PARALLEL = MG_TYPES.filter(t => MG_NET[t] === 'parallel');
 
+/**
+ * A game whose hold depends on how it's being played sets it here before the
+ * round (Mini Golf: upright in turns, side-on in chaos). orientationOf() reads
+ * this first, then MG_ORIENTATION_MAP.
+ */
+export const MG_ORIENTATION_OVERRIDE = {};
+export const orientationOf = type => MG_ORIENTATION_OVERRIDE[type] || MG_ORIENTATION_MAP[type] || 'faceoff';
+
 export const MG_ORIENTATION_MAP = {
     sumospheres: 'faceoff',
     tankclash:   'faceoff',
@@ -417,7 +436,7 @@ export const MG_ORIENTATION_MAP = {
     redlight: 'faceoff',
     tag: 'faceoff',
     balloontoss: 'sideon',
-    minigolf: 'sideon',
+    minigolf: 'putt',          // CHAOS mode turns it sideways (MG_ORIENTATION_OVERRIDE)
     bowling: 'faceoff',
     sackrace: 'sideon',
     snowball: 'faceoff',
