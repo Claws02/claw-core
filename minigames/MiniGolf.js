@@ -28,7 +28,8 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot, slotCount, extendWatchdog } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot as _botSlot, slotCount, extendWatchdog } from './MinigameManager.js';
+import * as Solo from './SoloArena.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, uprightHud, effects } from '../engine/StageKit.js';
@@ -84,13 +85,19 @@ let _active = -1, _turnT = 0, _turnState = 'aim', _botThink = null, _shooter = -
 let _cam = null, _yaw = 0, _view = 'follow', _drag = new Map(), _ui = null, _card = null, _say2 = null;
 
 const _seats = () => Array.from({ length: _n }, (_, i) => i);
+// Across phones (SoloArena) the one ball is always the person holding it.
+const _isBot = slot => !Solo.isSolo() && _botSlot(slot);
+/** Stableford: 2 for a par, one more for each under, one less over, never below 0. */
+const _stableford = slot => _list.reduce((a, x, i) => a + (_strokes[slot]?.[i] ? Math.max(0, 2 + x.hole.par - _strokes[slot][i]) : 0), 0);
+/** SoloArena: the points banked so far (a round cut off still counts what's done). */
+export function soloScore() { return _strokes.length ? _stableford(0) : 0; }
 const _limit = h => h.par + 3;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     // Solo (the Mini Golf mode only): one ball against par, played like turns.
-    _n = Math.max(1, Math.min(4, slotCount()));
+    _n = Solo.isSolo() ? 1 : Math.max(1, Math.min(4, slotCount()));
     _mode = _n === 1 ? 'turns' : _cfg.round ? (_cfg.mode === 'chaos' ? 'chaos' : 'turns') : 'chaos';
     _list = _pickHoles();
     _cfg = { ..._cfg, course: null, holes: 'sampler', round: false };
@@ -146,17 +153,19 @@ function _pickHoles() {
         const got = _forceHoles.map(k => all.find(x => x.hole.key === k)).filter(Boolean);
         if (got.length) return got;
     }
-    const course = _cfg.course ? courseByKey(_cfg.course) : COURSES[Math.floor(Math.random() * COURSES.length)];
+    // Across phones every device has to get the same holes: the round's shared draw, not Math.random.
+    const rnd = Solo.isSolo() ? (() => { let i = 0; return () => Solo.draw(100 + i++); })() : Math.random;
+    const course = _cfg.course && !Solo.isSolo() ? courseByKey(_cfg.course) : COURSES[Math.floor(rnd() * COURSES.length)];
     const nine = c => c.holes.map(h => ({ course: c.key, hole: h }));
-    if (+_cfg.holes === 9) return nine(course);
-    if (+_cfg.holes === 18) {
+    if (+_cfg.holes === 9 && !Solo.isSolo()) return nine(course);
+    if (+_cfg.holes === 18 && !Solo.isSolo()) {
         const i = COURSES.indexOf(course);
         return [...nine(course), ...nine(COURSES[(i + 1) % COURSES.length])];
     }
     // A sampler: three of the course's short holes (par 3 or less — a party
     // game, not a round), played in the course's order.
     const short = course.holes.map((h, i) => (h.par <= 3 ? i : -1)).filter(i => i >= 0);
-    const idx = short.sort(() => Math.random() - 0.5).slice(0, SAMPLER).sort((a, b) => a - b);
+    const idx = short.map(i => [rnd(), i]).sort((a, b) => a[0] - b[0]).map(x => x[1]).slice(0, SAMPLER).sort((a, b) => a - b);
     return idx.map(i => ({ course: course.key, hole: course.holes[i] }));
 }
 
@@ -169,7 +178,12 @@ function _destroy() {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _balls = []; _figs = []; _kits = []; _dir = null; _hud = null; _fx = null; _ui = null; _card = null; _say2 = null; _c = null; _lights = null;
 }
-function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
+function _finish(w, rank) {
+    if (_done) return;
+    _destroy();
+    if (Solo.isSolo()) { Solo.soloFinish(_stableford(0)); return; }
+    _onWin?.(w, null, rank);
+}
 
 // ── Building ─────────────────────────────────────────────────────────────────
 function _ballTex(color) {
@@ -488,10 +502,10 @@ function _nextTurn() {
     _view = 'follow';
     const s = seat(next);
     // Hand the phone over when a different person has to play.
-    const humans = _seats().filter(k => !isBotSlot(k)).length;
-    if (!isBotSlot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
-    else _hud.say(s.name, isBotSlot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
-    if (!isBotSlot(next) && humans <= 1) _holder = next;
+    const humans = _seats().filter(k => !_isBot(k)).length;
+    if (!_isBot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
+    else _hud.say(s.name, _isBot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
+    if (!_isBot(next) && humans <= 1) _holder = next;
     _seats().forEach(k => _hud.lit(k, k === next, k === next ? s.css + '66' : undefined));
     _walkTo(next, b.p.x, b.p.z, _yaw);
 }
@@ -523,7 +537,7 @@ function _input() {
         let slot;
         if (_mode === 'turns') { slot = _active; if (_turnState !== 'aim') return; }
         else slot = _bandOf(p.y);
-        if (slot < 0 || isBotSlot(slot) || _balls[slot].state !== 'aim' || [..._drag.values()].some(d => d.slot === slot)) return;
+        if (slot < 0 || _isBot(slot) || _balls[slot].state !== 'aim' || [..._drag.values()].some(d => d.slot === slot)) return;
         if (_view === 'map') _view = 'follow';
         _drag.set(e.pointerId, { slot, ax: p.x, ay: p.y, x: p.x, y: p.y, armed: false, ring: _cancelRing(slot, p.x, p.y) });
     });
@@ -613,9 +627,9 @@ function _shoot(slot, dx, dz, power) {
     b.state = 'roll'; b.rollT = 0; if (b.trailPts) b.trailPts = [];
     _strokes[slot][_hole]++;
     _shooter = slot;
-    if (!isBotSlot(slot)) _holder = slot;
+    if (!_isBot(slot)) _holder = slot;
     if (_mode === 'turns') { _turnState = 'roll'; _showBtns(false); _view = 'follow'; }
-    sfx('putt'); if (!isBotSlot(slot)) haptic([14]);
+    sfx('putt'); if (!_isBot(slot)) haptic([14]);
     const f = _figs[slot];
     if (f) { f.swing = 1; f.swingFrom = f.club ? f.club.rotation.x : 0.25; f.aimP = null; f.shotFrom = { x: b.p.x, z: b.p.z }; f.anim?.play('shove', { restart: true }); }
     b.sq = 0.6;
@@ -658,7 +672,7 @@ function _drawKit(slot, a) {
     }
     for (; di < k.dots.length; di++) k.dots[di].visible = false;
     if (_figs[slot]) _figs[slot].aimP = a.power;
-    if (_mode === 'turns' && _ui && !isBotSlot(slot)) {
+    if (_mode === 'turns' && _ui && !_isBot(slot)) {
         _ui.power.style.display = 'block'; _ui.powerTxt.style.display = 'block';
         _ui.powerFill.style.width = Math.round(a.power * 100) + '%';
         _ui.powerTxt.textContent = `POWER ${Math.round(a.power * 100)}%`;
@@ -684,7 +698,7 @@ function _sunk(b, knocked) {
     const [txt, col] = _label(n, h.par);
     sfx('cup');
     const s = seat(b.slot);
-    if (!isBotSlot(b.slot)) haptic([40]);
+    if (!_isBot(b.slot)) haptic([40]);
     _nextWait = 1.8;
     if (_stage?.gl) {
         const at = new THREE.Vector3(_c.cup.x, _c.cup.y + 0.4, _c.cup.z);
@@ -847,7 +861,7 @@ function _play(dt, pdt = dt) {
         const b = _balls[_active];
         if (b && _turnState === 'aim') {
             _turnT += dt;
-            if (isBotSlot(_active)) _botTurn(dt, b);
+            if (_isBot(_active)) _botTurn(dt, b);
             else {
                 const d = [..._drag.values()].find(x => x.slot === _active);
                 _showBtns(!d);
@@ -866,7 +880,7 @@ function _play(dt, pdt = dt) {
         _balls.forEach(b => {
             if (b.state !== 'aim' || b.done) return;
             b.clock += dt;
-            if (isBotSlot(b.slot)) {
+            if (_isBot(b.slot)) {
                 b.bot.wait -= dt;
                 if (b.bot.wait <= 0) { const pl = plan(_c, b.p, _pt, _botSkill); _shoot(b.slot, pl.dx, pl.dz, pl.power); b.bot.wait = 0.9 + Math.random() * 0.8 + (1 - _botSkill); }
                 return;
@@ -1259,7 +1273,8 @@ function _end() {
     const rank = _seats().map(s => -(tot[s] * 1000 + order.indexOf(s)));
     const runner = order[1];
     const par = _list.reduce((a, x) => a + x.hole.par, 0);
-    const sub = _n === 1 ? `${tot[w]} STROKES · ${_fmt(tot[w] - par)} ON PAR ${par}`
+    const sub = Solo.isSolo() ? `${_stableford(0)} POINTS · ${tot[w]} STROKES (${_fmt(tot[w] - par)})`
+        : _n === 1 ? `${tot[w]} STROKES · ${_fmt(tot[w] - par)} ON PAR ${par}`
         : w < 0 ? `LEVEL ON ${tot[order[0]]}`
         : tot[w] !== tot[runner] ? `${tot[w]} STROKES (${_fmt(tot[w] - par)}) · ${tot[runner]} NEXT`
         : `LEVEL ON ${tot[w]} · ${_mode === 'turns' ? 'ON COUNTBACK' : `QUICKER BY ${Math.abs(tt[w] - tt[runner]).toFixed(1)}s`}`;
