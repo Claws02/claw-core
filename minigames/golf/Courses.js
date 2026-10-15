@@ -242,6 +242,8 @@ const PIRATE = {
             movers: [{ type: 'liftgate', x: 14, z: 0, axis: 'z', w: 1.4, tile: 1, at: 'bottom' },
                      { type: 'liftgate', x: 17.4, z: 0, axis: 'z', w: 1.4, tile: 1, at: 'top' }],
             bumpers: [[9, -1.5, 0.35, 0.6], [9, 1.5, 0.35, 0.6]],
+            // The nest's back is a tall bulwark: a ball flung off the rising lift stays aboard.
+            walls: [[25, -3, 25, 3, 1.6], [17.4, -3, 25, -3, 1.0], [17.4, 3, 25, 3, 1.0]],
             links: [[14, 0, 18.2, 0]],
             path: [[15.7, 0]],
             props: [{ type: 'mast', at: [6, -4.2] }, { type: 'barrel', at: [2, 3.6] }, { type: 'chest', at: [26.5, 2] }] },
@@ -374,6 +376,8 @@ const SPACE = {
                     { r: [17, -3, 26, 3], y: 2.5, kind: 'felt', hills: [[22, 0, 1.4, -0.08]] }],
             movers: [{ type: 'liftgate', x: 14, z: 0, axis: 'z', w: 1.5, tile: 3, at: 'bottom' },
                      { type: 'liftgate', x: 17, z: 0, axis: 'z', w: 1.5, tile: 3, at: 'top' }],
+            // A force-field round the top deck: a ball flung off the rising lift stays aboard.
+            walls: [[26, -3, 26, 3, 1.6], [17, -3, 26, -3, 1.0], [17, 3, 26, 3, 1.0]],
             links: [[14, 0, 17.8, 0]],
             props: [{ type: 'beacon', at: [7.8, 2.1] }, { type: 'beacon', at: [7.8, -2.1] }, { type: 'satellite', at: [14, -9] }] },
 
@@ -498,7 +502,9 @@ function _opening(h, course, i) {
     }
     // Something of the course's own by the top of the way down.
     const props = [...(h.props || []), { type: O.prop, at: [teeX + 0.6, (style === 'ledge' ? Math.min(-2.5, za) : -2) - 1.1] }];
-    return { ...h, tee: [teeX, 0], tiles: [...add, ...tiles], links, props, opening: style };
+    // Movers that name a tile by its place in the list (a lift's doors) move along with it.
+    const movers = h.movers && h.movers.map(m => m.tile != null ? { ...m, tile: m.tile + add.length } : m);
+    return { ...h, tee: [teeX, 0], tiles: [...add, ...tiles], links, props, ...(movers ? { movers } : {}), opening: style };
 }
 
 export const COURSES = [BACKYARD, PIRATE, CANDY, SPACE].map(c => ({ ...c, holes: c.holes.map((h, i) => _opening(h, c.key, i)) }));

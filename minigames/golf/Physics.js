@@ -499,7 +499,8 @@ function _sub(c, b, d, t, movers, others, ev) {
         b.vy -= c.G * d;
         b.x += b.vx * d; b.y += b.vy * d; b.z += b.vz * d;
         const over = Math.hypot(b.x - c.cup.x, b.z - c.cup.z) < CUP_R;
-        if (over && b.y < c.cup.y + 0.02) {
+        // (From above: a ball falling past far below the green never finds the cup.)
+        if (over && b.y < c.cup.y + 0.02 && y0 > c.cup.y - CUP_DEPTH - 0.3) {
             // In the cup: the bottom, the wall and the rim.
             b.inCup = true;
             if (b.y <= c.cup.y - CUP_DEPTH) { b.y = c.cup.y - CUP_DEPTH; b.vy = Math.abs(b.vy) * 0.2; b.vx *= 0.5; b.vz *= 0.5; }

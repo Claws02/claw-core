@@ -91,6 +91,21 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
     }
     // The miss: a few degrees and a few percent at middling skill.
     const err = 1 - skill;
+    // A shot that only works dead on (a long ace over a gap) isn't worth it if a
+    // miss of the bot's own size ends in the water: take the best safe one instead.
+    const risky = cand => {
+        if (err < 0.1) return false;
+        let bad = 0;
+        for (const [da, dp] of [[-0.12, 0], [0.12, 0], [0, -0.12], [0, 0.12]]) {
+            const r = simulate(c, cand.at || from, Math.cos(cand.a + da * err), Math.sin(cand.a + da * err), Math.max(0.05, Math.min(1, cand.p * (1 + dp * err * 2))), tShot + (cand.wait || 0), { maxT: 7, dt: 1 / 45 });
+            if (r.result === 'water' || r.result === 'out') bad++;
+        }
+        return bad >= 2;
+    };
+    if (!best.wait && risky(best)) {
+        const safe = res.filter(x => x.r !== 'water' && x.r !== 'out' && x !== best && !x.wait).sort((x, y) => x.s - y.s);
+        for (const cand of safe.slice(0, 4)) if (!risky(cand)) { best = cand; break; }
+    }
     const g = () => (rand() + rand() + rand() - 1.5) / 1.5;      // roughly normal, −1..1
     const a = best.a + g() * err * 0.3;
     const p = Math.max(0.05, Math.min(1, best.p * (1 + g() * err * 0.32)));
