@@ -111,7 +111,8 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
  *   hole.magnets [{ x, z, r, k }]
  *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max?, stop? }]  (max: uses per shot;
- *                  stop: it sets the ball down at b, at rest — the shot ends there)
+ *                  stop: it sets the ball down at b, at rest — the shot ends there;
+ *                  color: its mouth and its exit drawn in this colour, to tell pipes apart)
  *   hole.loops  [{ a, dir, len, minV?, b?, style? }]  (style 'corkscrew' with b: a spiral down to b)
  *   hole.mines  [[x, z, r?, power?]]
  *   hole.gravity  a multiplier; hole.links: extra [x1, z1, x2, z2] the path field may jump

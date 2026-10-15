@@ -879,7 +879,7 @@ function _event(b, e) {
             } else if (st === 'teleport') {
                 sfx('swap');
                 if (e.p.stop) _say2Show('BACK TO THE TOP · SHOOT AGAIN', '#c4b5fd', 1500);
-                if (gl) { _fx.burst(at(0.3), _theme?.pipe ?? 0xa855f7, 0.5, 0.35); _fx.burst(new THREE.Vector3(e.p.b[0], _floorY(e.p.b[0], e.p.b[1]) + 0.3, e.p.b[1]), _theme?.pipe ?? 0xa855f7, 0.5, 0.5); }
+                if (gl) { _fx.burst(at(0.3), e.p.color ?? _theme?.pipe ?? 0xa855f7, 0.5, 0.35); _fx.burst(new THREE.Vector3(e.p.b[0], _floorY(e.p.b[0], e.p.b[1]) + 0.3, e.p.b[1]), e.p.color ?? _theme?.pipe ?? 0xa855f7, 0.5, 0.5); }
             } else sfx('swap');
             break;
         }
