@@ -105,11 +105,12 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *   hole.rail   the rails' material (default wood); hole.blockMat (default stone)
  *   hole.walls  [[x1, z1, x2, z2, h?, mat?]]
  *   hole.blocks [[x0, z0, x1, z1, h?]]
- *   hole.bumpers [[x, z, r, kick?, e?]]   (a peg: kick 0, e ~0.6)
+ *   hole.bumpers [[x, z, r, kick?, e?, jit?]]   (a peg: kick 0, e ~0.6; jit: a plinko peg's
+ *                  scatter, radians — the same on every phone, but no one can read it)
  *   hole.movers [{ type: 'windmill'|'sweeper'|'slider'|'gate'|'hammer', ... }]
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
  *   hole.magnets [{ x, z, r, k }]
- *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style? }]
+ *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max? }]  (max: uses per shot)
  *   hole.loops  [{ a, dir, len, minV?, b?, style? }]  (style 'corkscrew' with b: a spiral down to b)
  *   hole.mines  [[x, z, r?, power?]]
  *   hole.gravity  a multiplier; hole.links: extra [x1, z1, x2, z2] the path field may jump
@@ -193,13 +194,13 @@ export function compile(hole) {
         const hh = h ?? 0.5;
         [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]].forEach(([a, b, p, q]) => c.walls.push({ ..._wall(c, a, b, p, q, hh, null, bm), block: true }));
     });
-    (hole.bumpers || []).forEach(([x, z, r, kick, e]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, y: floorAt(c, x, z, 9)?.h ?? 0 }));
+    (hole.bumpers || []).forEach(([x, z, r, kick, e, jit]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, jit: jit || 0, y: floorAt(c, x, z, 99)?.h ?? 0 }));
     // A cannon's ball lands still going the way it was fired.
     (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32, dir: p.style === 'cannon' ? [p.b[0] - p.a[0], p.b[1] - p.a[1]] : p.dir }));
     (hole.loops || []).forEach(l => c.loops.push({ ...l, minV: l.minV || 6.5 }));
-    const cupF = floorAt(c, hole.cup[0], hole.cup[1], 9);
+    const cupF = floorAt(c, hole.cup[0], hole.cup[1], 99);
     c.cup = { x: hole.cup[0], z: hole.cup[1], y: cupF ? cupF.h : 0 };
-    const teeF = floorAt(c, hole.tee[0], hole.tee[1], 9);
+    const teeF = floorAt(c, hole.tee[0], hole.tee[1], 99);
     c.tee = { x: hole.tee[0], z: hole.tee[1], y: teeF ? teeF.h : 0 };
     c.bounds = tiles.reduce((b, t) => {
         const a = t.move ? t.move.amp : 0, ax = t.move?.axis === 'x' ? a : 0, az = t.move?.axis === 'z' ? a : 0;
@@ -217,8 +218,8 @@ function _swing(t) {
 }
 
 function _wall(c, x1, z1, x2, z2, h, tile, mat) {
-    const b1 = tile ? _tileH(tile, x1, z1) : (floorAt(c, x1, z1, 9)?.h ?? 0);
-    const b2 = tile ? _tileH(tile, x2, z2) : (floorAt(c, x2, z2, 9)?.h ?? 0);
+    const b1 = tile ? _tileH(tile, x1, z1) : (floorAt(c, x1, z1, 99)?.h ?? 0);
+    const b2 = tile ? _tileH(tile, x2, z2) : (floorAt(c, x2, z2, 99)?.h ?? 0);
     return { x1, z1, x2, z2, b1, b2, h, rail: !!tile, mat: MATERIAL[mat] ? mat : 'wood' };
 }
 
@@ -339,7 +340,7 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
 export function moverWalls(c, t) {
     const out = [];
     for (const m of c.movers) {
-        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 9, STEP_UP, 0)?.h ?? 0);
+        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP, 0)?.h ?? 0);
         if (m.type === 'windmill' || m.type === 'gate' || m.type === 'liftgate') {
             const shut = m.type === 'windmill' ? windmillShut(m, t) : m.type === 'gate' ? gateShut(m, t) : liftGateShut(c, m, t);
             if (shut) {
@@ -379,7 +380,7 @@ export function hammerHeads(c, t) {
         const A = m.amp || 1.5, s = m.speed || 1.6, ph = m.phase || 0;
         const o = A * Math.sin(t * s + ph), v = A * s * Math.cos(t * s + ph);
         const ax = (m.axis || 'z') === 'x' ? 1 : 0, az = 1 - ax;
-        out.push({ x: m.x + ax * o, z: m.z + az * o, r: m.r || 0.35, vx: ax * v, vz: az * v, y: m._base ?? (m._base = floorAt(c, m.x, m.z, 9, STEP_UP, 0)?.h ?? 0), m });
+        out.push({ x: m.x + ax * o, z: m.z + az * o, r: m.r || 0.35, vx: ax * v, vz: az * v, y: m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP, 0)?.h ?? 0), m });
     }
     return out;
 }
@@ -416,7 +417,7 @@ export function newBall(x, z, y = 0) {
 /** Hit it: a direction on the floor and a power 0..1. */
 export function strike(b, dx, dz, power) {
     const n = Math.hypot(dx, dz) || 1, v = Math.max(0, Math.min(1, power)) * MAXV;
-    b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false; b.ride = null;
+    b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false; b.ride = null; b.tps = 0;
     b.wx = b.vx * PUTT_ROLL; b.wz = b.vz * PUTT_ROLL;   // off the face skidding, with a little roll
 }
 /** Is the ball skidding (its spin not caught up with its speed)? */
@@ -438,7 +439,7 @@ export function step(c, b, dt, t, others = null, ev = []) {
         if (b.pipe.t <= 0) {
             const p = b.pipe.p, sp = b.pipe.v;
             const n = Math.hypot(p.dir[0], p.dir[1]) || 1;
-            const f = floorAt(c, p.b[0], p.b[1], 9);
+            const f = floorAt(c, p.b[0], p.b[1], 99);   // (from any height: a drop can start high)
             Object.assign(b, { x: p.b[0], z: p.b[1], y: f ? f.h : 0, vx: p.dir[0] / n * sp, vz: p.dir[1] / n * sp, vy: 0, air: false, pipe: null, rest: false });
             b.wx = b.vx; b.wz = b.vz;
             ev.push({ type: 'pipeout', p });
@@ -630,7 +631,8 @@ function _sub(c, b, d, t, movers, others, ev) {
     // Pipes and loops: a mouth on the floor.
     if (!b.air) {
         for (const p of c.pipes) {
-            if (Math.hypot(b.x - p.a[0], b.z - p.a[1]) < p.r) {
+            if (Math.hypot(b.x - p.a[0], b.z - p.a[1]) < p.r && !(p.max && (b.tps || 0) >= p.max)) {
+                if (p.max) b.tps = (b.tps || 0) + 1;
                 b.pipe = { p, t: p.delay ?? 0.6, dur: p.delay ?? 0.6, v: p.out ?? Math.max(3, Math.hypot(b.vx, b.vz) * (p.keep ?? 0.9)), from: [b.x, b.y, b.z] };
                 ev.push({ type: 'pipe', p }); return;
             }
@@ -784,7 +786,20 @@ function _collide(c, b, movers, others, ev) {
         nx /= dist; nz /= dist;
         b.x = p.x + nx * (p.r + R); b.z = p.z + nz * (p.r + R);
         const vn = b.vx * nx + b.vz * nz;
-        if (vn < 0) {
+        if (vn < 0 && vn > -0.35 && !b.air) {
+            // Leaning on it (a slow roll, or gravity pressing it in): it slides round, no bounce.
+            b.vx -= vn * nx; b.vz -= vn * nz;
+            if (p.jit && Math.hypot(b.vx, b.vz) < 0.25) {
+                // Balanced on top of a peg: it falls off one side or the other (a hash picks which).
+                const hs = Math.sin(b.x * 91.3 + b.z * 47.1 + p.x * 13.7) * 43758.5453, sd = hs - Math.floor(hs) < 0.5 ? -0.3 : 0.3;
+                b.vx += -nz * sd; b.vz += nx * sd;
+            }
+        } else if (vn < 0) {
+            if (p.jit) {
+                // A plinko peg: knocked a little off true, by where it was struck (a hash, not Math.random).
+                const hsh = Math.sin(b.x * 127.1 + b.z * 311.7 + vn * 74.7) * 43758.5453, a = (hsh - Math.floor(hsh) - 0.5) * 2 * p.jit;
+                const ca = Math.cos(a), sa = Math.sin(a), qx = nx * ca - nz * sa; nz = nx * sa + nz * ca; nx = qx;
+            }
             b.vx -= (1 + p.e) * vn * nx; b.vz -= (1 + p.e) * vn * nz;
             b.vx += nx * p.kick; b.vz += nz * p.kick;
             b.rest = false;

@@ -265,13 +265,32 @@ const CANDY = {
             bumpers: [[14, -3.6, 0.5], [14, 3.6, 0.5], [18.5, 0, 0.45, 1.2]],
             props: [{ type: 'cupcake', at: [14, 6.4] }, { type: 'lollipop', at: [4, -3] }] },
 
-        {   key: 'plinko', name: 'GUMBALL PLINKO', sig: 'pegs or the gutter', par: 3, tee: [0, 0], cup: [24, 0.5], rail: 'candy',
-            // Drop through the pegs and take your chances, or down the gumball gutter: sure, but it leaves you the far corner.
-            tiles: [{ r: [-1.5, -2, 4, 2], y: 2.0 }, { r: [4, -4, 20, 4], y: 1.0, slope: [-0.125, 0] }, { r: [20, -4, 27, 5.2], kind: 'felt' },
-                    { r: [4, 4, 20, 5.2], y: 1.0, slope: [-0.125, 0], kind: 'ice' }],
-            walls: [[5.2, 4, 18.8, 4]],
-            bumpers: (() => { const out = []; for (let row = 0; row < 6; row++) for (let k = 0; k < 5; k++) out.push([7 + row * 2, -3 + k * 1.5 + (row % 2) * 0.75, 0.14, 0, 0.55]); return out; })(),
-            props: [{ type: 'gumballs', at: [2, -2.9] }, { type: 'lollipop', at: [24, 6.6] }] },
+        {   key: 'plinko', name: 'GUMBALL PLINKO', sig: 'plinko drop', par: 3, tee: [0, 0], cup: [33.4, 0], rail: 'candy',
+            // Tip it off the top shelf and down the long board through a forest of
+            // gumdrop pegs. Every peg knocks it a little off true: where it lands
+            // is anyone's guess. Five slots at the bottom — the middle one has the
+            // cup, the two beside it send you back up to the top to drop again (once a shot),
+            // and the rest run on into the tray behind, leaving a putt to the cup.
+            tiles: [{ r: [-1.5, -2.5, 4, 2.5], y: 12.39 },
+                    { r: [4, -5, 30, 5], y: 6.54, slope: [-0.45, 0], kind: 'ice' },
+                    { r: [30, -5, 34.5, 5], y: 0.625, slope: [-0.06, 0], kind: 'felt' }],
+            bumpers: (() => {
+                const out = [];
+                for (let row = 0; row < 11; row++) {
+                    // Staggered rows; the outside pegs hug the rails so nothing slides down the edge.
+                    const x = 6.6 + row * 2.05, n = row % 2 ? 9 : 10, z0 = row % 2 ? -4.2 : -4.725;
+                    for (let k = 0; k < n; k++) out.push([x, +(z0 + k * 1.05).toFixed(3), 0.17, 0, 0.82, 0.38]);
+                }
+                return out;
+            })(),
+            // The slots: short dividers, then a common tray behind them that runs down to the cup.
+            walls: [[30.3, -2.6, 32.4, -2.6, 0.5], [30.3, -1, 32.4, -1, 0.5], [30.3, 1, 32.4, 1, 0.5], [30.3, 2.6, 32.4, 2.6, 0.5],
+                    [31.6, -2.6, 31.6, -1, 0.5], [31.6, 1, 31.6, 2.6, 0.5]],
+            rollMax: 45,
+            pipes: [{ a: [31.0, -1.8], b: [5.3, -1.7], dir: [1, 0], r: 0.7, delay: 0.7, out: 1.2, style: 'teleport', max: 1 },
+                    { a: [31.0, 1.8], b: [5.3, 1.7], dir: [1, 0], r: 0.7, delay: 0.7, out: 1.2, style: 'teleport', max: 1 }],
+            path: [[5, 0], [30, 0], [31, 0]],
+            props: [{ type: 'gumballs', at: [1.5, -3.6] }, { type: 'lollipop', at: [33, 6.4] }, { type: 'lollipop', at: [33, -6.4] }] },
 
         {   key: 'river', name: 'THE CHOCOLATE RIVER', sig: 'current', par: 3, tee: [0, 0], cup: [22, -1.5], rail: 'candy',
             // The current carries you toward the goo. Ride it across — or jump it

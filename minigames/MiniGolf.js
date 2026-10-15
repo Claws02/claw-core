@@ -874,6 +874,8 @@ function _event(b, e) {
         }
         case 'pipeout':
             sfx('boost');
+            // Back to the top of a drop (plinko): a fresh roll, not a timed-out one.
+            if (e.p?.style === 'teleport') b.rollT = Math.min(b.rollT, ROLL_MAX * 0.4);
             if (gl) _fx.puff(at(0.15), (e.p?.style === 'cannon') ? 0xe9cf98 : 0xd9f99d, 6, 0.4, 0.5);
             if (e.p?.style === 'cannon') { b.sq = 1; _shake = Math.max(_shake, 0.25); }
             break;
@@ -991,7 +993,7 @@ function _play(dt, pdt = dt) {
             b.rollT += dt;
             if (b.state !== 'roll') { b.state = 'roll'; b.rollT = 0; }
         }
-        if (b.rollT > ROLL_MAX && !b.p.rest && !b.p.pipe && !b.p.loop) { b.p.vx = b.p.vz = b.p.vy = 0; b.p.rest = true; b.p.air = false; b.p.y = _floorY(b.p.x, b.p.z); }
+        if (b.rollT > (_c.hole.rollMax || ROLL_MAX) && !b.p.rest && !b.p.pipe && !b.p.loop) { b.p.vx = b.p.vz = b.p.vy = 0; b.p.rest = true; b.p.air = false; b.p.y = _floorY(b.p.x, b.p.z); }
         b.clackT -= dt;
         for (const e of ev) _event(b, e);
         // Stopped.

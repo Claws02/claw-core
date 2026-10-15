@@ -278,7 +278,7 @@ export function make(c, theme) {
     // Gates: a portcullis in each doorway.
     c.movers.filter(m => m.type === 'gate' && m.laser).forEach(m => {
         // A laser fence: an emitter at each side and beams across, flickering on and off.
-        const w = (m.w || 0.55) * 2, base = m._base ?? (floorAt(c, m.x, m.z, 9, 0.1, 0)?.h ?? 0);
+        const w = (m.w || 0.55) * 2, base = m._base ?? (floorAt(c, m.x, m.z, 99, 0.1, 0)?.h ?? 0);
         const g = new THREE.Group();
         const beamM = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.85, depthWrite: false });
         const beams = [0.12, 0.26, 0.4].map(y => { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, w, 6), beamM); b.rotation.x = Math.PI / 2; b.position.y = y; g.add(b); return b; });
@@ -294,7 +294,7 @@ export function make(c, theme) {
         for (let i = 0; i <= 5; i++) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, H, 6), bars); b.position.set(0, H / 2, -w / 2 + w * i / 5); g.add(b); const sp = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.14, 6), bars); sp.rotation.x = Math.PI; sp.position.set(0, -0.05, -w / 2 + w * i / 5); g.add(sp); }
         [0.2, 0.6].forEach(y => { const cb = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, w), bars); cb.position.y = y; g.add(cb); });
         if (m.axis !== 'z') g.rotation.y = Math.PI / 2;
-        const base = m._base ?? (floorAt(c, m.x, m.z, 9, 0.1, 0)?.h ?? 0);
+        const base = m._base ?? (floorAt(c, m.x, m.z, 99, 0.1, 0)?.h ?? 0);
         g.position.set(m.x, base, m.z); group.add(g);
         live.push((dt, tt) => { g.position.y = base + (1 - gateDown(m, tt)) * 0.95; });
     });
@@ -308,7 +308,7 @@ export function make(c, theme) {
         for (let i = 0; i <= 6; i++) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, H, 6), barM); b.position.set(0, H / 2, -w / 2 + w * i / 6); g.add(b); }
         const top = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, w), Toy.mat(0xfacc15)); top.position.y = H; g.add(top);
         if (m.axis !== 'z') g.rotation.y = Math.PI / 2;
-        const base = T ? T.y : (floorAt(c, m.x, m.z, 9, 0.1, 0)?.h ?? 0);
+        const base = T ? T.y : (floorAt(c, m.x, m.z, 99, 0.1, 0)?.h ?? 0);
         const frame = new THREE.Group();
         [-w / 2 - 0.08, w / 2 + 0.08].forEach(z => { const post = Toy.rbox(0.16, H + 0.4, 0.16, 0.05, Toy.mat(0x4b5563, { metalness: 0.5 })); post.position.set(0, (H + 0.4) / 2, z); frame.add(post); });
         if (m.axis !== 'z') frame.rotation.y = Math.PI / 2;

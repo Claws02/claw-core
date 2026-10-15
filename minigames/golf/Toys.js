@@ -396,7 +396,7 @@ export function pipeEnd(p, end, y, theme) {
         g.position.set(q[0], y, q[1]);
         return shadowed(g);
     }
-    if (theme.scenery === 'space') {
+    if (theme.scenery === 'space' || p.style === 'teleport') {
         // A teleport pad: a hex plate, a lit ring and a beam of light.
         const plate = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.25, r + 0.3, 0.08, 6), mat(0x4b5563, { metalness: 0.6, roughness: 0.3 }));
         plate.position.y = 0.04; g.add(plate);
