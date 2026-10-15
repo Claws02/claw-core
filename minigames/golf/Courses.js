@@ -408,6 +408,28 @@ const SPACE = {
 };
 
 export const COURSES = [BACKYARD, PIRATE, CANDY, SPACE];
+
+/**
+ * Trick shots: one ball from a set spot, three goes. In if it stops in the box
+ * (`zone`, [x0, z0, x1, z1]) or drops. Each was searched in the physics for a
+ * window that exists but is narrow (Lint keeps the holes clean; a script played
+ * every angle and power from the spot): roughly 1–6% of all directions and
+ * strengths land it, far more if you aim the right way.
+ */
+export const CHALLENGES = [
+    { id: 'jump-bed',   course: 'backyard', key: 'gardenpath', name: 'Jump the Flower Bed',   from: [14.25, -1.2], zone: [12, 8, 21, 14] },
+    { id: 'pool-leap',  course: 'backyard', key: 'pool',       name: 'Over the Paddling Pool', from: [7, -1.45],    zone: [18, -3, 26, 3] },
+    { id: 'rock-drop',  course: 'backyard', key: 'rockery',    name: 'Off the Top Rock',      from: [6, 0],        zone: [12, 5.5, 22, 13] },
+    { id: 'shark-jump', course: 'pirate',   key: 'shark',      name: 'Jump the Sharks',       from: [6, 1.45],     zone: [14, -2.5, 26, 4] },
+    { id: 'kegs',       course: 'pirate',   key: 'powder',     name: 'Thread the Kegs',       from: [0, 0],        zone: [20, -2.5, 26, 2.5] },
+    { id: 'tentacles',  course: 'pirate',   key: 'kraken',     name: 'Past the Kraken',       from: [4, 0],        zone: [24, -2.5, 30, 2.5] },
+    { id: 'cake-drop',  course: 'candy',    key: 'slide',      name: 'Off the Cake',          from: [3, 1],        zone: [19, -3, 25, 3] },
+    { id: 'choc-jump',  course: 'candy',    key: 'river',      name: 'Jump the Chocolate',    from: [5.5, -1.5],   zone: [13, -3, 24, 3] },
+    { id: 'spin-gap',   course: 'candy',    key: 'spinner',    name: 'Through the Spinner',   from: [6, 0],        zone: [14.6, -1.2, 17.4, 1.2] },
+    { id: 'moon-jump',  course: 'space',    key: 'moon',       name: 'Moon Jump',             from: [8, -0.3],     zone: [15, -4, 26, 4] },
+    { id: 'sling',      course: 'space',    key: 'magnets',    name: 'Planet Slingshot',      from: [0, 0],        zone: [23, -1, 28, 4] },
+    { id: 'mines',      course: 'space',    key: 'belt',       name: 'Minefield Run',         from: [0, 0],        zone: [21, -3, 26, 3] },
+];
 export const COURSE_KEYS = COURSES.map(c => c.key);
 export const courseByKey = k => COURSES.find(c => c.key === k) || COURSES[0];
 /** Every hole of every course, as [courseKey, hole]. */

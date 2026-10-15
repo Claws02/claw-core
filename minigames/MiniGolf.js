@@ -37,7 +37,9 @@ import { seat, uprightHud, effects } from '../engine/StageKit.js';
 import { MG_ORIENTATION_OVERRIDE } from '../config/MinigameRegistry.js';
 import * as P from './golf/Physics.js';
 import { plan, planSteps } from './golf/Bot.js';
-import { COURSES, courseByKey, coursePar } from './golf/Courses.js';
+import { COURSES, courseByKey, coursePar, CHALLENGES } from './golf/Courses.js';
+/** Trick shots the Mini Golf mode offers: configure({ challenge }) plays one. */
+export { CHALLENGES };
 import { buildHole, animateProps } from './golf/Build.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
@@ -77,6 +79,9 @@ export const COURSE_LIST = COURSES.map(c => ({ key: c.key, name: c.name, blurb: 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _gfx = null;   // the hole's atmosphere and sparks (golf/Fx.js)
+// A trick-shot challenge (configure({ challenge })): one hole, one ball, from a
+// set spot; sink it in one, with `tries` goes at it. { id, key, from, tries, name }.
+let _chal = null;
 // The physics clock (it runs slow near the cup), a camera shake, and the hole-in-one show.
 let _pt = 0, _slow = 1, _shake = 0, _ace = null;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _fx = null, _lights = null;
@@ -101,8 +106,10 @@ export function start(isBot, onWin, botSkill = 0.55) {
     // Solo (the Mini Golf mode only): one ball against par, played like turns.
     _n = Solo.isSolo() ? 1 : Math.max(1, Math.min(4, slotCount()));
     _mode = _n === 1 ? 'turns' : _cfg.round ? (_cfg.mode === 'chaos' ? 'chaos' : 'turns') : 'chaos';
+    _chal = !Solo.isSolo() && _cfg.challenge ? { tries: 3, ..._cfg.challenge } : null;
+    if (_chal) { _n = 1; _mode = 'turns'; }
     _list = _pickHoles();
-    _cfg = { ..._cfg, course: null, holes: 'sampler', round: false };
+    _cfg = { ..._cfg, course: null, holes: 'sampler', round: false, challenge: null };
     _last = null;
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _active = -1;
     _pt = 0; _slow = 1; _shake = 0; _ace = null;
@@ -150,6 +157,12 @@ export function start(isBot, onWin, botSkill = 0.55) {
 }
 
 function _pickHoles() {
+    if (_chal) {
+        const all = COURSES.flatMap(c => c.holes.map(h => ({ course: c.key, hole: h })));
+        const got = all.find(x => x.hole.key === _chal.key);
+        if (got) return [got];
+        _chal = null;
+    }
     if (_forceHoles) {
         const all = COURSES.flatMap(c => c.holes.map(h => ({ course: c.key, hole: h })));
         const got = _forceHoles.map(k => all.find(x => x.hole.key === k)).filter(Boolean);
@@ -408,6 +421,16 @@ function _loadHole(i) {
             _lights.key.color.setHex(_lights.base.key); _lights.key.intensity = _lights.base.ki; _lights.hemi.color.setHex(_lights.base.hemi);
         }
         _gfx = GolfFx.make(_stage, _c, _theme, { lights: _lights, golden: _list.length >= 3 && i >= Math.ceil(_list.length * 0.67) });
+        // A trick shot's target: a glowing frame on the floor, and the start spot.
+        if (_chal?.zone && _built) {
+            const [x0, z0, x1, z1] = _chal.zone, pts = [];
+            const N = 40, edge = (ax, az, bx, bz) => { for (let k = 0; k < N; k++) { const u = k / N, x = ax + (bx - ax) * u, z = az + (bz - az) * u; pts.push(new THREE.Vector3(x, _floorY(x, z) + 0.04, z)); } };
+            edge(x0, z0, x1, z0); edge(x1, z0, x1, z1); edge(x1, z1, x0, z1); edge(x0, z1, x0, z0);
+            const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xfde047 }));
+            const fill = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ color: 0xfde047, transparent: true, opacity: 0.16, depthWrite: false }));
+            fill.rotation.x = -Math.PI / 2; fill.position.set((x0 + x1) / 2, _floorY((x0 + x1) / 2, (z0 + z1) / 2) + 0.03, (z0 + z1) / 2);
+            _built.root.add(line); _built.root.add(fill);
+        }
     }
     _balls.forEach(b => {
         Object.assign(b, { on: false, done: false, picked: false, from: null, rollT: 0, sinkT: -1, state: 'wait', clock: 0 });
@@ -435,8 +458,9 @@ function _beginHole() {
     _strokes.forEach(s => s.push(0)); _times.forEach(s => s.push(0));
     _holeT = 0; _active = -1; _shooter = -1; _view = 'follow';
     const h = _list[_hole].hole;
-    _hud.say(`HOLE ${_hole + 1}`, `${h.name} · PAR ${h.par}`, FLY_DUR * 1000, _t, '#fde047');
+    _hud.say(_chal ? 'TRICK SHOT' : `HOLE ${_hole + 1}`, _chal ? `${_chal.name || h.name} · ${_chal.zone ? 'STOP IT IN THE BOX' : 'SINK IT IN ONE'}` : `${h.name} · PAR ${h.par}`, FLY_DUR * 1000, _t, '#fde047');
     _sub = 'fly'; _subT = 0;
+    if (_chal) _subT = FLY_DUR * 0.55;   // a shorter look at the hole: the shot's the thing
     sfx('whistle');
 }
 
@@ -494,6 +518,17 @@ function _nextTurn() {
     }
     _active = next; _turnT = 0; _turnState = 'aim'; _botThink = null;
     const b = _balls[next];
+    if (_chal) {
+        // A trick shot: every go is from the spot. Out of goes, it's over.
+        const used = _strokes[next][_hole];
+        // Stopped in the target zone: done.
+        const z = _chal.zone;
+        if (z && used > 0 && b.on && b.p.x >= z[0] && b.p.x <= z[2] && b.p.z >= z[1] && b.p.z <= z[3]) { _chalEnd(true); return; }
+        if (used >= _chal.tries) { _chalEnd(false); return; }
+        const [fx, fz] = _chal.from;
+        b.p = P.newBall(fx, fz, _floorY(fx, fz)); b.on = true; b.from = { x: fx, y: b.p.y, z: fz };
+        if (used > 0) _hud.say(`TRY ${used + 1} OF ${_chal.tries}`, '', 1100, _t, '#fde68a');
+    }
     if (!b.on) {
         // On to the tee; if a ball is sitting there, a little to one side.
         let x = _c.tee.x, z = _c.tee.z;
@@ -526,6 +561,7 @@ function _walkTo(slot, x, z, yaw) {
     f.anim?.play('walk');
 }
 function _holeOver() {
+    if (_chal) { _chalEnd(true); return; }
     _sub = 'card'; _subT = 0; _active = -1;
     _showBtns(false); _hidePower();
     _seats().forEach(k => _hud.lit(k, false));
@@ -747,7 +783,7 @@ function _pickUp(b) {
 }
 function _penalty(b, kind) {
     const mine = b.slot === _shooter || _mode === 'chaos';
-    if (mine) _strokes[b.slot][_hole]++;
+    if (mine && !_chal) _strokes[b.slot][_hole]++;   // a trick shot's miss is just a miss
     if (kind === 'out') { sfx('land_bad'); _say2Show(`${_theme?.scenery === 'space' ? 'LOST IN SPACE' : 'OUT OF BOUNDS'}${mine ? ' · +1' : ''}`, '#fca5a5'); }
     else {
         sfx('splash');
@@ -1302,6 +1338,28 @@ function _showCard(on, final = false) {
     requestAnimationFrame(() => { if (_card) { _card.style.opacity = '1'; _card.style.transform = 'translate(-50%,-50%) scale(1)'; } });
 }
 
+/** A trick shot is over: sunk (in how many goes) or not. */
+function _chalEnd(ok) {
+    if (_phase === 'over') return;
+    _phase = 'over';
+    _showBtns(false); _hidePower();
+    _kits.forEach((_, s) => _hideKit(s));
+    const tries = _strokes[0][_hole];
+    _last = { challenge: _chal.id, course: _list[0]?.course, holes: [_list[0].hole.key], success: ok, tries, full: false,
+              totals: [tries], toPar: [0], aces: [ok && tries === 1 ? 1 : 0], strokes: _strokes.map(x => [...x]), par: [1], winner: 0 };
+    const stars = ok ? Math.max(1, 4 - tries) : 0;
+    _last.stars = stars;
+    const holed = _balls[0]?.done && !_balls[0]?.picked;
+    _last.holed = !!holed;
+    _hud.say(ok ? (holed ? 'HOLED IT!' : tries === 1 ? 'FIRST TIME!' : 'NAILED IT!') : 'NOT THIS TIME', ok ? '★'.repeat(stars) + '☆'.repeat(3 - stars) : `${_chal.tries} GOES`, 0, _t, ok ? '#fde047' : '#fca5a5');
+    if (ok) sfx('ace'); else sfx('land_bad');
+    setTimeout(() => {
+        if (_done || !_dir) return;
+        _hud.say('');
+        _dir.close({ winner: ok ? 0 : -1, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub: ok ? `SUNK IN ${tries}` : 'TRY AGAIN?', onDone: () => _finish(ok ? 0 : -1, [ok ? 1 : 0]) });
+    }, _forceHoles ? 300 : 2200);
+}
+
 // ── The end ──────────────────────────────────────────────────────────────────
 function _end() {
     if (_phase === 'over') return;
@@ -1347,7 +1405,7 @@ let _last = null;
 export function lastRound() { return _last ? JSON.parse(JSON.stringify(_last)) : null; }
 export function _debugState() {
     return {
-        phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view,
+        phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view, chal: _chal?.id || null,
         course: _list[0]?.course, holes: _list.map(x => x.hole.key), par: _list.map(x => x.hole.par),
         strokes: _strokes.map(s => [...s]), times: _times.map(s => s.map(t => +t.toFixed(2))),
         balls: _balls.map(b => ({ x: +b.p.x.toFixed(2), y: +b.p.y.toFixed(2), z: +b.p.z.toFixed(2), v: +Math.hypot(b.p.vx, b.p.vz).toFixed(2), state: b.state, holed: b.done && !b.picked, picked: b.picked, on: b.on, air: b.p.air })),
