@@ -71,6 +71,21 @@ export function rail(w, theme, mats) {
         g.rotation.y = -Math.atan2(w.z2 - w.z1, w.x2 - w.x1);
         return shadowed(g);
     }
+    if (w.mat === 'inflatable') {
+        // A bouncy castle's wall: a fat, soft tube, in stripes of bright vinyl.
+        const cols = theme.inflatable || [0xff6b6b, 0xffd166, 0x4dabf7];
+        const n = Math.max(1, Math.round(len / 0.9));
+        for (let i = 0; i < n; i++) {
+            const seg = rbox(len / n + 0.02, w.h + 0.06, 0.3, 0.14, glossy(cols[i % cols.length], { roughness: 0.35 }));
+            seg.position.x = -len / 2 + len * (i + 0.5) / n; g.add(seg);
+        }
+        const top = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, len + 0.1, 12), glossy(cols[(n + 1) % cols.length], { roughness: 0.3 }));
+        top.rotation.z = Math.PI / 2; top.position.y = w.h / 2 + 0.06; g.add(top);
+        g.position.set((w.x1 + w.x2) / 2, (w.b1 + w.b2) / 2 + w.h / 2, (w.z1 + w.z2) / 2);
+        g.rotation.y = -Math.atan2(w.z2 - w.z1, w.x2 - w.x1);
+        g.userData.soft = true;
+        return shadowed(g);
+    }
     let m = mats.rail;
     if (theme.railTex === 'cane' || w.mat === 'candy') {
         const t = caneTex().clone(); t.needsUpdate = true; t.repeat.set(2, 2);
@@ -187,6 +202,19 @@ export function bumper(p, theme) {
         head.position.y = 0.3; g.add(head);
         g.position.set(p.x, p.y, p.z);
         return { g: shadowed(g), flash: head.material, squash: false };
+    }
+    if ((p.e ?? 0) >= 0.9) {
+        // An inflatable: a striped balloon turret on a fat base. It squashes when hit.
+        const cols = theme.inflatable || [0xff6b6b, 0xffd166, 0x4dabf7];
+        const k = ((Math.round(p.x * 3 + p.z * 5) % cols.length) + cols.length) % cols.length;
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 1.05, p.r * 1.12, 0.32, 20), glossy(cols[k], { roughness: 0.32 }));
+        base.position.y = 0.16; g.add(base);
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(p.r * 0.95, 20, 14), glossy(cols[(k + 1) % cols.length], { roughness: 0.25, emissive: cols[(k + 1) % cols.length], emissiveIntensity: 0.05 }));
+        ball.position.y = 0.32 + p.r * 0.8; ball.scale.y = 1.15; g.add(ball);
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(p.r * 0.45, p.r * 0.8, 12), glossy(cols[(k + 2) % cols.length], { roughness: 0.3 }));
+        cone.position.y = 0.32 + p.r * 1.85 + p.r * 0.3; g.add(cone);
+        g.position.set(p.x, p.y, p.z);
+        return { g: shadowed(g), flash: ball.material, squash: true };
     }
     const style = theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
     let flash;
@@ -358,6 +386,16 @@ export function airlock(m, base, theme) {
 export function pipeEnd(p, end, y, theme) {
     const g = new THREE.Group();
     const q = end === 'a' ? p.a : p.b, r = p.r;
+    if (p.style === 'burrow') {
+        // A rabbit hole: a ring of earth round a dark throat, a tuft of grass.
+        const mound = new THREE.Mesh(new THREE.TorusGeometry(r + 0.08, 0.12, 8, 22), mat(0x7a5232, { roughness: 1 }));
+        mound.rotation.x = Math.PI / 2; mound.position.y = 0.03; mound.scale.z = 0.6; g.add(mound);
+        const hole = new THREE.Mesh(new THREE.CircleGeometry(r, 22), new THREE.MeshBasicMaterial({ color: 0x0b0704 })); hole.rotation.x = -Math.PI / 2; hole.position.y = 0.012; g.add(hole);
+        const grass = mat(0x3fa548, { roughness: 1 });
+        for (let i = 0; i < 5; i++) { const bl = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.2, 4), grass); const a = i * 1.3 + 0.4; bl.position.set(Math.cos(a) * (r + 0.2), 0.1, Math.sin(a) * (r + 0.2)); bl.rotation.z = Math.sin(a) * 0.3; g.add(bl); }
+        g.position.set(q[0], y, q[1]);
+        return shadowed(g);
+    }
     if (theme.scenery === 'space') {
         // A teleport pad: a hex plate, a lit ring and a beam of light.
         const plate = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.25, r + 0.3, 0.08, 6), mat(0x4b5563, { metalness: 0.6, roughness: 0.3 }));
@@ -449,6 +487,22 @@ export function loop(l, y, theme) {
 // ── Sweepers and sliders ─────────────────────────────────────────────────────
 export function sweeper(m, theme) {
     const g = new THREE.Group(), L = (m.len || 2);
+    if (m.r0) {
+        // A spinner: a ring of baffles round an open middle (the cup sits there).
+        const n = m.arms || 6, cols = [0xff5fa2, 0xffffff, 0x7ed957, 0xffd23f, 0x5fb8ff, 0xb57bff];
+        for (let k = 0; k < n; k++) {
+            const s = k / n * Math.PI * 2, arm = new THREE.Group();
+            const len = L - m.r0;
+            const t = caneTex().clone(); t.needsUpdate = true; t.repeat.set(3, 1);
+            const bar = rbox(len, 0.34, 0.14, 0.07, theme.scenery === 'candy' ? glossy(0xffffff, { map: t }) : (theme.railGlow ? glow(theme.sweeper ?? 0xf43f5e, 0.8) : glossy(theme.sweeper ?? 0xffd23f)));
+            bar.position.set(m.r0 + len / 2, 0.17, 0); arm.add(bar);
+            const knob = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), glossy(cols[k % cols.length])); knob.position.set(L, 0.3, 0); arm.add(knob);
+            arm.rotation.y = -s; g.add(arm);
+        }
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(m.r0 - 0.08, 0.04, 6, 40), glossy(theme.accent ?? 0xff3b6b));
+        ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; g.add(ring);
+        return { g: shadowed(g), bar: null };
+    }
     const col = theme.sweeper ?? 0xffd23f;
     const bar = rbox(L * 2, 0.22, 0.2, 0.1, theme.railGlow ? glow(col, 0.8) : glossy(col)); bar.position.y = 0.16; g.add(bar);
     [-1, 1].forEach(sd => { const end = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 10), glossy(theme.accent)); end.position.set(sd * L, 0.16, 0); g.add(end); });
@@ -501,4 +555,78 @@ export function dropEdges(c, theme) {
     });
     g.userData.blinkStrip = !!theme.railGlow;
     return g;
+}
+
+// ── v3 pieces ────────────────────────────────────────────────────────────────
+
+/** A mine: a powder keg (pirate), a spiked space mine, or a red garden mine. */
+export function mine(kind, theme) {
+    const g = new THREE.Group();
+    let light;
+    if (kind === 'keg') {
+        const keg = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.36, 14), mat(0x7a4a22, { roughness: 0.8 }));
+        keg.position.y = 0.18; g.add(keg);
+        [0.06, 0.3].forEach(y => { const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.02, 6, 18), mat(0x2b2b30, { metalness: 0.6 })); hoop.rotation.x = Math.PI / 2; hoop.position.y = y; g.add(hoop); });
+        const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.16, 5), mat(0xf2e8d0)); fuse.position.set(0.06, 0.42, 0); fuse.rotation.z = -0.4; g.add(fuse);
+        light = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), glow(0xffa53f, 1.6)); light.position.set(0.1, 0.5, 0); g.add(light);
+        const xx = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
+        xx.position.set(0, 0.2, 0.205); g.add(xx);
+    } else {
+        const core = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10), kind === 'spike' ? mat(0x374151, { metalness: 0.6, roughness: 0.35 }) : glossy(0xd62828));
+        core.position.y = 0.2; g.add(core);
+        const spikeM = kind === 'spike' ? mat(0x9aa3b5, { metalness: 0.7 }) : glossy(0x1f1f24);
+        for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2, sp = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), spikeM); sp.position.set(Math.cos(a) * 0.22, 0.2, Math.sin(a) * 0.22); sp.rotation.z = -Math.PI / 2; sp.rotation.y = -a; sp.rotation.order = 'YZX'; g.add(sp); }
+        const top = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), spikeM); top.position.y = 0.43; g.add(top);
+        light = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), glow(kind === 'spike' ? 0xf43f5e : 0xffd23f, 1.6)); light.position.y = 0.36; g.add(light);
+    }
+    return { g: shadowed(g), light };
+}
+
+/** A corkscrew slide from (a, yTop) spiralling down to (b, yBot): its centre line, and the slide. */
+export function corkscrewCurve(l, yTop, yBot) {
+    const [ax, az] = l.a, [bx, bz] = l.b, turns = l.turns || 1.75, rad = l.rad || 1.1;
+    const cx = (ax + bx) / 2, cz = (az + bz) / 2;
+    const pts = [];
+    const N = 80;
+    for (let i = 0; i <= N; i++) {
+        const u = i / N;
+        // Out from the mouth, round the post `turns` times, in to the exit.
+        const a0 = Math.atan2(az - cz, ax - cx), a1 = Math.atan2(bz - cz, bx - cx) + Math.PI * 2 * Math.round(turns);
+        const ang = a0 + (a1 - a0) * u;
+        const r = rad * (0.75 + 0.25 * Math.sin(u * Math.PI));
+        const x = cx + Math.cos(ang) * r, z = cz + Math.sin(ang) * r;
+        const e = u < 0.08 ? u / 0.08 : u > 0.92 ? (1 - u) / 0.08 : 1;
+        const bx2 = u < 0.08 ? ax + (x - ax) * e : u > 0.92 ? bx + (x - bx) * e : x;
+        const bz2 = u < 0.08 ? az + (z - az) * e : u > 0.92 ? bz + (z - bz) * e : z;
+        pts.push(new THREE.Vector3(bx2, yTop + (yBot - yTop) * u + 0.16, bz2));
+    }
+    return new THREE.CatmullRomCurve3(pts);
+}
+export function corkscrew(curve, theme) {
+    const g = new THREE.Group();
+    // The chute: a half-pipe of candy cane (a full tube, cut open on top, reads as a slide).
+    const t = caneTex().clone(); t.needsUpdate = true; t.repeat.set(24, 1); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 160, 0.3, 10, false), new THREE.MeshStandardMaterial({ map: t, roughness: 0.3, side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+    g.add(tube);
+    // A centre post, and a lollipop on top.
+    const pts = curve.getPoints(40);
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length, cz = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+    const top = Math.max(...pts.map(p => p.y)), bot = Math.min(...pts.map(p => p.y));
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, top - bot + 1.2, 12), glossy(0xffffff, { map: (() => { const tt = caneTex().clone(); tt.needsUpdate = true; tt.repeat.set(1, 6); return tt; })() }));
+    post.position.set(cx, (top + bot) / 2 + 0.3, cz); g.add(post);
+    const pop = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.14, 26), glossy(theme.accent ?? 0xff3b6b));
+    pop.rotation.x = Math.PI / 2; pop.position.set(cx, top + 1.2, cz); g.add(pop);
+    return shadowed(g);
+}
+
+/** A kicker ramp's face: hazard chevrons up the slope and a lip at the top. */
+export function kickerLip(t, theme) {
+    const g = new THREE.Group();
+    const alongX = Math.abs(t.gx) > Math.abs(t.gz), s = alongX ? Math.sign(t.gx) : Math.sign(t.gz);
+    const w = alongX ? t.z1 - t.z0 : t.x1 - t.x0;
+    const lip = rbox(alongX ? 0.12 : w, 0.07, alongX ? w : 0.12, 0.03, glossy(theme.kick ?? theme.accent ?? 0xff7a59));
+    const x = alongX ? (s > 0 ? t.x1 : t.x0) : t.cx, z = alongX ? t.cz : (s > 0 ? t.z1 : t.z0);
+    lip.position.set(x - (alongX ? s * 0.06 : 0), 0, z - (alongX ? 0 : s * 0.06));
+    g.add(lip);
+    return { g: shadowed(g), at: [x, z] };
 }

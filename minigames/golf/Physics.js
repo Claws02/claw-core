@@ -124,7 +124,7 @@ export function compile(hole) {
             hills: t.hills || [], ridges: t.ridges || [], trough: t.trough || null,
             kind: t.kind || 'turf', open: t.open || '', boost: t.boost || null, flow: t.flow || null,
             spin: t.spin || 0, discR: t.discR || 0, move: t.move || null, lift: t.lift || null,
-            tilt: t.tilt || null, elev: t.elev || null,
+            tilt: t.tilt || null, elev: t.elev || null, railMat: t.railMat || null,
             rail: t.rail ?? !(t.move || t.lift),
         };
         T.cx = (T.x0 + T.x1) / 2; T.cz = (T.z0 + T.z1) / 2;
@@ -160,10 +160,10 @@ export function compile(hole) {
             const flush = (u1) => {
                 if (run === null) return;
                 const p = [ax + (bx - ax) * run, az + (bz - az) * run], q = [ax + (bx - ax) * u1, az + (bz - az) * u1];
-                const wl = _wall(c, p[0], p[1], q[0], q[1], RAIL_H, t, railMat);
+                const wl = _wall(c, p[0], p[1], q[0], q[1], t.railMat ? 0.45 : RAIL_H, t, t.railMat || railMat);
                 // A see-saw's or a lift's rail has to cover the whole swing.
                 const sw = _swing(t);
-                if (sw) { wl.b1 -= sw.down; wl.b2 -= sw.down; wl.h += sw.down + sw.up; wl.moving = true; }
+                if (sw) { wl.b1 -= sw.down; wl.b2 -= sw.down; wl.h += sw.down + sw.up; wl.moving = true; wl.tile = t.i; }
                 c.walls.push(wl);
                 run = null;
             };
@@ -172,7 +172,14 @@ export function compile(hole) {
                 const px = ax + (bx - ax) * u, pz = az + (bz - az) * u;
                 const here = _tileH(t, px, pz);
                 const ox = px + nx * 0.05, oz = pz + nz * 0.05;
-                const next = still.find(o => o !== t && _inTile(o, ox, oz) && Math.abs(_tileH(o, ox, oz) - here) <= STEP_UP);
+                // A lift meets a floor at the top of its ride as well as the bottom.
+                const meets = (o) => {
+                    const hs = [_tileH(o, ox, oz) - here];
+                    if (o.elev) hs.push(_tileH(o, ox, oz) + (o.elev.amp || 1) - here);
+                    if (t.elev) hs.push(_tileH(o, ox, oz) - here - (t.elev.amp || 1));
+                    return hs.some(dh => Math.abs(dh) <= STEP_UP);
+                };
+                const next = still.find(o => o !== t && _inTile(o, ox, oz) && meets(o));
                 const needs = !next;
                 if (needs && run === null) run = k / n;
                 if (!needs && run !== null) flush(k / n);
@@ -250,7 +257,14 @@ function _inTileAt(t, x, z, time) {
 export const tileHeight = (t, x, z, time = 0) => _tileH(t, x, z, time);
 /** A see-saw's extra slope, and a lift's rise, at time `time`. */
 export function tiltAt(t, time) { if (!t.tilt) return 0; const m = t.tilt; return (m.amp || 0.2) * Math.sin(time * (m.speed || 0.9) + (m.phase || 0)); }
-export function elevAt(t, time) { if (!t.elev) return 0; const m = t.elev, P = m.period || 7; return (m.amp || 1) * (0.5 - 0.5 * Math.cos(((time + (m.phase || 0)) / P) * Math.PI * 2)); }
+/** A lift dwells at the bottom, rises, dwells at the top and comes down — 30/20/30/20 of its period. */
+export function elevAt(t, time) {
+    if (!t.elev) return 0;
+    const m = t.elev, P = m.period || 7, u = ((((time + (m.phase || 0)) / P) % 1) + 1) % 1;
+    const ss = x => x * x * (3 - 2 * x);
+    const k = u < 0.3 ? 0 : u < 0.5 ? ss((u - 0.3) / 0.2) : u < 0.8 ? 1 : 1 - ss((u - 0.8) / 0.2);
+    return (m.amp || 1) * k;
+}
 function _tileH(t, x, z, time = 0) {
     let h = t.y + t.gx * (x - t.cx) + t.gz * (z - t.cz);
     if (t.tilt) h += tiltAt(t, time) * (t.tilt.axis === 'z' ? z - t.cz : x - t.cx);
@@ -301,9 +315,9 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
     if (best.flow) sv = [best.flow[0], best.flow[1]];
     else if (best.spin && Math.hypot(x - best.cx, z - best.cz) <= best.discR) sv = [-best.spin * (z - best.cz), best.spin * (x - best.cx)];
     else if (off) sv = [off.vx, off.vz];
-    else if (best.tilt || best.elev) sv = [0, 0];   // it moves under a ball at rest: keep it awake
     const kind = best.spin && !sv ? 'turf' : best.kind;
-    return { h: bh, gx, gz, kind, tile: best, sv };
+    // A see-saw or a lift moves under a ball at rest without dragging it: keep it awake.
+    return { h: bh, gx, gz, kind, tile: best, sv, awake: !!(best.tilt || best.elev) };
 }
 
 // ── Moving things ────────────────────────────────────────────────────────────
@@ -317,17 +331,24 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
  *                                                a turnstile; r0 leaves the middle open (a spinner maze)
  *   slider   { x, z, len, bar, axis, amp, speed, phase }
  *   gate     { x, z, axis, w, speed, phase }     a portcullis: shut half the time
+ *   liftgate { x, z, axis, w, tile, at: 'bottom'|'top' } a lift's door: open only while the
+ *                                                lift (tiles[tile]) is level with this floor
  *   hammer   { x, z, axis, amp, r, speed, phase } a head swinging across, as a moving post
  */
 export function moverWalls(c, t) {
     const out = [];
     for (const m of c.movers) {
-        const base = m._base ?? (m._base = floorAt(c, m.x, m.z, 9, STEP_UP, 0)?.h ?? 0);
-        if (m.type === 'windmill' || m.type === 'gate') {
-            if (m.type === 'windmill' ? windmillShut(m, t) : gateShut(m, t)) {
+        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 9, STEP_UP, 0)?.h ?? 0);
+        if (m.type === 'windmill' || m.type === 'gate' || m.type === 'liftgate') {
+            const shut = m.type === 'windmill' ? windmillShut(m, t) : m.type === 'gate' ? gateShut(m, t) : liftGateShut(c, m, t);
+            if (shut) {
                 const w = m.w || 0.55;
-                if (m.axis === 'z') out.push({ x1: m.x, z1: m.z - w, x2: m.x, z2: m.z + w, b1: base, b2: base, h: 0.5, vx: 0, vz: 0, mover: m, mat: 'wood' });
-                else out.push({ x1: m.x - w, z1: m.z, x2: m.x + w, z2: m.z, b1: base, b2: base, h: 0.5, vx: 0, vz: 0, mover: m, mat: 'wood' });
+                // A lift's door stands the whole height of the shaft: nothing gets
+                // in or out between floors, at the bottom or the top.
+                let h = 0.5;
+                if (m.type === 'liftgate') { const T = c.tiles[m.tile]; base = T ? T.y : base; h = (T?.elev?.amp || 1) + 0.6; }
+                if (m.axis === 'z') out.push({ x1: m.x, z1: m.z - w, x2: m.x, z2: m.z + w, b1: base, b2: base, h, vx: 0, vz: 0, mover: m, mat: 'wood' });
+                else out.push({ x1: m.x - w, z1: m.z, x2: m.x + w, z2: m.z, b1: base, b2: base, h, vx: 0, vz: 0, mover: m, mat: 'wood' });
             }
         } else if (m.type === 'sweeper') {
             const a = t * (m.speed || 1.2) + (m.phase || 0), L = m.len || 2, n = m.arms || 2, r0 = m.r0 || 0;
@@ -376,6 +397,13 @@ export function gateDown(m, t) {
     return Math.max(0, Math.min(1, 0.5 + s * 1.6));
 }
 export const gateShut = (m, t) => gateDown(m, t) > 0.6;
+/** A lift's door is shut unless the lift is at this door's floor (within a hair). */
+export function liftGateShut(c, m, t) {
+    const T = c.tiles[m.tile];
+    if (!T || !T.elev) return false;
+    const e = elevAt(T, t), amp = T.elev.amp || 1;
+    return m.at === 'top' ? e < amp - 0.04 : e > 0.04;
+}
 
 // ── The ball ─────────────────────────────────────────────────────────────────
 
@@ -474,7 +502,9 @@ function _sub(c, b, d, t, movers, others, ev) {
             b.inCup = true;
             if (b.y <= c.cup.y - CUP_DEPTH) { b.y = c.cup.y - CUP_DEPTH; b.vy = Math.abs(b.vy) * 0.2; b.vx *= 0.5; b.vz *= 0.5; }
         } else {
-            const f = floorAt(c, b.x, b.z, y0, 0.02);
+            // A floor just above a falling ball (it slipped under an edge by a hair) still catches it.
+            let f = floorAt(c, b.x, b.z, y0, 0.02);
+            if (!f && b.vy < 0) { const g = floorAt(c, b.x, b.z, y0, 0.15); if (g && g.h - b.y < 0.15) f = g; }
             if (f && b.y <= f.h) {
                 if (HAZARD[f.kind]) { ev.push({ type: 'water', kind: f.kind }); return; }
                 _land(c, b, f, ev);
@@ -502,7 +532,7 @@ function _sub(c, b, d, t, movers, others, ev) {
                 return;
             }
             if (f.kind !== 'jelly') b.jelly = false;
-            if (b.rest && !f.sv) { _collide(c, b, movers, others, ev); return; }
+            if (b.rest && !f.sv && !f.awake) { _collide(c, b, movers, others, ev); return; }
             const svx = f.sv ? f.sv[0] : 0, svz = f.sv ? f.sv[1] : 0;
             if (b.wx == null) { b.wx = b.vx; b.wz = b.vz; }
             // The skid: friction at the contact pulls the speed down and the spin

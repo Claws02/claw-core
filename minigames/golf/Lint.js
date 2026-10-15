@@ -182,6 +182,7 @@ export function lint(hole) {
         if (x1 - x0 < 0.05 || z1 - z0 < 0.05) continue;
         const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
         const ha = floorAt({ ...c, tiles: [a] }, mx, mz, 99, 0, 0)?.h, hb = floorAt({ ...c, tiles: [b] }, mx, mz, 99, 0, 0)?.h;
+        if (a.tilt || b.tilt || a.elev || b.elev) continue;
         if (ha != null && hb != null && Math.abs(ha - hb) < 0.02) warn(`tiles ${i} and ${j} overlap at the same height (may flicker)`, mx, mz);
     }
     return out;

@@ -765,7 +765,20 @@ function _event(b, e) {
             if (gl && e.v > 2.5 && (e.mat === 'metal' || e.mat === 'neon')) _fx.burst(new THREE.Vector3(...e.at), 0xfff1a8, 0.08, 0.15);
             if (gl && e.v > 3 && e.mat === 'hedge') _fx.puff(at(0.2), 0x3fa548, 3, 0.3, 0.3);
             if (e.mover && e.v > 3) _shake = Math.max(_shake, 0.12);
+            if (e.mat === 'inflatable') { _built?.wobble?.(e.at[0], e.at[2]); if (e.v > 1.5) sfx('boost'); }
             break;
+        case 'boom': {
+            // A mine (a powder keg, a space mine) under the ball.
+            sfx('boom'); _shake = Math.max(_shake, 0.55); b.sq = 1;
+            _built?.boom?.(e.at[0], e.at[1]);
+            if (gl) {
+                const p0 = new THREE.Vector3(e.at[0], _floorY(e.at[0], e.at[1]) + 0.2, e.at[1]);
+                _fx.burst(p0, 0xffa53f, 0.7, 0.35); _fx.burst(p0, 0xfff1a8, 0.35, 0.2);
+                _fx.puff(p0, 0x6b7280, 10, 0.7, 1.1);
+            }
+            _say2Show(_theme?.scenery === 'pirate' ? 'KA-BOOM!' : 'BOOM!', '#fca5a5', 800);
+            break;
+        }
         case 'bumper':
             sfx('boost'); _built?.pulse(e.at); b.sq = 0.8;
             if (gl) _fx.burst(at(0.3), 0xffe08a, 0.18, 0.2);
@@ -805,7 +818,7 @@ function _event(b, e) {
             if (gl) _fx.puff(at(0.15), (e.p?.style === 'cannon') ? 0xe9cf98 : 0xd9f99d, 6, 0.4, 0.5);
             if (e.p?.style === 'cannon') { b.sq = 1; _shake = Math.max(_shake, 0.25); }
             break;
-        case 'loop': sfx('boost'); _say2Show('LOOP!', '#fde047', 700); break;
+        case 'loop': sfx('boost'); _say2Show(e.l?.style === 'corkscrew' || b.p.loop?.l?.style === 'corkscrew' ? 'WHEEE!' : 'LOOP!', '#fde047', 700); break;
         case 'loopfail': sfx('land_bad'); _say2Show('NOT ENOUGH SPEED', '#fca5a5', 800); break;
         case 'cup': _sunk(b, _mode === 'turns' && b.slot !== _shooter); break;
         case 'water': case 'out': _penalty(b, e.kind || e.type); break;
@@ -1092,6 +1105,11 @@ function _ballDrawPos(b) {
         const u = 1 - p.pipe.t / (p.pipe.dur || 0.6);
         return _built.pipeAt(p.pipe.p, Math.max(0, Math.min(1, u)));
     }
+    if (p.loop && p.loop.l.style === 'corkscrew' && _built?.loopAt) {
+        // Down the corkscrew slide.
+        const q = _built.loopAt(p.loop.l, p.loop.t / p.loop.dur);
+        if (q) return q.clone().setY(q.y - 0.16 + P.R);
+    }
     if (p.loop) {
         // In along the floor, round the hoop (a corkscrew, so it clears itself), out along the floor.
         const l = p.loop.l, u = p.loop.t / p.loop.dur, n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
@@ -1132,7 +1150,11 @@ function _drawBalls(dt) {
                 const ox = b.mesh.position.x, oz = b.mesh.position.z;
                 b.mesh.position.copy(at);
                 const mx = at.x - ox, mz = at.z - oz, dist = Math.hypot(mx, mz);
-                if (dist > 1e-4 && dist < 2) { _axis.set(mz, 0, -mx).normalize(); b.sphere.rotateOnWorldAxis(_axis, dist / P.R); }
+                // The ball turns with its spin, not its travel: off the putter it
+                // skids (barely turning), then grabs and rolls.
+                const onFloor = !p.air && !p.pipe && !p.loop && p.wx != null;
+                const sx = onFloor ? p.wx * dt : mx, sz = onFloor ? p.wz * dt : mz, sd = Math.hypot(sx, sz);
+                if (sd > 1e-4 && sd < 2 && dist < 2) { _axis.set(sz, 0, -sx).normalize(); b.sphere.rotateOnWorldAxis(_axis, sd / P.R); }
             }
             // Squash on a hit, back with a wobble.
             b.sq = Math.max(0, (b.sq || 0) - dt * 4);
