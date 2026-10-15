@@ -42,7 +42,7 @@ const BACKYARD = {
         scenery: 'backyard',
     },
     holes: [
-        {   key: 'gardenpath', name: 'THE GARDEN PATH', sig: 'whoops', par: 3, tee: [0, 0], cup: [14, 11.5],
+        {   key: 'gardenpath', name: 'THE GARDEN PATH', sig: 'whoops', par: 4, tee: [0, 0], cup: [14, 11.5],
             // Down the path over the whoops, round and up onto the raised lawn —
             // or putt up the little ramp and jump the flower bed.
             tiles: [{ r: [-1.5, -2, 21, 2], ridges: [[4, -2, 4, 2, 1.1, 0.15], [6.5, -2, 6.5, 2, 1.1, 0.15], [9, -2, 9, 2, 1.1, 0.15]] },
@@ -53,7 +53,7 @@ const BACKYARD = {
             path: [[19, 0], [19, 9]],
             props: [{ type: 'gnome', at: [7, -2.9] }, { type: 'flowers', at: [9, 2.9] }, { type: 'bed', r: [12, 2, 17, 8], y: -0.25 }, { type: 'tree', at: [24, 5] }, { type: 'flowers', at: [16, 15] }] },
 
-        {   key: 'maze', name: 'THE HEDGE MAZE', sig: 'maze', par: 5, tee: [0, 0], cup: [20.5, 3.5], rail: 'hedge', blockMat: 'hedge',
+        {   key: 'maze', name: 'THE HEDGE MAZE', sig: 'maze', par: 6, tee: [0, 0], cup: [20.5, 3.5], rail: 'hedge', blockMat: 'hedge',
             // Five corridors — or the rabbit hole in the first one's dead end.
             tiles: [{ r: [-1.5, -6, 23, 6] }],
             walls: [[4, -6, 4, 2.5, 0.6, 'hedge'], [8, -2.5, 8, 6, 0.6, 'hedge'], [12, -6, 12, 0.8, 0.6, 'hedge'], [12, 3.2, 12, 6, 0.6, 'hedge'], [16, -3.6, 16, 6, 0.6, 'hedge']],
@@ -70,7 +70,7 @@ const BACKYARD = {
                     { r: [16, -3, 24, 3], kind: 'felt', hills: [[21, 0.6, 2.2, 0.12]] }],
             props: [{ type: 'bucket', at: [12, -3.7] }, { type: 'spade', at: [13, 3.6] }, { type: 'flowers', at: [20, 3.7] }] },
 
-        {   key: 'pool', name: 'THE PADDLING POOL', sig: 'island bridges', par: 5, tee: [0, 0], cup: [24, -1.5],
+        {   key: 'pool', name: 'THE PADDLING POOL', sig: 'island bridges', par: 6, tee: [0, 0], cup: [24, -1.5],
             // Two narrow bridges by way of the island — or the ramp at the pool's
             // edge, all the way over the water.
             tiles: [{ r: [-1.5, -2, 8, 2] },
@@ -156,7 +156,7 @@ const PIRATE = {
         scenery: 'pirate',
     },
     holes: [
-        {   key: 'plank', name: 'WALK THE PLANK', sig: 'balance beams', par: 4, tee: [0, 0], cup: [22, 6.6],
+        {   key: 'plank', name: 'WALK THE PLANK', sig: 'balance beams', par: 5, tee: [0, 0], cup: [22, 6.6],
             tiles: [{ r: [-1.5, -2, 5, 2] },
                     { r: [5, -4, 18, 10], y: -0.4, kind: 'water', rail: false },
                     { r: [5, -0.6, 11.2, 0.6], kind: 'wood', open: 'ns' },
@@ -188,7 +188,7 @@ const PIRATE = {
             path: [[3.3, -1], [3.3, -5.5], [13.5, -5.5]],
             props: [{ type: 'cannon', at: [9, 0], to: [15, 0] }, { type: 'flagpole', at: [26.4, 5.5] }, { type: 'fort', at: [21, 6.6] }] },
 
-        {   key: 'wheel', name: 'THE SHIP\'S WHEEL', sig: 'turntable', par: 3, tee: [0, 0], cup: [23.5, 1.2],
+        {   key: 'wheel', name: 'THE SHIP\'S WHEEL', sig: 'turntable', par: 4, tee: [0, 0], cup: [23.5, 1.2],
             // Across the spinning wheel to the quarterdeck: it carries the ball round as it crosses.
             tiles: [{ r: [-1.5, -3, 8, 3], kind: 'wood' },
                     { r: [8, -4, 16, 4], kind: 'wood', spin: 0.75 },
@@ -196,13 +196,13 @@ const PIRATE = {
                     { r: [20, -3, 26, 3], hills: [[23.5, 1.2, 1.4, -0.08]] }],
             props: [{ type: 'mast', at: [12, -5.2] }, { type: 'barrel', at: [20, 3.7] }] },
 
-        {   key: 'skull', name: 'SKULL CAVE', sig: 'cave', par: 3, tee: [0, 0], cup: [28, 0.5],
+        {   key: 'skull', name: 'SKULL CAVE', sig: 'cave', par: 4, tee: [0, 0], cup: [28, 0.5],
             tiles: [{ r: [-1.5, -3, 10, 3] }, { r: [10, -3, 22, 3], y: -0.12, slope: [-0.02, 0], kind: 'rough' }, { r: [22, -3, 30, 3], y: -0.24 }],
             blocks: [[10, -3, 12, -2, 1.6], [10, -1, 12, 1, 1.6], [10, 2, 12, 3, 1.6], [16, -0.7, 17.2, 0.7, 1.2]],
             path: [[11, -1.5], [16.6, -1.8]],
             props: [{ type: 'skull', at: [11, 0] }, { type: 'cave', r: [12, -3, 22, 3] }, { type: 'chest', at: [31.2, 2] }] },
 
-        {   key: 'shark', name: 'SHARK BAY', sig: 'drawbridge', par: 3, tee: [0, 0], cup: [22, 1.5],
+        {   key: 'shark', name: 'SHARK BAY', sig: 'drawbridge', par: 4, tee: [0, 0], cup: [22, 1.5],
             // Wait for the drawbridge — or don't: the ramp at the dock's corner
             // jumps the sharks when the bridge is up.
             tiles: [{ r: [-1.5, -2, 8, 2], open: 'e' },
@@ -369,7 +369,7 @@ const SPACE = {
         windmill: 'airlock', scenery: 'space',
     },
     holes: [
-        {   key: 'liftoff', name: 'THE ANTI-GRAV LIFT', sig: 'anti-grav lift', par: 3, tee: [0, 0], cup: [22, 0], rail: 'neon',
+        {   key: 'liftoff', name: 'THE ANTI-GRAV LIFT', sig: 'anti-grav lift', par: 4, tee: [0, 0], cup: [22, 0], rail: 'neon',
             // Boost down the strip into the lift; its doors open when it's level.
             tiles: [{ r: [-1.5, -1.5, 8, 1.5] }, { r: [8, -1.5, 11, 1.5], kind: 'boost', boost: [6, 0] }, { r: [11, -1.5, 14, 1.5] },
                     { r: [14, -1.5, 17, 1.5], kind: 'metal', elev: { amp: 2.5, period: 7 } },
