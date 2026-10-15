@@ -193,6 +193,7 @@ function _destroy() {
     _done = true;
     delete MG_ORIENTATION_OVERRIDE.minigolf;   // the next golf is a party's (chaos) unless the mode says otherwise
 
+    _faded.clear();
     _built?.dispose?.(); _built = null; _pass = null;
     _gfx?.dispose?.(); _gfx = null;
     if (_stage) { _stage.dispose(); _stage = null; }
@@ -224,6 +225,9 @@ function _buildBall(slot) {
         const mesh = new THREE.Group();
         const sphere = new THREE.Mesh(new THREE.SphereGeometry(P.R, 20, 14), new THREE.MeshStandardMaterial({ map: _ballTex(col), roughness: 0.25 }));
         sphere.castShadow = true; mesh.add(sphere); mesh.visible = false; _stage.add(mesh);
+        // Seen through whatever's in the way: the ball's colour, drawn only where something is in front of it.
+        const ghost = new THREE.Mesh(new THREE.SphereGeometry(P.R * 1.08, 16, 10), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85, depthWrite: false, depthFunc: THREE.GreaterDepth }));
+        ghost.renderOrder = 20; mesh.add(ghost);
         const ring = new THREE.Mesh(new THREE.RingGeometry(P.R * 1.5, P.R * 2.1, 24), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.8, depthWrite: false }));
         ring.rotation.x = -Math.PI / 2; ring.visible = false; _stage.add(ring);
         const marker = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.32, 4), new THREE.MeshBasicMaterial({ color: col }));
@@ -232,7 +236,7 @@ function _buildBall(slot) {
         const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); tg.setDrawRange(0, 0);
         const trail = new THREE.Line(tg, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.7 }));
         trail.frustumCulled = false; _stage.add(trail);
-        Object.assign(b, { mesh, sphere, ring, marker, trail, trailPts: [], sq: 0 });
+        Object.assign(b, { mesh, sphere, ghost, ring, marker, trail, trailPts: [], sq: 0 });
     }
     return b;
 }
@@ -413,6 +417,7 @@ function _loadHole(i) {
         if (_stage?.gl) { _stage.scene.background = new THREE.Color(_theme.sky); _stage.scene.fog = new THREE.Fog(_theme.fog ?? _theme.sky, 38, 90); }
     }
     if (_stage?.gl) {
+        _faded.clear(); _seeT = 0;
         _built?.dispose(); _built = buildHole(_stage, _c, _theme, i + 1);
         _gfx?.dispose(); _gfx = null;
         const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
@@ -917,6 +922,7 @@ function _frame(dt) {
     const dirOwns = !!_dir && _dir.update(dt);
     if (_done) return;
     if (!dirOwns && _stage?.gl && _phase === 'play') _camera(dt);
+    if (_stage?.gl && _built && _phase === 'play') _seeThrough(dt);
     _renderHud();
 }
 
@@ -1161,6 +1167,62 @@ function _camera(dt) {
     cam.userData.look = _cam.look.toArray();
 }
 
+// ── Seeing through ──────────────────────────────────────────────────────────
+// Anything between the camera and a ball in play (a windmill, a castle, a
+// rock, a raised deck) goes see-through while it's in the way, so you can
+// read the shot. Every few frames: a ray from the camera to each ball.
+const _faded = new Map();           // the faded thing → { meshes: [[mesh, material]], t: last time in the way }
+const _fadeMats = new WeakMap();    // a material → its see-through copy
+let _seeT = 0, _seeRay = null;
+function _fadeMat(m) {
+    let f = _fadeMats.get(m);
+    if (!f) { f = m.clone(); f.transparent = true; f.opacity = Math.min(m.opacity ?? 1, 0.26); f.depthWrite = false; _fadeMats.set(m, f); }
+    return f;
+}
+/** The thing to fade for a mesh that's in the way: its biggest ancestor that's still one object (not the whole course). */
+function _fadeRoot(o) {
+    const root = _built.root;
+    let pick = o;
+    for (let a = o.parent; a && a !== root; a = a.parent) {
+        let n = 0; a.traverse(q => { if (q.isMesh) n++; });
+        if (n > 40) break;
+        pick = a;
+    }
+    return pick;
+}
+function _seeThrough(dt) {
+    _seeT -= dt;
+    if (_seeT <= 0) {
+        _seeT = 0.08;
+        _seeRay = _seeRay || new THREE.Raycaster();
+        const cam = _stage.camera, from = cam.position, now = _t;
+        for (const b of _balls) {
+            if (!b.on || b.done || !b.mesh?.visible) continue;
+            const to = b.mesh.position, d = from.distanceTo(to);
+            if (d < 0.5) continue;
+            _seeRay.set(from, to.clone().sub(from).normalize());
+            _seeRay.far = d - P.R * 2.5;
+            for (const h of _seeRay.intersectObject(_built.root, true)) {
+                const o = h.object;
+                if (!o.isMesh || !o.visible || o.material?.transparent && o.material.opacity < 0.5) continue;
+                // Not the floor (nor its skirts), unless it's a deck overhead.
+                let fl = false; for (let a = o; a && a !== _built.root; a = a.parent) if (a.userData.floor) { fl = true; break; }
+                if (fl && h.point.y < to.y + 0.3) continue;
+                const r = _fadeRoot(o);
+                let f = _faded.get(r);
+                if (!f) {
+                    f = { meshes: [], t: now };
+                    r.traverse(q => { if (q.isMesh && q.material && !Array.isArray(q.material)) { f.meshes.push([q, q.material]); q.material = _fadeMat(q.material); } });
+                    _faded.set(r, f);
+                }
+                f.t = now;
+            }
+        }
+        // Back to solid once out of the way for a moment.
+        for (const [r, f] of _faded) if (now - f.t > 0.35) { f.meshes.forEach(([q, m]) => { q.material = m; }); _faded.delete(r); }
+    }
+}
+
 // ── Drawing ──────────────────────────────────────────────────────────────────
 let _axis = null;
 /** Where a ball is drawn (in a pipe, on a loop, sinking it isn't where its physics is). */
@@ -1198,6 +1260,7 @@ function _drawBalls(dt) {
         if (b.sinkT >= 0 && b.sinkT < 1) {
             // Round the cup and down: a little spiral, then gone.
             b.mesh.visible = true;
+            if (b.ghost) b.ghost.visible = false;
             b.sinkT = Math.min(1, b.sinkT + dt * 1.8);
             const k = b.sinkT, sf = b.sinkFrom || { x: _c.cup.x + 0.2, z: _c.cup.z };
             const a0 = Math.atan2(sf.z - _c.cup.z, sf.x - _c.cup.x), a = a0 + k * Math.PI * 3, r = (1 - k) * Math.min(P.CUP_R * 0.7, Math.hypot(sf.x - _c.cup.x, sf.z - _c.cup.z));
@@ -1211,6 +1274,7 @@ function _drawBalls(dt) {
             // A hose hides the ball (the bulge is seen); a teleporter has it nowhere.
             const style = inPipe ? (p.pipe.p.style || (_theme?.scenery === 'space' ? 'teleport' : 'hose')) : null;
             b.mesh.visible = show && (!inPipe || style === 'cannon') && !!at;
+            if (b.ghost) b.ghost.visible = !p.inCup && !p.sunk;
             if (at) {
                 const ox = b.mesh.position.x, oz = b.mesh.position.z;
                 b.mesh.position.copy(at);
@@ -1411,6 +1475,14 @@ let _forceHoles = null;
 let _last = null;
 /** The round just finished: course, par and every player's card (for records and trophies). Null mid-round. */
 export function lastRound() { return _last ? JSON.parse(JSON.stringify(_last)) : null; }
+/** Probes: the hole's objects that can't be drawn (a NaN in the transform), and how many are see-through right now. */
+export function _debugScene() {
+    if (!_built) return null;
+    const bad = [];
+    _built.root.updateMatrixWorld(true);
+    _built.root.traverse(o => { if (o.isMesh && o.visible && !o.matrixWorld.elements.every(Number.isFinite)) bad.push(o.parent?.type + '>' + (o.geometry?.type || '?')); });
+    return { bad, faded: _faded.size };
+}
 export function _debugState() {
     return {
         phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view, chal: _chal?.id || null, clock: +_t.toFixed(2), done: _done, nextWait: _nextWait, turnT: +_turnT.toFixed(2),

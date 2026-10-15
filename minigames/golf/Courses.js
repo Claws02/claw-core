@@ -84,17 +84,19 @@ const BACKYARD = {
             path: [[13.5, 0], [13.5, 1.75], [18.5, 1.75]],
             props: [{ type: 'duck', at: [10, 2.5] }, { type: 'duck', at: [16.5, -2.5] }, { type: 'pool', r: [8, -5, 18, 5] }, { type: 'flowers', at: [22, 3.8] }] },
 
-        {   key: 'windmill', name: 'THE GARDEN WINDMILL', sig: 'windmill', par: 3, tee: [0, 0], cup: [24, 1],
+        {   key: 'windmill', name: 'THE GARDEN WINDMILL', sig: 'windmill or the hedge path', par: 3, tee: [0, 0], cup: [24, 1],
             // Up the mound to the mill, through the door between the sails, and
-            // down the chute onto the sunken green.
-            tiles: [{ r: [-1.5, -2.5, 8, 2.5] },
+            // down the chute onto the sunken green — or skip the mill down the
+            // rough path along the hedge, round the sprinkler post.
+            tiles: [{ r: [-1.5, -3.8, 8, 2.5] },
+                    { r: [8, -3.8, 19, -2.5], kind: 'rough' },
                     { r: [8, -2.5, 13, 2.5], y: 0.3, slope: [0.12, 0] },
                     { r: [13, -2.5, 16, 2.5], y: 0.6 },
                     { r: [16, -2.5, 19, 2.5], y: 0.3, slope: [-0.2, 0] },
-                    { r: [19, -3.5, 27, 3.5], hills: [[22, -1.6, 1.4, 0.18]] }],
+                    { r: [19, -3.8, 27, 3.5], hills: [[22, -1.6, 1.4, 0.18]] }],
             blocks: [[13, -2.5, 14.2, -0.55, 1.2], [13, 0.55, 14.2, 2.5, 1.2]],
             movers: [{ type: 'windmill', x: 13, z: 0, axis: 'z', w: 0.55, speed: 1.4 }],
-            props: [{ type: 'flowers', at: [6, 3.2] }, { type: 'flowers', at: [24, -4.3] }, { type: 'tree', at: [17, 6] }] },
+            props: [{ type: 'flowers', at: [6, 3.2] }, { type: 'flowers', at: [24, -5.2] }, { type: 'tree', at: [17, 6] }] },
 
         {   key: 'skate', name: 'THE SKATE PARK', sig: 'half-pipe', par: 4, tee: [0, 0], cup: [16, 22.5],
             // Two half-pipes round the corner, into the bowl.
@@ -167,18 +169,24 @@ const PIRATE = {
         {   key: 'raft', name: 'THE TREASURE RAFT', sig: 'moving raft', par: 5, tee: [0, 0], cup: [27, -1],
             tiles: [{ r: [-1.5, -2, 8, 2], open: 'e' },
                     { r: [8, -4, 20, 4], y: -0.35, kind: 'water', rail: false },
-                    { r: [12.5, -1.1, 15.5, 1.1], kind: 'raft', move: { axis: 'x', amp: 4.5, speed: 0.55, phase: -1.5708 } },
+                    { r: [12, -1.3, 16, 1.3], kind: 'raft', move: { axis: 'x', amp: 4, speed: 0.55, phase: -1.5708 } },
                     { r: [20, -3, 30, 3], open: 'w' }],
             links: [[8, 0, 20, 0]],
             props: [{ type: 'chest', at: [31.2, 2] }, { type: 'palm', at: [25, -4.4] }, { type: 'barrel', at: [6, 2.7] }] },
 
-        {   key: 'cannon', name: 'THE CANNON', sig: 'cannon', par: 3, tee: [0, 0], cup: [22, 8.5],
+        {   key: 'cannon', name: 'THE CANNON', sig: 'cannon or the gangway', par: 3, tee: [0, 0], cup: [21.5, 1.4],
+            // Two ways over: the cannon (in it, and it throws you straight on at the cup),
+            // or round the long way, down the plank and up the gangway.
             tiles: [{ r: [-1.5, -2, 10, 2] },
-                    { r: [-1.5, 2, 26, 4], y: -0.4, kind: 'water', rail: false },
-                    { r: [14, 4, 24, 12], y: 1.5, hills: [[19, 6, 1.4, 0.2]] }],
-            pipes: [{ a: [9, 0], b: [15.5, 8], dir: [1, 0], r: 0.42, delay: 1.1, out: 3.2, style: 'cannon' }],
-            path: [[9, 0], [15.5, 8]],
-            props: [{ type: 'cannon', at: [9, 0], to: [15.5, 8] }, { type: 'flagpole', at: [25, 13] }, { type: 'fort', at: [19, 12.6] }] },
+                    { r: [2.6, -6.2, 4, -2], kind: 'wood', open: 's' },
+                    { r: [4, -6.2, 13, -4.8], y: 0.75, slope: [0.1667, 0], kind: 'wood', open: 'we' },
+                    { r: [-1.5, -9, 13, -6.2], y: -0.4, kind: 'water', rail: false },
+                    { r: [4, -4.8, 13, -2], y: -0.4, kind: 'water', rail: false },
+                    { r: [10, -2, 13, 5], y: -0.4, kind: 'water', rail: false },
+                    { r: [13, -6.2, 25, 4], y: 1.5, hills: [[18.5, -3.5, 1.6, 0.18]] }],
+            pipes: [{ a: [9, 0], b: [15, 0], dir: [1, 0], r: 0.42, delay: 1.1, out: 3.6, style: 'cannon' }],
+            path: [[3.3, -1], [3.3, -5.5], [13.5, -5.5]],
+            props: [{ type: 'cannon', at: [9, 0], to: [15, 0] }, { type: 'flagpole', at: [26.4, 5.5] }, { type: 'fort', at: [21, 6.6] }] },
 
         {   key: 'wheel', name: 'THE SHIP\'S WHEEL', sig: 'turntable', par: 3, tee: [0, 0], cup: [23.5, 1.2],
             // Across the spinning wheel to the quarterdeck: it carries the ball round as it crosses.
@@ -213,8 +221,13 @@ const PIRATE = {
             blocks: [[20.5, 1.4, 21.5, 2.5, 0.6]],
             props: [{ type: 'cannon', at: [12, -3.4], deco: true }, { type: 'cannon', at: [12, 3.4], deco: true }, { type: 'barrel', at: [27.5, 2] }] },
 
-        {   key: 'kraken', name: 'THE KRAKEN', sig: 'hammers', par: 3, tee: [0, 0], cup: [28, -1],
-            tiles: [{ r: [-1.5, -2.5, 30, 2.5], hills: [[24, 1.2, 1.6, 0.2]] }],
+        {   key: 'kraken', name: 'THE KRAKEN', sig: 'hammers or the plank', par: 3, tee: [0, 0], cup: [28, -1],
+            // Through the tentacles' sweep, or along the plank outside the rail,
+            // with nothing but the sea on its far side.
+            tiles: [{ r: [-1.5, -2.5, 30, 2.5], hills: [[24, 1.2, 1.6, 0.2]] },
+                    { r: [5, 2.5, 23, 3.6], kind: 'wood', open: 's' },
+                    { r: [5, 3.6, 23, 5], y: -0.4, kind: 'water', rail: false }],
+            walls: [[6.2, 2.5, 21.8, 2.5]],
             movers: [{ type: 'hammer', x: 8, z: 0, axis: 'z', amp: 1.8, r: 0.5, speed: 1.4 },
                      { type: 'hammer', x: 14, z: 0, axis: 'z', amp: 1.8, r: 0.5, speed: 1.9, phase: 2 },
                      { type: 'hammer', x: 20, z: 0, axis: 'z', amp: 1.8, r: 0.5, speed: 1.2, phase: 4 }],
@@ -252,10 +265,13 @@ const CANDY = {
             bumpers: [[14, -3.6, 0.5], [14, 3.6, 0.5], [18.5, 0, 0.45, 1.2]],
             props: [{ type: 'cupcake', at: [14, 6.4] }, { type: 'lollipop', at: [4, -3] }] },
 
-        {   key: 'plinko', name: 'GUMBALL PLINKO', sig: 'peg board', par: 3, tee: [0, 0], cup: [24, 0.5], rail: 'candy',
-            tiles: [{ r: [-1.5, -2, 4, 2], y: 2.0 }, { r: [4, -4, 20, 4], y: 1.0, slope: [-0.125, 0] }, { r: [20, -4, 27, 4], kind: 'felt' }],
+        {   key: 'plinko', name: 'GUMBALL PLINKO', sig: 'pegs or the gutter', par: 3, tee: [0, 0], cup: [24, 0.5], rail: 'candy',
+            // Drop through the pegs and take your chances, or down the gumball gutter: sure, but it leaves you the far corner.
+            tiles: [{ r: [-1.5, -2, 4, 2], y: 2.0 }, { r: [4, -4, 20, 4], y: 1.0, slope: [-0.125, 0] }, { r: [20, -4, 27, 5.2], kind: 'felt' },
+                    { r: [4, 4, 20, 5.2], y: 1.0, slope: [-0.125, 0], kind: 'ice' }],
+            walls: [[5.2, 4, 18.8, 4]],
             bumpers: (() => { const out = []; for (let row = 0; row < 6; row++) for (let k = 0; k < 5; k++) out.push([7 + row * 2, -3 + k * 1.5 + (row % 2) * 0.75, 0.14, 0, 0.55]); return out; })(),
-            props: [{ type: 'gumballs', at: [2, -2.9] }, { type: 'lollipop', at: [24, 4.7] }] },
+            props: [{ type: 'gumballs', at: [2, -2.9] }, { type: 'lollipop', at: [24, 6.6] }] },
 
         {   key: 'river', name: 'THE CHOCOLATE RIVER', sig: 'current', par: 3, tee: [0, 0], cup: [22, -1.5], rail: 'candy',
             // The current carries you toward the goo. Ride it across — or jump it
@@ -267,8 +283,11 @@ const CANDY = {
                     { r: [13, -3, 24, 3] }],
             props: [{ type: 'cookie', at: [10.5, -7] }, { type: 'cookie', at: [15, 4] }, { type: 'cupcake', at: [24.8, 4] }] },
 
-        {   key: 'donut', name: 'THE DONUT LOOP', sig: 'loop', par: 3, tee: [0, 0], cup: [24, -0.8], rail: 'candy',
-            tiles: [{ r: [-1.5, -1.5, 9, 1.5], y: 0.16, slope: [-0.03, 0] }, { r: [9, -1.5, 26, 1.5], hills: [[19.5, -0.5, 1.3, 0.24]] }],
+        {   key: 'donut', name: 'THE DONUT LOOP', sig: 'loop or the glass lane', par: 3, tee: [0, 0], cup: [24, -0.8], rail: 'candy',
+            // Loop the donut at speed, or take the sugar-glass lane beside it (slick: easy to overcook).
+            tiles: [{ r: [-1.5, -1.5, 9, 1.5], y: 0.16, slope: [-0.03, 0] }, { r: [9, -1.5, 26, 1.5], hills: [[19.5, -0.5, 1.3, 0.24]] },
+                    { r: [9, 1.5, 20, 2.7], kind: 'ice' }, { r: [20, 1.5, 26, 2.7] }],
+            walls: [[10.2, 1.5, 19.8, 1.5]],
             bumpers: [[22, 0.4, 0.14, 0, 0.6], [22.5, -0.3, 0.14, 0, 0.6]],
             loops: [{ a: [9.5, 0], dir: [1, 0], len: 3.5, minV: 6, w: 0.9 }],
             props: [{ type: 'cupcake', at: [3, 2.4] }, { type: 'lollipop', at: [16, -2.4] }] },
@@ -367,8 +386,12 @@ const SPACE = {
             links: [[12, 0, 15, 0]],
             props: [{ type: 'flagpole', at: [3, -4.8], moon: true }, { type: 'satellite', at: [12, 9] }] },
 
-        {   key: 'lasers', name: 'THE LASER GRID', sig: 'lasers', par: 3, tee: [0, 0], cup: [28, -1], rail: 'neon',
-            tiles: [{ r: [-1.5, -2.5, 30, 2.5] }],
+        {   key: 'lasers', name: 'THE LASER GRID', sig: 'lasers or the duct', par: 3, tee: [0, 0], cup: [28, -1], rail: 'neon',
+            tiles: [{ r: [-1.5, -2.5, 30, 2.5] },
+                    { r: [4, 2.5, 24, 3.7], kind: 'metal' }],
+            // Or the service duct alongside: no lasers, but a long way and two vents to dodge.
+            walls: [[5.2, 2.5, 22.8, 2.5]],
+            bumpers: [[10, 3.3, 0.16, 0, 0.6], [16, 2.9, 0.16, 0, 0.6]],
             // Sliding emitters, and two laser fences across the whole corridor that
             // blink on and off: time it.
             movers: [{ type: 'slider', x: 6, z: 0, bar: 'z', axis: 'z', len: 1.6, amp: 1.4, speed: 1.3 },

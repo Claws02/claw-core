@@ -10,7 +10,7 @@
 // planSteps()  is the same as a generator, so the game can spread the work
 //              over a few frames and never stall a phone.
 // ============================================================
-import { simulate, pathLeft, floorAt } from './Physics.js';
+import { simulate, pathLeft, floorAt, tileOffset, SURFACE } from './Physics.js';
 
 /** Score a result: lower is better. `when` is the course time the shot was struck. */
 function _score(c, r, from, when = 0) {
@@ -67,7 +67,8 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
     // best lines again a little later, from where the ball will be by then.
     if (c.dynamic && best.r !== 'cup') {
         const top = res.slice(0, 4);
-        for (const w of [0.8, 1.6, 2.4, 3.2, 4.4, 5.6, 6.8, 8]) {
+        const rafts = c.tiles.filter(tl => tl.move && SURFACE[tl.kind]?.ride);
+        for (const w of [0.8, 1.6, 2.4, 3.2, 4.4, 5.6, 6.8, 8, 9.5, 11]) {
             const at = simulate(c, from, 0, 0, 0, tShot, { maxT: w, minT: w, dt: 1 / 30 });
             if (at.result === 'water' || at.result === 'out') break;
             const pos = { x: at.x, y: at.y, z: at.z };
@@ -75,6 +76,13 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
             for (const tg of targets) {
                 const dir = Math.atan2(tg[1] - pos.z, tg[0] - pos.x), base = Math.min(1, Math.sqrt(Math.hypot(tg[0] - pos.x, tg[1] - pos.z) / 34));
                 for (let i = -2; i <= 2; i++) for (const k of [0.8, 1.1, 1.5]) run(dir + i * 0.08, Math.min(1, base * k), pos, tShot + w, w * 0.3);
+            }
+            // A raft within reach: a soft putt to stop on its deck.
+            for (const tl of rafts) {
+                const o = tileOffset(tl, tShot + w), rx = tl.cx + o.dx, rz = tl.cz + o.dz, dd = Math.hypot(rx - pos.x, rz - pos.z);
+                if (dd > 9) continue;
+                const dir = Math.atan2(rz - pos.z, rx - pos.x);
+                for (let i = -1; i <= 1; i++) for (const k of [0.75, 0.9, 1.05, 1.2]) run(dir + i * 0.05, Math.max(0.06, Math.min(1, Math.sqrt(dd / 34) * k)), pos, tShot + w, w * 0.3);
             }
             yield;
         }

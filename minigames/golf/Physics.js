@@ -62,7 +62,7 @@ export const SURFACE = {
     conveyor:  { roll: 1,    bounce: 0.3,  mu: 0.5, drag: 5 },
     creek:     { roll: 1.3,  bounce: 0.1,  mu: 0.3, drag: 3, splash: true },
     turntable: { roll: 1,    bounce: 0.3,  mu: 0.45, drag: 7 },
-    raft:      { roll: 1.1,  bounce: 0.35, mu: 0.45, drag: 12 },
+    raft:      { roll: 2.0,  bounce: 0.35, mu: 0.5, ride: true },    // a rough deck: rolls like a floor; stopped, it rides   // rolls on the deck like a floor; stopped, it rides
     jelly:     { roll: 1.6,  bounce: 0.88, mu: 0.6 },
     bouncy:    { roll: 1.5,  bounce: 0.75, mu: 0.6 },                   // a bouncy-castle floor
 };
@@ -194,7 +194,8 @@ export function compile(hole) {
         [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]].forEach(([a, b, p, q]) => c.walls.push({ ..._wall(c, a, b, p, q, hh, null, bm), block: true }));
     });
     (hole.bumpers || []).forEach(([x, z, r, kick, e]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, y: floorAt(c, x, z, 9)?.h ?? 0 }));
-    (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32 }));
+    // A cannon's ball lands still going the way it was fired.
+    (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32, dir: p.style === 'cannon' ? [p.b[0] - p.a[0], p.b[1] - p.a[1]] : p.dir }));
     (hole.loops || []).forEach(l => c.loops.push({ ...l, minV: l.minV || 6.5 }));
     const cupF = floorAt(c, hole.cup[0], hole.cup[1], 9);
     c.cup = { x: hole.cup[0], z: hole.cup[1], y: cupF ? cupF.h : 0 };
@@ -415,7 +416,7 @@ export function newBall(x, z, y = 0) {
 /** Hit it: a direction on the floor and a power 0..1. */
 export function strike(b, dx, dz, power) {
     const n = Math.hypot(dx, dz) || 1, v = Math.max(0, Math.min(1, power)) * MAXV;
-    b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false;
+    b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false; b.ride = null;
     b.wx = b.vx * PUTT_ROLL; b.wz = b.vz * PUTT_ROLL;   // off the face skidding, with a little roll
 }
 /** Is the ball skidding (its spin not caught up with its speed)? */
@@ -532,6 +533,16 @@ function _sub(c, b, d, t, movers, others, ev) {
                 return;
             }
             if (f.kind !== 'jelly') b.jelly = false;
+            // Stopped on a raft: it rides, glued to the deck, till it's hit (or hit by a ball).
+            if (b.rest && S.ride && f.tile.move) {
+                const o = tileOffset(f.tile, c._t);
+                if (!b.ride || b.ride.t !== f.tile) b.ride = { t: f.tile, lx: b.x - o.dx, lz: b.z - o.dz };
+                b.x = b.ride.lx + o.dx; b.z = b.ride.lz + o.dz; b.y = f.h;
+                b.vx = b.wx = o.vx; b.vz = b.wz = o.vz; b.vy = 0;
+                _collide(c, b, movers, others, ev);
+                return;
+            }
+            b.ride = null;
             if (b.rest && !f.sv && !f.awake) { _collide(c, b, movers, others, ev); return; }
             const svx = f.sv ? f.sv[0] : 0, svz = f.sv ? f.sv[1] : 0;
             if (b.wx == null) { b.wx = b.vx; b.wz = b.vz; }
@@ -560,7 +571,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             b.vx += ax * d; b.vz += az * d;
             if (!skid) { b.wx += ax * d; b.wz += az * d; }
             // A moving floor drags the ball toward its own speed.
-            if (f.sv) {
+            if (f.sv && !S.ride) {
                 const k = Math.min(1, (S.drag || 5) * d);
                 b.vx += (svx - b.vx) * k; b.vz += (svz - b.vz) * k;
                 b.wx += (svx - b.wx) * k; b.wz += (svz - b.wz) * k;

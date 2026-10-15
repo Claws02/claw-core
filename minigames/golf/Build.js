@@ -165,7 +165,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     }));
     c.tiles.forEach(t => {
         if (t.move || t.lift || t.tilt || t.elev) return;   // drawn by Moving: a raft, a drawbridge, a see-saw, a lift
-        const f = _floor(t, theme); root.add(f);
+        const f = _floor(t, theme); f.userData.floor = true; root.add(f);   // (floor: never faded out of the camera's way)
         if (f.userData.lava) live.lava.push(f.userData.lava);
         if (t.kick) { const k = Toy.kickerLip(t, theme); k.g.position.y = tileHeight(t, ...k.at); root.add(k.g); }
         if (f.userData.water && t.kind !== 'puddle') {
@@ -181,7 +181,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
                 rp.userData.ph = i / 3; root.add(rp); live.ripples.push(rp);
             }
         }
-        root.add(_skirts(t, edgeMat));
+        const sk = _skirts(t, edgeMat); sk.userData.floor = true; root.add(sk);
     });
     // Rails, rounded, and a post wherever rails meet or end.
     const mats = { rail: Toy.mat(theme.rail, { roughness: 0.5 }), cap: Toy.mat(theme.accent, { roughness: 0.35 }), railDark: Toy.mat(0x1f2937, { metalness: 0.5, roughness: 0.35 }) };
@@ -375,7 +375,8 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             cannons.forEach(k => {
                 const u = k.o.userData;
                 if (u.recoil > 0) { u.recoil = Math.max(0, u.recoil - dt * 2.2); }
-                u.barrel.position.x = u.barrelX - Math.sin(Math.min(1, u.recoil) * Math.PI) * 0.35;
+                // (recoil starts unset: NaN here would hide the barrel till the first shot)
+                u.barrel.position.x = u.barrelX - Math.sin(Math.min(1, u.recoil || 0) * Math.PI) * 0.35;
             });
             hoses.forEach(h => {
                 if (!h.mesh) return;

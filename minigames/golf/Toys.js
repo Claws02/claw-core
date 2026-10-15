@@ -443,7 +443,7 @@ export function cannon() {
     b.rotation.z = -Math.PI / 2 + 0.4; b.position.set(0.25, 0.55, 0);
     g.add(b);
     // For the firing: the barrel kicks back, the ball leaves from the tip.
-    g.userData.barrel = b; g.userData.barrelX = b.position.x;
+    g.userData.barrel = b; g.userData.barrelX = b.position.x; g.userData.recoil = 0;
     g.userData.muzzle = () => { g.updateMatrixWorld(true); return tip.getWorldPosition(new THREE.Vector3()); };
     const cart = rbox(1.0, 0.32, 0.62, 0.06, mat(0x7a4a1e)); cart.position.set(0.55, 0.3, 0); g.add(cart);
     [-0.36, 0.36].forEach(z => [0.2, 0.9].forEach(x => {
