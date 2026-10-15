@@ -220,18 +220,18 @@ const PIRATE = {
                      { type: 'hammer', x: 20, z: 0, axis: 'z', amp: 1.8, r: 0.5, speed: 1.2, phase: 4 }],
             props: [{ type: 'kraken', at: [14, -4.2] }] },
 
-        {   key: 'crowsnest', name: 'THE CROW\'S NEST', sig: 'lift', par: 4, tee: [0, 0], cup: [21, 0],
+        {   key: 'crowsnest', name: 'THE CROW\'S NEST', sig: 'lift', par: 4, tee: [0, 0], cup: [22, 0],
             // Up the mast in the cargo lift. Its doors open only when it's level:
             // in at the bottom, ride it up, out at the top onto the nest.
             tiles: [{ r: [-1.5, -3, 14, 3], kind: 'wood' },
-                    { r: [14, -1.2, 16.4, 1.2], kind: 'wood', elev: { amp: 2, period: 8 } },
-                    { r: [16.4, -3, 24, 3], y: 2, hills: [[21, 0, 1.4, -0.08]] }],
-            movers: [{ type: 'liftgate', x: 14, z: 0, axis: 'z', w: 1.2, tile: 1, at: 'bottom' },
-                     { type: 'liftgate', x: 16.4, z: 0, axis: 'z', w: 1.2, tile: 1, at: 'top' }],
+                    { r: [14, -1.4, 17.4, 1.4], kind: 'wood', elev: { amp: 2, period: 9 } },
+                    { r: [17.4, -3, 25, 3], y: 2, hills: [[22, 0, 1.4, -0.08]] }],
+            movers: [{ type: 'liftgate', x: 14, z: 0, axis: 'z', w: 1.4, tile: 1, at: 'bottom' },
+                     { type: 'liftgate', x: 17.4, z: 0, axis: 'z', w: 1.4, tile: 1, at: 'top' }],
             bumpers: [[9, -1.5, 0.35, 0.6], [9, 1.5, 0.35, 0.6]],
-            links: [[14, 0, 17.2, 0]],
-            path: [[14.8, 0]],
-            props: [{ type: 'mast', at: [6, -4.2] }, { type: 'barrel', at: [2, 3.6] }, { type: 'chest', at: [25.5, 2] }] },
+            links: [[14, 0, 18.2, 0]],
+            path: [[15.7, 0]],
+            props: [{ type: 'mast', at: [6, -4.2] }, { type: 'barrel', at: [2, 3.6] }, { type: 'chest', at: [26.5, 2] }] },
     ],
 };
 

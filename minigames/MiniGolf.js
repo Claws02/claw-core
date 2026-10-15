@@ -965,9 +965,10 @@ function _play(dt, pdt = dt) {
             const d = [..._drag.values()].find(x => x.slot === b.slot);
             if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL * 2) _drawKit(b.slot, a); else _hideKit(b.slot); }
             if (b.clock >= CLOCK_CHAOS) {
-                const pl = plan(_c, b.p, _pt, 0.15);
+                // Out of time: the same fair putt as in turns — a stroke, not a hole that never ends.
+                const pl = plan(_c, b.p, _pt, 0.35);
                 [..._drag.entries()].forEach(([id, x]) => { if (x.slot === b.slot) _drag.delete(id); });
-                _shoot(b.slot, pl.dx, pl.dz, pl.power * 0.5);
+                _shoot(b.slot, pl.dx, pl.dz, pl.power * 0.85);
                 _say2Show(`TIME! · ${seat(b.slot).name}`, '#fca5a5');
             }
         });
