@@ -490,6 +490,27 @@ function _fields(c, b, d) {
     }
 }
 
+/**
+ * Every tile is solid down to the ground (that's how it's drawn): a ball moving
+ * from (ox, oz) into one whose floor is above it by more than it can climb hits
+ * its side and bounces back off it. True if it did.
+ */
+function _face(c, b, ox, oz, nx, nz, climb, ev) {
+    for (const t of c.tiles) {
+        if (t.move || t.lift || HAZARD[t.kind] || !_inTile(t, nx, nz) || _inTile(t, ox, oz)) continue;
+        if (_tileH(t, nx, nz, c._t) <= b.y + climb) continue;
+        const v = Math.hypot(b.vx, b.vz);
+        let hit = false;
+        if (ox < t.x0 || ox > t.x1) { b.vx *= -0.45; hit = true; }
+        if (oz < t.z0 || oz > t.z1) { b.vz *= -0.45; hit = true; }
+        if (!hit) continue;
+        b.x = ox; b.z = oz;
+        if (v > 0.6) ev.push({ type: 'wall', v: v * 0.5, mat: 'wood', at: [b.x, b.y, b.z] });
+        return true;
+    }
+    return false;
+}
+
 function _sub(c, b, d, t, movers, others, ev) {
     b._d = d;
     const cupD = Math.hypot(b.x - c.cup.x, b.z - c.cup.z);
@@ -498,6 +519,8 @@ function _sub(c, b, d, t, movers, others, ev) {
         const y0 = b.y;
         b.vy -= c.G * d;
         b.x += b.vx * d; b.y += b.vy * d; b.z += b.vz * d;
+        // Flying into the side of something higher (a deck, a ledge, a kicker): it bounces off the face.
+        _face(c, b, b.x - b.vx * d, b.z - b.vz * d, b.x, b.z, 0.15, ev);
         const over = Math.hypot(b.x - c.cup.x, b.z - c.cup.z) < CUP_R;
         // (From above: a ball falling past far below the green never finds the cup.)
         if (over && b.y < c.cup.y + 0.02 && y0 > c.cup.y - CUP_DEPTH - 0.3) {
@@ -587,6 +610,8 @@ function _sub(c, b, d, t, movers, others, ev) {
                 if (!skid) { b.wx = b.vx; b.wz = b.vz; }
             }
             const vyOld = b.vx * f.gx + b.vz * f.gz;
+            // Rolling into the side of a deck, a catwalk or a ramp's end overhead: off the face.
+            if (_face(c, b, b.x, b.z, b.x + b.vx * d, b.z + b.vz * d, STEP_UP + 0.05, ev)) { _collide(c, b, movers, others, ev); return; }
             const nx = b.x + b.vx * d, nz = b.z + b.vz * d;
             const yPred = b.y + vyOld * d;
             const nd = Math.hypot(nx - c.cup.x, nz - c.cup.z);

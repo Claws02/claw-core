@@ -98,14 +98,22 @@ const BACKYARD = {
             movers: [{ type: 'windmill', x: 13, z: 0, axis: 'z', w: 0.55, speed: 1.4 }],
             props: [{ type: 'flowers', at: [6, 3.2] }, { type: 'flowers', at: [24, -5.2] }, { type: 'tree', at: [17, 6] }] },
 
-        {   key: 'skate', name: 'THE SKATE PARK', sig: 'half-pipe', par: 4, tee: [0, 0], cup: [16, 22.5],
-            // Two half-pipes round the corner, into the bowl.
-            tiles: [{ r: [-1.5, -2, 14, 2], trough: { axis: 'x', h: 0.9, flat: 0.25 } },
-                    { r: [14, -2, 18, 6] },
-                    { r: [14, 6, 18, 20], trough: { axis: 'z', h: 0.9, flat: 0.25 } },
-                    { r: [12, 20, 20, 25], kind: 'felt', hills: [[16, 22.5, 3.4, -0.3]] }],
-            path: [[16, 0], [16, 6]],
-            props: [{ type: 'flag', at: [10, 2.6] }, { type: 'tree', at: [9, 12] }, { type: 'flowers', at: [21, 10] }] },
+        {   key: 'skate', name: 'THE SKATE PARK', sig: 'drop in, gap it, or go round', par: 4, tee: [0, 0], cup: [24.6, -2.7],
+            // Three levels: the street, the bowl sunk below it, and the deck up top with the cup.
+            //   · drop in to the bowl and hit the quarter-pipe hard enough to ride it up onto the deck;
+            //   · or launch off the kicker at the street's edge and gap the whole bowl;
+            //   · or the long way: down the side street and up the ramp to the deck's back corner.
+            tiles: [{ r: [-1.5, -3, 9, 3], kind: 'metal', open: 'e' },
+                    kick(9, -1, 11, 1, 'e', 0, 0.7),
+                    { r: [9, -3, 17, 3], y: -0.6, kind: 'metal', trough: { axis: 'x', h: 0.4, flat: 0.45 }, open: 'w' },
+                    { r: [17, -1.5, 21, 1.5], y: 0.4, slope: [0.5, 0], kind: 'wood' },
+                    { r: [5, 3, 21, 5], kind: 'metal' },
+                    { r: [21, 3, 26, 5], y: 0.7, slope: [0.28, 0], kind: 'wood' },
+                    { r: [26, 3, 28, 5], y: 1.4, kind: 'felt' },
+                    { r: [21, -4, 28, 3], y: 1.4, kind: 'felt', hills: [[24.6, -2.7, 1.2, -0.06]] }],
+            path: [[19, 0], [21.5, 0]],
+            links: [[11, 0, 21.4, 0]],
+            props: [{ type: 'flag', at: [3, -3.8] }, { type: 'tree', at: [12, 8] }, { type: 'flowers', at: [24, -5] }] },
 
         {   key: 'castle', name: 'THE BOUNCY CASTLE', sig: 'bouncy castle', par: 3, tee: [0, 0], cup: [19.5, 0],
             // Everything gives: the castle's walls throw the ball back hard, the
@@ -435,15 +443,20 @@ const SPACE = {
             path: [[16, 0]],
             props: [{ type: 'beacon', at: [6.5, 2.7] }, { type: 'beacon', at: [18.7, 7.5] }] },
 
-        {   key: 'cargo', name: 'THE CARGO BAY', sig: 'conveyor belts', par: 5, tee: [0, 0], cup: [24.5, -3], rail: 'neon', blockMat: 'metal',
+        {   key: 'cargo', name: 'THE CARGO BAY', sig: 'belts or the catwalk', par: 5, tee: [0, 0], cup: [24.5, -3], rail: 'neon', blockMat: 'metal',
             tiles: [{ r: [-1.5, -6, 6, 6] },
                     { r: [6, -6, 9, 6], kind: 'conveyor', flow: [0, 3] },
                     { r: [9, -6, 12, 6] },
                     { r: [12, -6, 15, 6], kind: 'conveyor', flow: [0, -3.5] },
                     { r: [15, -6, 18, 6] },
                     { r: [18, -6, 21, 6], kind: 'conveyor', flow: [0, 2.5] },
-                    { r: [21, -6, 27, 6] }],
-            blocks: [[10, 3, 11, 4, 0.6], [16, -4, 17, -3, 0.6], [22.5, 1, 23.5, 2, 0.6]],
+                    { r: [21, -6, 27, 6] },
+            // Upstairs: a catwalk over the belts — up the ramp, along, down the far stairs by the cup.
+            // No rail on the belt side: fall off and you're back down among the crates.
+                    { r: [2, -5.8, 6, -4.6], y: 0.8, slope: [0.4, 0], kind: 'metal' },
+                    { r: [6, -5.8, 21, -4.6], y: 1.6, kind: 'metal', open: 's' },
+                    { r: [21, -5.8, 24, -4.6], y: 0.8, slope: [-0.5333, 0], kind: 'metal' }],
+            blocks: [[10, 3, 11, 4, 0.6], [16, -3.6, 17, -2.6, 0.6], [22.5, 1, 23.5, 2, 0.6]],
             props: [{ type: 'crate', at: [3, 6.8] }, { type: 'crate', at: [25, 6.8] }] },
 
         {   key: 'wind', name: 'THE SOLAR WIND', sig: 'fans', par: 4, tee: [0, 0], cup: [28, 2], rail: 'neon',
@@ -465,12 +478,19 @@ const OPENINGS = {
     candy:    { kind: undefined, prop: 'cane', styles: [['ledge', 2.0], ['slide', 2.4], ['ledge', 1.6], ['slide', 2.0]] },
     space:    { kind: 'metal', prop: 'beacon', styles: [['jump', 1.0], ['ledge', 1.4], ['jump', 0.8], ['jump', 1.2]] },
 };
-const NO_OPENING = new Set(['plinko', 'rockery']);   // these start high already
-function _opening(h, course, i) {
+// Only some holes start high — where the way down is part of the hole's idea.
+const OPENING_ON = {
+    gardenpath: 'ledge', pool: 'ramp', castle: 'ledge',
+    plank: 'jump', skull: 'jump', kraken: 'plank',
+    rink: 'ledge', mountain: 'slide', tower: 'ledge',
+    belt: 'jump', moon: 'jump', wind: 'jump',
+};
+function _opening(h, course) {
     const O = OPENINGS[course], X = -1.5;
     const t0 = h.tiles.find(t => t.r[0] === X && t.r[1] <= h.tee[1] && t.r[3] >= h.tee[1] && !t.y && !t.slope && !t.move && !t.tilt && !t.elev);
-    if (!O || !t0 || NO_OPENING.has(h.key) || h.tee[0] !== 0) return h;
-    const [style, H] = O.styles[i % O.styles.length];
+    const style = OPENING_ON[h.key];
+    if (!O || !t0 || !style || h.tee[0] !== 0) return h;
+    const H = (O.styles.find(([st]) => st === style) || O.styles[0])[1];
     const za = Math.max(t0.r[1], -2.5), zb = Math.min(t0.r[3], 2.5);
     const kind = O.kind, tiles = h.tiles.map(t => t === t0 && style !== 'ramp' && style !== 'slide' && style !== 'plank' ? { ...t, open: (t.open || '') + 'w' } : t);
     const links = [...(h.links || [])];
@@ -507,7 +527,7 @@ function _opening(h, course, i) {
     return { ...h, tee: [teeX, 0], tiles: [...add, ...tiles], links, props, ...(movers ? { movers } : {}), opening: style };
 }
 
-export const COURSES = [BACKYARD, PIRATE, CANDY, SPACE].map(c => ({ ...c, holes: c.holes.map((h, i) => _opening(h, c.key, i)) }));
+export const COURSES = [BACKYARD, PIRATE, CANDY, SPACE].map(c => ({ ...c, holes: c.holes.map(h => _opening(h, c.key)) }));
 
 /**
  * Trick shots: one ball from a set spot, three goes. In if it stops in the box
