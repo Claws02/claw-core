@@ -79,6 +79,9 @@ export const COURSE_LIST = COURSES.map(c => ({ key: c.key, name: c.name, blurb: 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _gfx = null;   // the hole's atmosphere and sparks (golf/Fx.js)
+// Which round this is. Anything that fires later (a timer, the outro's onDone)
+// checks it: a round that's been force-ended must not reach into the next one.
+let _gen = 0;
 // A trick-shot challenge (configure({ challenge })): one hole, one ball, from a
 // set spot; sink it in one, with `tries` goes at it. { id, key, from, tries, name }.
 let _chal = null;
@@ -103,6 +106,7 @@ const _limit = h => h.par + 3;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
+    _gen++;
     // Solo (the Mini Golf mode only): one ball against par, played like turns.
     _n = Solo.isSolo() ? 1 : Math.max(1, Math.min(4, slotCount()));
     _mode = _n === 1 ? 'turns' : _cfg.round ? (_cfg.mode === 'chaos' ? 'chaos' : 'turns') : 'chaos';
@@ -146,12 +150,13 @@ export function start(isBot, onWin, botSkill = 0.55) {
     // The first hole is built under the opening shot.
     _loadHole(0);
     const B = _c.bounds;
+    const g0 = _gen;
     _dir.open({
         place: `${_courseName} · MINI GOLF`, title: 'MINI GOLF',
         sub: `${_list.length} HOLE${_list.length > 1 ? 'S' : ''} · ${_n === 1 ? 'SOLO' : _mode === 'turns' ? 'TAKE TURNS' : 'CHAOS — ALL AT ONCE'} · PAR ${_list.reduce((a, h) => a + h.hole.par, 0)}`,
         from: { pos: [(B.x0 + B.x1) / 2 - 14, 16, (B.z0 + B.z1) / 2 + 18], look: [(B.x0 + B.x1) / 2, 0, (B.z0 + B.z1) / 2] },
         to: _fitCam(),
-        onDone: () => { if (_done) return; _phase = 'play'; _beginHole(); },
+        onDone: () => { if (_done || g0 !== _gen) return; _phase = 'play'; _beginHole(); },
     });
     _stage.start(_frame);
 }
@@ -1353,10 +1358,11 @@ function _chalEnd(ok) {
     _last.holed = !!holed;
     _hud.say(ok ? (holed ? 'HOLED IT!' : tries === 1 ? 'FIRST TIME!' : 'NAILED IT!') : 'NOT THIS TIME', ok ? '★'.repeat(stars) + '☆'.repeat(3 - stars) : `${_chal.tries} GOES`, 0, _t, ok ? '#fde047' : '#fca5a5');
     if (ok) sfx('ace'); else sfx('land_bad');
+    const g = _gen;
     setTimeout(() => {
-        if (_done || !_dir) return;
+        if (_done || !_dir || g !== _gen) return;
         _hud.say('');
-        _dir.close({ winner: ok ? 0 : -1, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub: ok ? `SUNK IN ${tries}` : 'TRY AGAIN?', onDone: () => _finish(ok ? 0 : -1, [ok ? 1 : 0]) });
+        _dir.close({ winner: ok ? 0 : -1, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub: ok ? `SUNK IN ${tries}` : 'TRY AGAIN?', onDone: () => { if (g === _gen) _finish(ok ? 0 : -1, [ok ? 1 : 0]); } });
     }, _forceHoles ? 300 : 2200);
 }
 
@@ -1389,10 +1395,11 @@ function _end() {
         aces: _seats().map(s => _strokes[s].filter(n => n === 1).length),
     };
     _showCard(true, true);
+    const g = _gen;
     setTimeout(() => {
-        if (_done || !_dir) return;
+        if (_done || !_dir || g !== _gen) return;
         _showCard(false);
-        _dir.close({ winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub, onDone: () => _finish(w, rank) });
+        _dir.close({ winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub, onDone: () => { if (g === _gen) _finish(w, rank); } });
     }, _forceHoles ? 400 : 3200);
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = _n === 1 ? `${_fmt(tot[w] - par)} ON PAR` : w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
