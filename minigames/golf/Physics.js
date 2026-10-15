@@ -110,7 +110,8 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *   hole.movers [{ type: 'windmill'|'sweeper'|'slider'|'gate'|'hammer', ... }]
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
  *   hole.magnets [{ x, z, r, k }]
- *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max? }]  (max: uses per shot)
+ *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max?, stop? }]  (max: uses per shot;
+ *                  stop: it sets the ball down at b, at rest — the shot ends there)
  *   hole.loops  [{ a, dir, len, minV?, b?, style? }]  (style 'corkscrew' with b: a spiral down to b)
  *   hole.mines  [[x, z, r?, power?]]
  *   hole.gravity  a multiplier; hole.links: extra [x1, z1, x2, z2] the path field may jump
@@ -441,6 +442,8 @@ export function step(c, b, dt, t, others = null, ev = []) {
             const n = Math.hypot(p.dir[0], p.dir[1]) || 1;
             const f = floorAt(c, p.b[0], p.b[1], 99);   // (from any height: a drop can start high)
             Object.assign(b, { x: p.b[0], z: p.b[1], y: f ? f.h : 0, vx: p.dir[0] / n * sp, vz: p.dir[1] / n * sp, vy: 0, air: false, pipe: null, rest: false });
+            // A stop pipe (plinko's) puts it down at the far end and that's the shot over.
+            if (p.stop) Object.assign(b, { vx: 0, vz: 0, rest: true });
             b.wx = b.vx; b.wz = b.vz;
             ev.push({ type: 'pipeout', p });
         }
@@ -867,6 +870,20 @@ function _collide(c, b, movers, others, ev) {
  * and what happened: { x, y, z, result: 'rest'|'cup'|'water'|'out'|'time'|'cut'|'pipe',
  * pts (every `every` s), bounces, t }.
  */
+/**
+ * Places a ball can't be left: a current that would carry it off the course as
+ * soon as it's struck again (or a tile marked norest). A ball that stops on one
+ * goes back to where its shot was played from — so where you play from is
+ * always somewhere you can play from.
+ */
+export function noRest(c, x, z, y) {
+    const f = floorAt(c, x, z, y + 0.05, 0.1);
+    if (!f) return false;
+    const t = f.tile;
+    // A current with an open (rail-less) side runs out into something; a walled-in belt just pins it.
+    return !!(t.norest || HAZARD[f.kind] || (t.flow && (t.kind === 'creek' || (t.open && t.open.length))));
+}
+
 export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
     const b = { ...newBall(from.x, from.z, from.y), sunk: false };
     if (power > 0) strike(b, dx, dz, power);
@@ -889,8 +906,9 @@ export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
         if (result !== 'time') break;
         if (b.pipe || b.loop) { if (pts) pts.push([b.x, b.y, b.z]); if (opts.stopAtPipe) { result = 'pipe'; break; } }
         if (b.rest && !b.pipe && !b.loop && t >= (opts.minT || 0)) {
-            // Resting on a moving floor still moves: call it rest anyway, it's the player's turn.
-            result = 'rest'; break;
+            // Resting on a moving floor still moves: call it rest anyway, it's the player's turn
+            // — unless it's somewhere that can't be played from, which sends it back.
+            result = power > 0 && noRest(c, b.x, b.z, b.y) ? 'norest' : 'rest'; break;
         }
         if (opts.stopAfter && travelled >= opts.stopAfter) { result = 'cut'; break; }
         if (opts.bounces != null && bounces > opts.bounces) { result = 'cut'; break; }

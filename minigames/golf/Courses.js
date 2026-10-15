@@ -279,7 +279,7 @@ const CANDY = {
             // Tip it off the top shelf and down the long board through a forest of
             // gumdrop pegs. Every peg knocks it a little off true: where it lands
             // is anyone's guess. Five slots at the bottom — the middle one has the
-            // cup, the two beside it send you back up to the top to drop again (once a shot),
+            // cup, the two beside it put you back up on the top shelf to play it again,
             // and the rest run on into the tray behind, leaving a putt to the cup.
             tiles: [{ r: [-1.5, -2.5, 4, 2.5], y: 12.39 },
                     { r: [4, -5, 30, 5], y: 6.54, slope: [-0.45, 0], kind: 'ice' },
@@ -296,9 +296,9 @@ const CANDY = {
             // The slots: short dividers, then a common tray behind them that runs down to the cup.
             walls: [[30.3, -2.6, 32.4, -2.6, 0.5], [30.3, -1, 32.4, -1, 0.5], [30.3, 1, 32.4, 1, 0.5], [30.3, 2.6, 32.4, 2.6, 0.5],
                     [31.6, -2.6, 31.6, -1, 0.5], [31.6, 1, 31.6, 2.6, 0.5]],
-            rollMax: 45,
-            pipes: [{ a: [31.0, -1.8], b: [5.3, -1.7], dir: [1, 0], r: 0.7, delay: 0.7, out: 1.2, style: 'teleport', max: 1 },
-                    { a: [31.0, 1.8], b: [5.3, 1.7], dir: [1, 0], r: 0.7, delay: 0.7, out: 1.2, style: 'teleport', max: 1 }],
+            rollMax: 25,
+            pipes: [{ a: [31.0, -1.8], b: [1.2, -1.4], dir: [1, 0], r: 0.7, delay: 0.7, out: 0, style: 'teleport', stop: true },
+                    { a: [31.0, 1.8], b: [1.2, 1.4], dir: [1, 0], r: 0.7, delay: 0.7, out: 0, style: 'teleport', stop: true }],
             path: [[5, 0], [30, 0], [31, 0]],
             props: [{ type: 'gumballs', at: [1.5, -3.6] }, { type: 'lollipop', at: [33, 6.4] }, { type: 'lollipop', at: [33, -6.4] }] },
 

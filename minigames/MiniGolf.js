@@ -791,6 +791,16 @@ function _pickUp(b) {
     sfx('land_bad');
     _hud.say('PICKED UP', `${seat(b.slot).name} · ${_limit(h) + 1}`, 1100, _t, '#fca5a5');
 }
+/** A ball that's stopped where it can't be played from (on a current, a belt): back to where it was played from, no stroke. */
+function _noRestBack(b) {
+    if (!P.noRest(_c, b.p.x, b.p.z, b.p.y)) return;
+    const f = b.from || { x: _c.tee.x, y: _c.tee.y, z: _c.tee.z };
+    b.p = P.newBall(f.x, f.z, f.y);
+    if (b.trailPts) b.trailPts = [];
+    sfx('land_bad');
+    _say2Show("CAN'T STOP THERE · BACK YOU GO", '#fde68a', 1300);
+}
+
 function _penalty(b, kind) {
     const mine = b.slot === _shooter || _mode === 'chaos';
     if (mine && !_chal) _strokes[b.slot][_hole]++;   // a trick shot's miss is just a miss
@@ -868,6 +878,7 @@ function _event(b, e) {
                 _say2Show('FIRE!', '#fca5a5', 800);
             } else if (st === 'teleport') {
                 sfx('swap');
+                if (e.p.stop) _say2Show('BACK TO THE TOP · SHOOT AGAIN', '#c4b5fd', 1500);
                 if (gl) { _fx.burst(at(0.3), _theme?.pipe ?? 0xa855f7, 0.5, 0.35); _fx.burst(new THREE.Vector3(e.p.b[0], _floorY(e.p.b[0], e.p.b[1]) + 0.3, e.p.b[1]), _theme?.pipe ?? 0xa855f7, 0.5, 0.5); }
             } else sfx('swap');
             break;
@@ -999,6 +1010,7 @@ function _play(dt, pdt = dt) {
         // Stopped.
         if (!b.done && b.p.rest && !was && b.state === 'roll') {
             b.state = _mode === 'chaos' ? 'aim' : 'wait'; b.clock = 0;
+            _noRestBack(b);
             b.from = { x: b.p.x, y: b.p.y, z: b.p.z };
             if (_strokes[b.slot][_hole] >= _limit(h)) _pickUp(b);
         }
@@ -1007,7 +1019,7 @@ function _play(dt, pdt = dt) {
     if (_mode === 'turns' && _turnState === 'roll') {
         const moving = _balls.some(b => b.on && !b.done && (!b.p.rest || b.p.pipe || b.p.loop));
         if (!moving) {
-            _balls.forEach(b => { if (b.on && !b.done) { b.from = { x: b.p.x, y: b.p.y, z: b.p.z }; if (b.state === 'roll') b.state = 'wait'; } });
+            _balls.forEach(b => { if (b.on && !b.done) { _noRestBack(b); b.from = { x: b.p.x, y: b.p.y, z: b.p.z }; if (b.state === 'roll') b.state = 'wait'; } });
             _turnState = 'next'; _turnT = 0;
         }
     }

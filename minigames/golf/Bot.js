@@ -15,7 +15,7 @@ import { simulate, pathLeft, floorAt, tileOffset, SURFACE } from './Physics.js';
 /** Score a result: lower is better. `when` is the course time the shot was struck. */
 function _score(c, r, from, when = 0) {
     if (r.result === 'cup') return -1000 + r.t;
-    if (r.result === 'water' || r.result === 'out') return pathLeft(c, from.x, from.z) + 10;
+    if (r.result === 'water' || r.result === 'out' || r.result === 'norest') return pathLeft(c, from.x, from.z) + 10;
     let s = pathLeft(c, r.x, r.z);
     // Resting on something that moves (a raft): it's worth the best place it rides to.
     const f = floorAt(c, r.x, r.z, r.y + 0.05, 0.1, when + r.t);
