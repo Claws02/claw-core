@@ -167,7 +167,7 @@ const PIRATE = {
         {   key: 'raft', name: 'THE TREASURE RAFT', sig: 'moving raft', par: 5, tee: [0, 0], cup: [27, -1],
             tiles: [{ r: [-1.5, -2, 8, 2], open: 'e' },
                     { r: [8, -4, 20, 4], y: -0.35, kind: 'water', rail: false },
-                    { r: [12, -1.4, 16, 1.4], kind: 'raft', move: { axis: 'x', amp: 4, speed: 0.45, phase: -1.5708 } },
+                    { r: [12.5, -1.1, 15.5, 1.1], kind: 'raft', move: { axis: 'x', amp: 4.5, speed: 0.55, phase: -1.5708 } },
                     { r: [20, -3, 30, 3], open: 'w' }],
             links: [[8, 0, 20, 0]],
             props: [{ type: 'chest', at: [31.2, 2] }, { type: 'palm', at: [25, -4.4] }, { type: 'barrel', at: [6, 2.7] }] },
@@ -180,12 +180,12 @@ const PIRATE = {
             path: [[9, 0], [15.5, 8]],
             props: [{ type: 'cannon', at: [9, 0], to: [15.5, 8] }, { type: 'flagpole', at: [25, 13] }, { type: 'fort', at: [19, 12.6] }] },
 
-        {   key: 'wheel', name: 'THE SHIP\'S WHEEL', sig: 'turntable', par: 4, tee: [0, 0], cup: [23.5, 1.2],
-            // Across the spinning wheel and up onto the quarterdeck.
+        {   key: 'wheel', name: 'THE SHIP\'S WHEEL', sig: 'turntable', par: 3, tee: [0, 0], cup: [23.5, 1.2],
+            // Across the spinning wheel to the quarterdeck: it carries the ball round as it crosses.
             tiles: [{ r: [-1.5, -3, 8, 3], kind: 'wood' },
                     { r: [8, -4, 16, 4], kind: 'wood', spin: 0.75 },
-                    { r: [16, -3, 20, 3], y: 0.2, slope: [0.1, 0], kind: 'wood' },
-                    { r: [20, -3, 26, 3], y: 0.4 }],
+                    { r: [16, -3, 20, 3], kind: 'wood' },
+                    { r: [20, -3, 26, 3], hills: [[23.5, 1.2, 1.4, -0.08]] }],
             props: [{ type: 'mast', at: [12, -5.2] }, { type: 'barrel', at: [20, 3.7] }] },
 
         {   key: 'skull', name: 'SKULL CAVE', sig: 'cave', par: 3, tee: [0, 0], cup: [28, 0.5],
@@ -220,7 +220,7 @@ const PIRATE = {
                      { type: 'hammer', x: 20, z: 0, axis: 'z', amp: 1.8, r: 0.5, speed: 1.2, phase: 4 }],
             props: [{ type: 'kraken', at: [14, -4.2] }] },
 
-        {   key: 'crowsnest', name: 'THE CROW\'S NEST', sig: 'lift', par: 3, tee: [0, 0], cup: [21, 0],
+        {   key: 'crowsnest', name: 'THE CROW\'S NEST', sig: 'lift', par: 4, tee: [0, 0], cup: [21, 0],
             // Up the mast in the cargo lift. Its doors open only when it's level:
             // in at the bottom, ride it up, out at the top onto the nest.
             tiles: [{ r: [-1.5, -3, 14, 3], kind: 'wood' },
@@ -296,7 +296,7 @@ const CANDY = {
             // The cup sits in the middle of a turning ring of candy baffles. Time
             // the gap, or bank in off the walls.
             tiles: [{ r: [-1.5, -2, 10, 2] }, { r: [10, -5, 22, 5], hills: [[16, 0, 1.0, -0.06]] }],
-            movers: [{ type: 'sweeper', x: 16, z: 0, r0: 1.2, len: 2.6, arms: 7, speed: 1.0, mat: 'candy' }],
+            movers: [{ type: 'sweeper', x: 16, z: 0, r0: 1.2, len: 2.6, arms: 6, speed: 0.9, mat: 'candy' }],
             bumpers: [[11.5, -3.6, 0.4], [11.5, 3.6, 0.4], [20.6, -3.6, 0.4], [20.6, 3.6, 0.4]],
             props: [{ type: 'lollipop', at: [5, 3] }, { type: 'gumdrop', at: [23, -5.8] }, { type: 'cupcake', at: [23.3, 5.6] }] },
 
@@ -349,7 +349,7 @@ const SPACE = {
             path: [[6.5, -1.8], [13.5, -6], [23, -3]],
             props: [{ type: 'crystal', at: [10, 0] }] },
 
-        {   key: 'belt', name: 'THE MINEFIELD', sig: 'space mines', par: 4, tee: [0, 0], cup: [24, 0], rail: 'neon',
+        {   key: 'belt', name: 'THE MINEFIELD', sig: 'space mines', par: 3, tee: [0, 0], cup: [24, 0], rail: 'neon',
             // Asteroids to bank off, mines in the gaps between them.
             tiles: [{ r: [-1.5, -5, 26, 5], open: 'n' }],
             bumpers: [[5, 1.6, 0.55], [7.5, -1.8, 0.5], [9.5, 2.6, 0.6], [11, -0.2, 0.55], [13.5, -3, 0.5], [14.5, 2, 0.5], [17, -1, 0.6], [19, 3, 0.45], [20.5, -2.6, 0.5]],

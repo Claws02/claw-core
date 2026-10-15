@@ -30,6 +30,7 @@ import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
 import { registerMinigameCleanup, isBotSlot as _botSlot, slotCount, extendWatchdog } from './MinigameManager.js';
 import * as Solo from './SoloArena.js';
+import * as GolfFx from './golf/Fx.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, uprightHud, effects } from '../engine/StageKit.js';
@@ -75,6 +76,7 @@ export const COURSE_LIST = COURSES.map(c => ({ key: c.key, name: c.name, blurb: 
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
+let _gfx = null;   // the hole's atmosphere and sparks (golf/Fx.js)
 // The physics clock (it runs slow near the cup), a camera shake, and the hole-in-one show.
 let _pt = 0, _slow = 1, _shake = 0, _ace = null;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _fx = null, _lights = null;
@@ -174,6 +176,7 @@ function _destroy() {
     delete MG_ORIENTATION_OVERRIDE.minigolf;   // the next golf is a party's (chaos) unless the mode says otherwise
 
     _built?.dispose?.(); _built = null; _pass = null;
+    _gfx?.dispose?.(); _gfx = null;
     if (_stage) { _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _balls = []; _figs = []; _kits = []; _dir = null; _hud = null; _fx = null; _ui = null; _card = null; _say2 = null; _c = null; _lights = null;
@@ -393,13 +396,18 @@ function _loadHole(i) {
     }
     if (_stage?.gl) {
         _built?.dispose(); _built = buildHole(_stage, _c, _theme, i + 1);
+        _gfx?.dispose(); _gfx = null;
         const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
         if (_lights) {
             const span = Math.max(B.x1 - B.x0, B.z1 - B.z0) / 2 + 4;
             const sc = _lights.key.shadow.camera;
             sc.left = -span; sc.right = span; sc.top = span; sc.bottom = -span; sc.updateProjectionMatrix();
             _lights.key.position.set(cx - 9, 16, cz + 11); _lights.key.target.position.set(cx, 0, cz);
+            // Each hole starts from the course's own light; the last third of a round is golden hour.
+            if (!_lights.base) _lights.base = { key: _lights.key.color.getHex(), ki: _lights.key.intensity, hemi: _lights.hemi.color.getHex() };
+            _lights.key.color.setHex(_lights.base.key); _lights.key.intensity = _lights.base.ki; _lights.hemi.color.setHex(_lights.base.hemi);
         }
+        _gfx = GolfFx.make(_stage, _c, _theme, { lights: _lights, golden: _list.length >= 3 && i >= Math.ceil(_list.length * 0.67) });
     }
     _balls.forEach(b => {
         Object.assign(b, { on: false, done: false, picked: false, from: null, rollT: 0, sinkT: -1, state: 'wait', clock: 0 });
@@ -692,6 +700,7 @@ function _label(n, par) {
     return [`+${d}`, '#f87171'];
 }
 function _sunk(b, knocked) {
+    if (_c) _gfx?.sparks(new THREE.Vector3(_c.cup.x, _c.cup.y + 0.25, _c.cup.z), 0xffe066, 22, 2.2, 2.6, 6);
     b.done = true; b.state = 'done'; b.sinkT = 0;
     _times[b.slot][_hole] = _holeT;
     const h = _list[_hole].hole, n = _strokes[b.slot][_hole];
@@ -742,6 +751,7 @@ function _penalty(b, kind) {
     if (kind === 'out') { sfx('land_bad'); _say2Show(`${_theme?.scenery === 'space' ? 'LOST IN SPACE' : 'OUT OF BOUNDS'}${mine ? ' · +1' : ''}`, '#fca5a5'); }
     else {
         sfx('splash');
+        _gfx?.sparks(new THREE.Vector3(b.p.x, b.p.y + 0.15, b.p.z), kind === 'lava' ? 0xffa53f : kind === 'flowers' ? 0xff8fb1 : kind === 'goo' ? 0xb07a4a : 0xd6f1ff, 22, 2.2, 3);
         if (_stage?.gl) _fx.puff(new THREE.Vector3(b.p.x, b.p.y + 0.2, b.p.z), kind === 'lava' ? 0xff7a1a : kind === 'flowers' ? 0xff8fb1 : kind === 'goo' ? 0x7a4a2a : 0xbfe8ff, 10, 0.5, 1.2);
         _say2Show(`${kind === 'flowers' ? 'IN THE FLOWERS' : kind === 'lava' ? 'LAVA!' : kind === 'goo' ? 'IN THE CHOCOLATE' : _theme?.scenery === 'pirate' ? 'SPLASH! FEED THE SHARKS' : 'SPLASH'}${mine ? ' · +1' : ''}`, '#7dd3fc');
     }
@@ -763,6 +773,7 @@ function _event(b, e) {
             if (e.v > 1.0 && b.clackT <= 0) { sfx('clack'); b.clackT = 0.07; }
             b.sq = Math.max(b.sq, Math.min(1, e.v / 8));
             if (gl && e.v > 2.5 && (e.mat === 'metal' || e.mat === 'neon')) _fx.burst(new THREE.Vector3(...e.at), 0xfff1a8, 0.08, 0.15);
+            if (e.v > 2.2) _gfx?.sparks(new THREE.Vector3(...e.at), e.mat === 'neon' ? (_theme?.rail ?? 0x22d3ee) : e.mat === 'metal' || e.mat === 'stone' ? 0xffe08a : e.mat === 'hedge' ? 0x6fd36f : e.mat === 'inflatable' ? 0xffd166 : 0xfff3d6, Math.min(16, 3 + e.v * 1.5), 1.2 + e.v * 0.25, 1.2);
             if (gl && e.v > 3 && e.mat === 'hedge') _fx.puff(at(0.2), 0x3fa548, 3, 0.3, 0.3);
             if (e.mover && e.v > 3) _shake = Math.max(_shake, 0.12);
             if (e.mat === 'inflatable') { _built?.wobble?.(e.at[0], e.at[2]); if (e.v > 1.5) sfx('boost'); }
@@ -776,12 +787,14 @@ function _event(b, e) {
                 _fx.burst(p0, 0xffa53f, 0.7, 0.35); _fx.burst(p0, 0xfff1a8, 0.35, 0.2);
                 _fx.puff(p0, 0x6b7280, 10, 0.7, 1.1);
             }
+            _gfx?.sparks(new THREE.Vector3(e.at[0], _floorY(e.at[0], e.at[1]) + 0.3, e.at[1]), 0xffa53f, 40, 5, 4, 7);
             _say2Show(_theme?.scenery === 'pirate' ? 'KA-BOOM!' : 'BOOM!', '#fca5a5', 800);
             break;
         }
         case 'bumper':
             sfx('boost'); _built?.pulse(e.at); b.sq = 0.8;
             if (gl) _fx.burst(at(0.3), 0xffe08a, 0.18, 0.2);
+            _gfx?.sparks(at(0.3), _theme?.bumper ?? 0xffe08a, 12, 3, 1.5);
             break;
         case 'hammer':
             sfx('slam'); b.sq = 1; _shake = Math.max(_shake, 0.3);
@@ -799,7 +812,7 @@ function _event(b, e) {
             break;
         case 'jelly': sfx('boost'); _built?.jelly?.(b.p.x, b.p.z); b.sq = 1; break;
         case 'spray': if (gl) _fx.puff(at(0.1), 0xe9cf98, 6, 0.5, 0.6); break;
-        case 'splash': if (gl) _fx.puff(at(0.1), e.kind === 'creek' ? 0x9a6a46 : 0xbfe8ff, 5, 0.35, 0.5); break;
+        case 'splash': if (gl) _fx.puff(at(0.1), e.kind === 'creek' ? 0x9a6a46 : 0xbfe8ff, 5, 0.35, 0.5); _gfx?.sparks(at(0.1), e.kind === 'creek' ? 0xb07a4a : 0xd6f1ff, 10, 1.6, 2.2); break;
         case 'pipe': {
             const st = e.p.style || (_theme?.scenery === 'space' ? 'teleport' : 'hose');
             if (st === 'cannon') {
@@ -846,6 +859,16 @@ function _frame(dt) {
     }
 
     _built?.update(pdt, _pt);
+    if (_gfx) {
+        // Read the green round the ball being aimed (a human's, in turns; the one being dragged, in chaos).
+        let rb = null;
+        if (_sub === 'play' && _phase === 'play') {
+            if (_mode === 'turns') { if (_turnState === 'aim' && !_isBot(_active) && _balls[_active]?.on) rb = _balls[_active].p; }
+            else { const d = [..._drag.values()][0]; if (d) rb = _balls[d.slot]?.p; }
+        }
+        _gfx.reading(rb && !rb.air ? rb : null);
+        _gfx.update(dt, _pt);
+    }
     if (_built) animateProps(_built.root, _pt);
     _drawBalls(dt);
     _drawFigs(dt);
