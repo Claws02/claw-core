@@ -1412,7 +1412,7 @@ let _last = null;
 export function lastRound() { return _last ? JSON.parse(JSON.stringify(_last)) : null; }
 export function _debugState() {
     return {
-        phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view, chal: _chal?.id || null,
+        phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view, chal: _chal?.id || null, clock: +_t.toFixed(2), done: _done, nextWait: _nextWait, turnT: +_turnT.toFixed(2),
         course: _list[0]?.course, holes: _list.map(x => x.hole.key), par: _list.map(x => x.hole.par),
         strokes: _strokes.map(s => [...s]), times: _times.map(s => s.map(t => +t.toFixed(2))),
         balls: _balls.map(b => ({ x: +b.p.x.toFixed(2), y: +b.p.y.toFixed(2), z: +b.p.z.toFixed(2), v: +Math.hypot(b.p.vx, b.p.vz).toFixed(2), state: b.state, holed: b.done && !b.picked, picked: b.picked, on: b.on, air: b.p.air })),
