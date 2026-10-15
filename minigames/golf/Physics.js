@@ -19,10 +19,17 @@
 //   movers  walls and heads that move with time: windmill sails, sweepers and
 //           turnstiles, sliders, gates, hammers.
 //   fields  fans (a push across a box) and magnets (a pull toward a point).
+//   mines   a charge on the floor that blows the ball up and away.
 //   pipes   a mouth that swallows the ball and puts it out somewhere else
 //           (a hose, a cannon, a teleporter, a drain).
 //   cup     a real hole: the ball drops through the floor, the rim catches,
 //           rattles and spits it, and it's in once it's below the rim.
+//
+// The ball spins. A putt leaves the face skidding with a little forward roll;
+// the floor's friction brings the spin up to the speed and from then on it
+// rolls (and a rolling ball feels only 5/7 of a slope). A rail bounce turns
+// the ball but not its spin, so it skids again and grabs — on ice for a long
+// way. That's the whole of "realistic putting": the rest is the floor.
 //
 // Coordinates: x, z across the floor, y up, in course units (a ball is 0.14).
 // A ball's y is the height of its BOTTOM; its centre is y + R.
@@ -30,28 +37,34 @@
 
 export const R = 0.14;                 // ball radius
 export const CUP_R = 0.34;              // cup radius (a real hole: the ball drops through it)
-export const MAXV = 14;                // a full pull
+export const MAXV = 16;                // a full pull (a skid gives some back, see PUTT_ROLL)
+const PUTT_ROLL = 0.55;                // how much forward roll a putter's loft gives at impact (× speed)
 const G = 16;                          // gravity
 const ROLL = 5 / 7;                    // a rolling ball feels 5/7 of the slope
 const C0 = 1.1, C1 = 0.22;             // rolling resistance: constant + per unit speed (turf)
 
-/** Surfaces: rolling resistance (× turf), bounce off it, how a moving floor drags the ball. */
+/**
+ * Surfaces: rolling resistance (× turf), bounce off it, how a moving floor
+ * drags the ball, and mu — the sliding friction that turns a skid into a roll
+ * (high: it grabs at once; ice: it skids on and on).
+ */
 export const SURFACE = {
-    turf:      { roll: 1,    bounce: 0.3 },
-    felt:      { roll: 0.72, bounce: 0.3 },                  // a fast green
-    rough:     { roll: 2.3,  bounce: 0.18 },
-    sand:      { roll: 4.6,  bounce: 0.04, grab: true },
-    ice:       { roll: 0.26, bounce: 0.45 },
-    wood:      { roll: 0.9,  bounce: 0.4 },
-    metal:     { roll: 0.85, bounce: 0.45 },
-    carpet:    { roll: 1.4,  bounce: 0.25 },
-    puddle:    { roll: 3.4,  bounce: 0.0, splash: true },
-    boost:     { roll: 0.9,  bounce: 0.3 },
-    conveyor:  { roll: 1,    bounce: 0.3, drag: 5 },
-    creek:     { roll: 1.3,  bounce: 0.1, drag: 3, splash: true },
-    turntable: { roll: 1,    bounce: 0.3, drag: 7 },
-    raft:      { roll: 1.1,  bounce: 0.35, drag: 12 },
-    jelly:     { roll: 1.6,  bounce: 0.88 },
+    turf:      { roll: 1,    bounce: 0.3,  mu: 0.45 },
+    felt:      { roll: 0.72, bounce: 0.3,  mu: 0.35 },                  // a fast green
+    rough:     { roll: 2.3,  bounce: 0.18, mu: 0.8 },
+    sand:      { roll: 4.6,  bounce: 0.04, mu: 1.2, grab: true },
+    ice:       { roll: 0.26, bounce: 0.45, mu: 0.04 },
+    wood:      { roll: 0.9,  bounce: 0.4,  mu: 0.3 },
+    metal:     { roll: 0.85, bounce: 0.45, mu: 0.18 },
+    carpet:    { roll: 1.4,  bounce: 0.25, mu: 0.6 },
+    puddle:    { roll: 3.4,  bounce: 0.0,  mu: 0.5, splash: true },
+    boost:     { roll: 0.9,  bounce: 0.3,  mu: 0.45 },
+    conveyor:  { roll: 1,    bounce: 0.3,  mu: 0.5, drag: 5 },
+    creek:     { roll: 1.3,  bounce: 0.1,  mu: 0.3, drag: 3, splash: true },
+    turntable: { roll: 1,    bounce: 0.3,  mu: 0.45, drag: 7 },
+    raft:      { roll: 1.1,  bounce: 0.35, mu: 0.45, drag: 12 },
+    jelly:     { roll: 1.6,  bounce: 0.88, mu: 0.6 },
+    bouncy:    { roll: 1.5,  bounce: 0.75, mu: 0.6 },                   // a bouncy-castle floor
 };
 /** Floors that cost a stroke and send the ball back: water, lava, the flower bed, chocolate. */
 export const HAZARD = { water: 1, lava: 1, flowers: 1, void: 1, goo: 1 };
@@ -64,6 +77,7 @@ export const MATERIAL = {
     hedge:  { e: 0.3,  scrub: 0.25 },
     candy:  { e: 0.74, scrub: 0.04 },
     neon:   { e: 0.78, scrub: 0.02 },
+    inflatable: { e: 0.94, scrub: 0.1 },   // bouncy castle walls: they give
 };
 const STEP_UP = 0.1;                   // the most the floor can rise under a rolling ball
 const RAIL_H = 0.3;
@@ -72,6 +86,7 @@ const STOP_V = 0.06;
 const FLOOR_OUT = -6;                  // below this, the ball is lost
 const CUP_DEPTH = 0.55;
 const JELLY_V = 4.8;                   // how hard a jelly pad throws a ball up
+const MINE_V = 7;                      // a mine's blast (power 1)
 
 // ── The course ───────────────────────────────────────────────────────────────
 
@@ -84,6 +99,8 @@ const JELLY_V = 4.8;                   // how hard a jelly pad throws a ball up
  *                  spin: w (turntable, round the tile's centre, out to discR),
  *                  move: { axis, amp, speed, phase } (a raft),
  *                  lift: { period, down, phase } (a drawbridge: there for `down` of each period) }]
+ *                  tilt: { axis, amp, speed, phase } (a see-saw: its slope rocks along axis),
+ *                  elev: { amp, period, phase } (a lift: rises amp and back) }
  *               open: the edges with no rail — any of 'n' (−z), 's' (+z), 'w' (−x), 'e' (+x)
  *   hole.rail   the rails' material (default wood); hole.blockMat (default stone)
  *   hole.walls  [[x1, z1, x2, z2, h?, mat?]]
@@ -93,7 +110,8 @@ const JELLY_V = 4.8;                   // how hard a jelly pad throws a ball up
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
  *   hole.magnets [{ x, z, r, k }]
  *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style? }]
- *   hole.loops  [{ a, dir, len, minV? }]
+ *   hole.loops  [{ a, dir, len, minV?, b?, style? }]  (style 'corkscrew' with b: a spiral down to b)
+ *   hole.mines  [[x, z, r?, power?]]
  *   hole.gravity  a multiplier; hole.links: extra [x1, z1, x2, z2] the path field may jump
  *   hole.cup [x, z], hole.tee [x, z]
  */
@@ -106,6 +124,7 @@ export function compile(hole) {
             hills: t.hills || [], ridges: t.ridges || [], trough: t.trough || null,
             kind: t.kind || 'turf', open: t.open || '', boost: t.boost || null, flow: t.flow || null,
             spin: t.spin || 0, discR: t.discR || 0, move: t.move || null, lift: t.lift || null,
+            tilt: t.tilt || null, elev: t.elev || null,
             rail: t.rail ?? !(t.move || t.lift),
         };
         T.cx = (T.x0 + T.x1) / 2; T.cz = (T.z0 + T.z1) / 2;
@@ -117,8 +136,9 @@ export function compile(hole) {
     const c = {
         hole, tiles, walls: [], bumpers: [], pipes: [], loops: [], movers: hole.movers || [],
         fans: hole.fans || [], magnets: hole.magnets || [],
+        mines: (hole.mines || []).map(([x, z, r, p]) => ({ x, z, r: r || 0.32, p: p ?? 1 })),
         G: G * g, RG: G * g * ROLL, _t: 0,
-        dynamic: tiles.some(t => t.move || t.lift || t.flow || t.spin) || (hole.movers || []).length > 0,
+        dynamic: tiles.some(t => t.move || t.lift || t.flow || t.spin || t.tilt || t.elev) || (hole.movers || []).length > 0,
     };
     const railMat = hole.rail || 'wood';
     // Rails round every tile edge where the floor beyond is missing or out of
@@ -140,7 +160,11 @@ export function compile(hole) {
             const flush = (u1) => {
                 if (run === null) return;
                 const p = [ax + (bx - ax) * run, az + (bz - az) * run], q = [ax + (bx - ax) * u1, az + (bz - az) * u1];
-                c.walls.push(_wall(c, p[0], p[1], q[0], q[1], RAIL_H, t, railMat));
+                const wl = _wall(c, p[0], p[1], q[0], q[1], RAIL_H, t, railMat);
+                // A see-saw's or a lift's rail has to cover the whole swing.
+                const sw = _swing(t);
+                if (sw) { wl.b1 -= sw.down; wl.b2 -= sw.down; wl.h += sw.down + sw.up; wl.moving = true; }
+                c.walls.push(wl);
                 run = null;
             };
             for (let k = 0; k < n; k++) {
@@ -175,6 +199,13 @@ export function compile(hole) {
     }, { x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity });
     c.path = [[hole.tee[0], hole.tee[1]], ...(hole.path || []), [hole.cup[0], hole.cup[1]]];
     return c;
+}
+
+/** How far a rocking or lifting tile's floor goes below / above its rest. */
+function _swing(t) {
+    if (t.tilt) { const half = (t.tilt.axis === 'z' ? t.z1 - t.z0 : t.x1 - t.x0) / 2, d = Math.abs(t.tilt.amp || 0.2) * half; return { down: d, up: d }; }
+    if (t.elev) return { down: 0, up: Math.abs(t.elev.amp || 1) };
+    return null;
 }
 
 function _wall(c, x1, z1, x2, z2, h, tile, mat) {
@@ -216,9 +247,14 @@ function _inTileAt(t, x, z, time) {
 }
 
 /** The height of a tile's floor at (x, z), shapes and all (in the tile's own frame). */
-export const tileHeight = (t, x, z) => _tileH(t, x, z);
-function _tileH(t, x, z) {
+export const tileHeight = (t, x, z, time = 0) => _tileH(t, x, z, time);
+/** A see-saw's extra slope, and a lift's rise, at time `time`. */
+export function tiltAt(t, time) { if (!t.tilt) return 0; const m = t.tilt; return (m.amp || 0.2) * Math.sin(time * (m.speed || 0.9) + (m.phase || 0)); }
+export function elevAt(t, time) { if (!t.elev) return 0; const m = t.elev, P = m.period || 7; return (m.amp || 1) * (0.5 - 0.5 * Math.cos(((time + (m.phase || 0)) / P) * Math.PI * 2)); }
+function _tileH(t, x, z, time = 0) {
     let h = t.y + t.gx * (x - t.cx) + t.gz * (z - t.cz);
+    if (t.tilt) h += tiltAt(t, time) * (t.tilt.axis === 'z' ? z - t.cz : x - t.cx);
+    if (t.elev) h += elevAt(t, time);
     for (const [hx, hz, r, hh] of t.hills) {
         const d = Math.hypot(x - hx, z - hz);
         if (d < r) { const k = Math.cos(d / r * Math.PI / 2); h += hh * k * k; }
@@ -238,9 +274,9 @@ function _tileH(t, x, z) {
     return h;
 }
 const _E = 0.01;
-function _tileGrad(t, x, z) {
+function _tileGrad(t, x, z, time = 0) {
     // Numerically: every shape gets a slope without its own derivative.
-    return [(_tileH(t, x + _E, z) - _tileH(t, x - _E, z)) / (2 * _E), (_tileH(t, x, z + _E) - _tileH(t, x, z - _E)) / (2 * _E)];
+    return [(_tileH(t, x + _E, z, time) - _tileH(t, x - _E, z, time)) / (2 * _E), (_tileH(t, x, z + _E, time) - _tileH(t, x, z - _E, time)) / (2 * _E)];
 }
 
 /**
@@ -254,17 +290,18 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
         if (!_inTileAt(t, x, z, time)) continue;
         const o = t.move ? tileOffset(t, time) : null;
         const lx = o ? x - o.dx : x, lz = o ? z - o.dz : z;
-        const h = _tileH(t, lx, lz);
+        const h = _tileH(t, lx, lz, time);
         if (h <= y + reach && h > bh) { bh = h; best = t; off = o; }
     }
     if (!best) return null;
     const lx = off ? x - off.dx : x, lz = off ? z - off.dz : z;
-    const [gx, gz] = _tileGrad(best, lx, lz);
+    const [gx, gz] = _tileGrad(best, lx, lz, time);
     // How the floor itself moves under the ball.
     let sv = null;
     if (best.flow) sv = [best.flow[0], best.flow[1]];
     else if (best.spin && Math.hypot(x - best.cx, z - best.cz) <= best.discR) sv = [-best.spin * (z - best.cz), best.spin * (x - best.cx)];
     else if (off) sv = [off.vx, off.vz];
+    else if (best.tilt || best.elev) sv = [0, 0];   // it moves under a ball at rest: keep it awake
     const kind = best.spin && !sv ? 'turf' : best.kind;
     return { h: bh, gx, gz, kind, tile: best, sv };
 }
@@ -276,7 +313,8 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
  * spin) so a hit can pass speed on. Pure in t: the bot and the preview see
  * where they'll be.
  *   windmill { x, z, axis: 'x'|'z', w, speed }  the door is shut while a sail is down
- *   sweeper  { x, z, len, speed, arms? }         bars spinning flat round (x, z); arms 3+ is a turnstile
+ *   sweeper  { x, z, len, speed, arms?, r0?, phase?, mat? } bars spinning flat round (x, z); arms 3+ is
+ *                                                a turnstile; r0 leaves the middle open (a spinner maze)
  *   slider   { x, z, len, bar, axis, amp, speed, phase }
  *   gate     { x, z, axis, w, speed, phase }     a portcullis: shut half the time
  *   hammer   { x, z, axis, amp, r, speed, phase } a head swinging across, as a moving post
@@ -292,11 +330,12 @@ export function moverWalls(c, t) {
                 else out.push({ x1: m.x - w, z1: m.z, x2: m.x + w, z2: m.z, b1: base, b2: base, h: 0.5, vx: 0, vz: 0, mover: m, mat: 'wood' });
             }
         } else if (m.type === 'sweeper') {
-            const a = t * (m.speed || 1.2), L = m.len || 2, n = m.arms || 2;
+            const a = t * (m.speed || 1.2) + (m.phase || 0), L = m.len || 2, n = m.arms || 2, r0 = m.r0 || 0;
             for (let k = 0; k < n; k++) {
                 const s = k / n * Math.PI * 2;
                 const ex = m.x + Math.cos(a + s) * L, ez = m.z + Math.sin(a + s) * L;
-                out.push({ x1: m.x, z1: m.z, x2: ex, z2: ez, b1: base, b2: base, h: 0.4, spin: m.speed || 1.2, cx: m.x, cz: m.z, mover: m, mat: 'rubber', thick: 0.06 });
+                const sx = m.x + Math.cos(a + s) * r0, sz = m.z + Math.sin(a + s) * r0;
+                out.push({ x1: sx, z1: sz, x2: ex, z2: ez, b1: base, b2: base, h: 0.4, spin: m.speed || 1.2, cx: m.x, cz: m.z, mover: m, mat: m.mat || 'rubber', thick: 0.06 });
             }
         } else if (m.type === 'slider') {
             const L = m.len || 1.6, sp = m.speed || 1.4, A = m.amp || 1.5, ph = m.phase || 0;
@@ -341,14 +380,18 @@ export const gateShut = (m, t) => gateDown(m, t) > 0.6;
 // ── The ball ─────────────────────────────────────────────────────────────────
 
 export function newBall(x, z, y = 0) {
-    return { x, y, z, vx: 0, vy: 0, vz: 0, air: false, rest: true, kind: 'turf', pipe: null, loop: null, sunk: false, inCup: false, jelly: false };
+    // wx, wz: the spin, as the speed the ball's surface turns at (rolling: wx = vx).
+    return { x, y, z, vx: 0, vy: 0, vz: 0, wx: 0, wz: 0, air: false, rest: true, kind: 'turf', pipe: null, loop: null, sunk: false, inCup: false, jelly: false };
 }
 
 /** Hit it: a direction on the floor and a power 0..1. */
 export function strike(b, dx, dz, power) {
     const n = Math.hypot(dx, dz) || 1, v = Math.max(0, Math.min(1, power)) * MAXV;
     b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false;
+    b.wx = b.vx * PUTT_ROLL; b.wz = b.vz * PUTT_ROLL;   // off the face skidding, with a little roll
 }
+/** Is the ball skidding (its spin not caught up with its speed)? */
+export const skidding = b => Math.hypot((b.vx - (b.wx ?? b.vx)), (b.vz - (b.wz ?? b.vz))) > 0.25;
 
 /**
  * Advance one ball by dt at course time t. Returns the events of the step, an
@@ -368,6 +411,7 @@ export function step(c, b, dt, t, others = null, ev = []) {
             const n = Math.hypot(p.dir[0], p.dir[1]) || 1;
             const f = floorAt(c, p.b[0], p.b[1], 9);
             Object.assign(b, { x: p.b[0], z: p.b[1], y: f ? f.h : 0, vx: p.dir[0] / n * sp, vz: p.dir[1] / n * sp, vy: 0, air: false, pipe: null, rest: false });
+            b.wx = b.vx; b.wz = b.vz;
             ev.push({ type: 'pipeout', p });
         }
         return ev;
@@ -376,14 +420,17 @@ export function step(c, b, dt, t, others = null, ev = []) {
         b.loop.t += dt;
         if (b.loop.t >= b.loop.dur) {
             const l = b.loop.l, n = Math.hypot(l.dir[0], l.dir[1]) || 1;
-            const ox = l.a[0] + l.dir[0] / n * l.len, oz = l.a[1] + l.dir[1] / n * l.len;
-            const f = floorAt(c, ox, oz, 9);
-            Object.assign(b, { x: ox, z: oz, y: f ? f.h : 0, vx: l.dir[0] / n * b.loop.v, vz: l.dir[1] / n * b.loop.v, vy: 0, air: false, loop: null, rest: false });
+            // Out the far side (a loop) or at the bottom of the spiral (a corkscrew).
+            const ox = l.b ? l.b[0] : l.a[0] + l.dir[0] / n * l.len, oz = l.b ? l.b[1] : l.a[1] + l.dir[1] / n * l.len;
+            const od = l.out || l.dir, on = Math.hypot(od[0], od[1]) || 1;
+            const f = floorAt(c, ox, oz, 99);
+            Object.assign(b, { x: ox, z: oz, y: f ? f.h : 0, vx: od[0] / on * b.loop.v, vz: od[1] / on * b.loop.v, vy: 0, air: false, loop: null, rest: false });
+            b.wx = b.vx; b.wz = b.vz;
         }
         return ev;
     }
     const sp = Math.hypot(b.vx, b.vy, b.vz);
-    if (b.rest && !c.dynamic && !others && !c.fans.length && !c.magnets.length) return ev;
+    if (b.rest && !c.dynamic && !others && !c.fans.length && !c.magnets.length && !c.mines.length) return ev;
     // Small enough steps that a ball can't pass through a rail, nor the rim.
     const n = Math.max(1, Math.ceil(sp * dt / (R * 0.4)), Math.ceil(dt / (1 / 120)));
     const d = dt / n;
@@ -456,16 +503,37 @@ function _sub(c, b, d, t, movers, others, ev) {
             }
             if (f.kind !== 'jelly') b.jelly = false;
             if (b.rest && !f.sv) { _collide(c, b, movers, others, ev); return; }
-            // Down the slope: exact for a ball held to a height field.
+            const svx = f.sv ? f.sv[0] : 0, svz = f.sv ? f.sv[1] : 0;
+            if (b.wx == null) { b.wx = b.vx; b.wz = b.vz; }
+            // The skid: friction at the contact pulls the speed down and the spin
+            // up until the surface stops sliding (5:2, a solid ball), then it rolls.
+            const slx = (b.vx - svx) - (b.wx - svx), slz = (b.vz - svz) - (b.wz - svz), sl = Math.hypot(slx, slz);
+            const skid = sl > 0.05;
+            if (skid) {
+                const mu = (S.mu ?? 0.45) * c.G, dv = mu * d;
+                if (dv * 3.5 >= sl) {
+                    // Caught up this step: both meet at the rolling speed.
+                    const rx = ((b.vx - svx) * 5 + (b.wx - svx) * 2) / 7, rz = ((b.vz - svz) * 5 + (b.wz - svz) * 2) / 7;
+                    b.vx = svx + rx; b.vz = svz + rz; b.wx = b.vx; b.wz = b.vz;
+                } else {
+                    const ux = slx / sl, uz = slz / sl;
+                    b.vx -= ux * dv; b.vz -= uz * dv;
+                    b.wx += ux * dv * 2.5; b.wz += uz * dv * 2.5;
+                }
+            }
+            // Down the slope: exact for a ball held to a height field. A skidding
+            // ball feels all of it; a rolling one 5/7 (the rest spins it).
             const g2 = f.gx * f.gx + f.gz * f.gz;
-            let ax = -c.RG * f.gx / (1 + g2), az = -c.RG * f.gz / (1 + g2);
+            const gk = skid ? c.G : c.RG;
+            let ax = -gk * f.gx / (1 + g2), az = -gk * f.gz / (1 + g2);
             if (f.kind === 'boost' && f.tile.boost) { ax += f.tile.boost[0]; az += f.tile.boost[1]; }
             b.vx += ax * d; b.vz += az * d;
+            if (!skid) { b.wx += ax * d; b.wz += az * d; }
             // A moving floor drags the ball toward its own speed.
-            const svx = f.sv ? f.sv[0] : 0, svz = f.sv ? f.sv[1] : 0;
             if (f.sv) {
                 const k = Math.min(1, (S.drag || 5) * d);
                 b.vx += (svx - b.vx) * k; b.vz += (svz - b.vz) * k;
+                b.wx += (svx - b.wx) * k; b.wz += (svz - b.wz) * k;
                 b.rest = false;
             }
             // Rolling resistance, against the roll over the floor.
@@ -473,6 +541,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             if (hs > 0) {
                 const dec = (C0 + C1 * hs) * S.roll * d;
                 const k = Math.max(0, hs - dec) / hs; b.vx = svx + rx * k; b.vz = svz + rz * k;
+                if (!skid) { b.wx = b.vx; b.wz = b.vz; }
             }
             const vyOld = b.vx * f.gx + b.vz * f.gz;
             const nx = b.x + b.vx * d, nz = b.z + b.vz * d;
@@ -502,7 +571,21 @@ function _sub(c, b, d, t, movers, others, ev) {
     }
     _collide(c, b, movers, others, ev);
     if (b.inCup) _cup(c, b, ev);
-    if (b.sunk || b.rest) return;
+    if (b.sunk) return;
+    // Mines: on the floor, armed always; a ball over one goes up and away.
+    if (!b.air && c.mines.length) for (const m of c.mines) {
+        const dx = b.x - m.x, dz = b.z - m.z, dd = Math.hypot(dx, dz);
+        if (dd >= m.r) continue;
+        const sp = Math.hypot(b.vx, b.vz);
+        const ux = dd > 0.02 ? dx / dd : (sp > 0.01 ? b.vx / sp : 1), uz = dd > 0.02 ? dz / dd : (sp > 0.01 ? b.vz / sp : 0);
+        const P = MINE_V * m.p;
+        b.vx = b.vx * 0.3 + ux * P * 0.55; b.vz = b.vz * 0.3 + uz * P * 0.55; b.vy = P * 0.8;
+        b.wx = b.vx * 0.2; b.wz = b.vz * 0.2;
+        b.air = true; b.rest = false;
+        ev.push({ type: 'boom', at: [m.x, m.z] });
+        return;
+    }
+    if (b.rest) return;
     // Pipes and loops: a mouth on the floor.
     if (!b.air) {
         for (const p of c.pipes) {
@@ -519,7 +602,7 @@ function _sub(c, b, d, t, movers, others, ev) {
                 const vin = b.vx * ux + b.vz * uz;
                 if (vin <= 0) continue;
                 if (Math.hypot(b.vx, b.vz) >= l.minV) {
-                    b.loop = { l, t: 0, dur: l.dur || 1.1, v: Math.hypot(b.vx, b.vz) * 0.8 };
+                    b.loop = { l, t: 0, dur: l.dur || (l.style === 'corkscrew' ? 1.6 : 1.1), v: l.outV ?? Math.hypot(b.vx, b.vz) * 0.8 };
                     ev.push({ type: 'loop' }); return;
                 }
                 b.vx -= vin * ux * 1.6; b.vz -= vin * uz * 1.6;
@@ -540,6 +623,7 @@ function _sub(c, b, d, t, movers, others, ev) {
         const pinned = b.touch && Math.hypot(b.vx, b.vz) < 0.25 && f?.sv;
         if ((v < STOP_V && (pull < hold || b.touch) && f?.kind !== 'boost') || pinned) {
             if (pinned) { b.vx = 0; b.vz = 0; } else { b.vx = svx; b.vz = svz; }
+            b.wx = b.vx; b.wz = b.vz;
             b.vy = 0;
             b.rest = true;
         }
