@@ -12,10 +12,13 @@
 //   gate      a portcullis dropping and lifting in a doorway
 //   fan       a turbine with spinning blades and streaks of wind
 //   magnet    a little planet over its pull, with rings sinking into it
+//   seesaw    a board rocking on its fulcrum (Physics.tiltAt)
+//   lift      a platform riding up and down on its pistons, rails and all (Physics.elevAt)
+//   liftgate  a lift's door: bars that drop whenever the lift isn't level with it
 //
 // make(c, theme) → { group, update(dt, t), jelly(x, z) }
 // ============================================================
-import { tileHeight, tileOffset, liftState, gateDown, hammerHeads, floorAt } from './Physics.js';
+import { tileHeight, tileOffset, liftState, gateDown, hammerHeads, floorAt, tiltAt, elevAt, liftGateShut } from './Physics.js';
 import * as Toy from './Toys.js';
 
 const glow = (color, k = 0.9) => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: k, roughness: 0.3 });
@@ -176,6 +179,61 @@ export function make(c, theme) {
                 });
             });
         }
+        // A see-saw: a board on a fulcrum, rocking with the physics' tilt.
+        if (t.tilt) {
+            const pivot = new THREE.Group();
+            const alongX = t.tilt.axis !== 'z';
+            const board = Toy.rbox(w, 0.12, d, 0.05, Toy.mat(theme.wood ?? 0xb7814a, { roughness: 0.7 }));
+            board.position.y = -0.06; pivot.add(board);
+            // Painted ends and handles.
+            [-1, 1].forEach(sd => {
+                const end = Toy.rbox(alongX ? 0.6 : w, 0.125, alongX ? d : 0.6, 0.04, Toy.mat(theme.accent ?? 0xff7a59));
+                end.position.set(alongX ? sd * (w / 2 - 0.3) : 0, -0.055, alongX ? 0 : sd * (d / 2 - 0.3)); pivot.add(end);
+                const handle = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 6, 14, Math.PI), Toy.mat(0xffd23f, { roughness: 0.3 }));
+                handle.position.set(alongX ? sd * (w / 2 - 0.9) : 0, 0, alongX ? 0 : sd * (d / 2 - 0.9)); if (!alongX) handle.rotation.y = Math.PI / 2; pivot.add(handle);
+            });
+            pivot.position.set(t.cx, t.y, t.cz); group.add(pivot);
+            // The fulcrum: a red triangle standing in the lava.
+            const tri = new THREE.Shape(); tri.moveTo(-0.6, 0); tri.lineTo(0.6, 0); tri.lineTo(0, 1); tri.lineTo(-0.6, 0);
+            const ful = new THREE.Mesh(new THREE.ExtrudeGeometry(tri, { depth: d * 0.6, bevelEnabled: false }), Toy.mat(0xd62828, { roughness: 0.4 }));
+            ful.position.set(t.cx, t.y - 1.1, t.cz - d * 0.3); if (!alongX) { ful.rotation.y = Math.PI / 2; ful.position.set(t.cx - d * 0.3, t.y - 1.1, t.cz); }
+            group.add(ful);
+            pivot.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+            live.push((dt, tt) => { const a = Math.atan(tiltAt(t, tt)); if (alongX) pivot.rotation.z = a; else pivot.rotation.x = -a; });
+        }
+        // A lift: a platform on pistons, its rails riding with it.
+        if (t.elev) {
+            const plat = new THREE.Group();
+            const deck = Toy.rbox(w, 0.18, d, 0.05, Toy.mat(t.kind === 'metal' ? 0x9aa3b5 : (theme.wood ?? 0xa0673a), { roughness: 0.5, metalness: t.kind === 'metal' ? 0.5 : 0 }));
+            deck.position.y = -0.09; plat.add(deck);
+            const edgeGlow = theme.railGlow ? new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, 0.04, d + 0.04), glow(theme.rail, 0.9)) : null;
+            if (edgeGlow) { edgeGlow.position.y = -0.18; plat.add(edgeGlow); }
+            // Hazard stripes round the edge of the deck.
+            const stripe = Toy.mat(0xfacc15, { roughness: 0.5 });
+            [[0, -d / 2 + 0.06, w, 0.1], [0, d / 2 - 0.06, w, 0.1]].forEach(([x, z, sx, sz]) => { const s2 = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.012, sz), stripe); s2.position.set(x, 0.006, z); plat.add(s2); });
+            // Its rails: the walls compiled for this tile (n/s sides), at their rest heights.
+            c.walls.filter(wl => wl.moving && wl.tile === t.i).forEach(wl => {
+                const len = Math.hypot(wl.x2 - wl.x1, wl.z2 - wl.z1);
+                const r = Toy.rbox(len + 0.1, 0.32, 0.13, 0.06, theme.railGlow ? glow(theme.rail, 0.8) : Toy.mat(theme.rail ?? 0xf3e9d2));
+                r.position.set((wl.x1 + wl.x2) / 2 - t.cx, 0.16, (wl.z1 + wl.z2) / 2 - t.cz); r.rotation.y = -Math.atan2(wl.z2 - wl.z1, wl.x2 - wl.x1);
+                plat.add(r);
+            });
+            plat.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+            plat.position.set(t.cx, t.y, t.cz); group.add(plat);
+            // Pistons: a fixed sleeve and a rod that slides out of it.
+            const sleeveM = Toy.mat(0x4b5563, { metalness: 0.6, roughness: 0.35 }), rodM = Toy.mat(0xd1d5db, { metalness: 0.8, roughness: 0.2 });
+            const rods = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => {
+                const x = t.cx + sx * (w / 2 - 0.25), z = t.cz + sz * (d / 2 - 0.25);
+                const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.6, 10), sleeveM); sleeve.position.set(x, t.y - 0.5, z); group.add(sleeve);
+                const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 8), rodM); group.add(rod);
+                return { rod, x, z };
+            });
+            live.push((dt, tt) => {
+                const e = elevAt(t, tt);
+                plat.position.y = t.y + e;
+                rods.forEach(r => { const h = Math.max(0.05, e + 0.2); r.rod.scale.y = h; r.rod.position.set(r.x, t.y - 0.2 + h / 2, r.z); });
+            });
+        }
         // Jelly pads: wobbling blocks of jelly.
         if (t.kind === 'jelly') {
             const pad = Toy.rbox(w - 0.06, 0.16, d - 0.06, 0.08, new THREE.MeshStandardMaterial({ color: theme.jelly ?? 0xff4fa0, emissive: theme.jelly ?? 0xff4fa0, emissiveIntensity: 0.18, roughness: 0.1, transparent: true, opacity: 0.88 }));
@@ -218,7 +276,18 @@ export function make(c, theme) {
     });
 
     // Gates: a portcullis in each doorway.
-    c.movers.filter(m => m.type === 'gate').forEach(m => {
+    c.movers.filter(m => m.type === 'gate' && m.laser).forEach(m => {
+        // A laser fence: an emitter at each side and beams across, flickering on and off.
+        const w = (m.w || 0.55) * 2, base = m._base ?? (floorAt(c, m.x, m.z, 9, 0.1, 0)?.h ?? 0);
+        const g = new THREE.Group();
+        const beamM = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.85, depthWrite: false });
+        const beams = [0.12, 0.26, 0.4].map(y => { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, w, 6), beamM); b.rotation.x = Math.PI / 2; b.position.y = y; g.add(b); return b; });
+        [-w / 2, w / 2].forEach(z => { const em = Toy.rbox(0.22, 0.6, 0.22, 0.05, Toy.mat(0x374151, { metalness: 0.6 })); em.position.set(0, 0.3, z); g.add(em); const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), glow(0xff2d55, 1.6)); eye.position.set(0, 0.42, z * 0.92); g.add(eye); });
+        if (m.axis !== 'z') g.rotation.y = Math.PI / 2;
+        g.position.set(m.x, base, m.z); group.add(g);
+        live.push((dt, tt) => { const k = gateDown(m, tt); beamM.opacity = k > 0.6 ? 0.85 + Math.sin(tt * 40) * 0.1 : k * 0.25; beams.forEach(b => { b.visible = k > 0.05; }); });
+    });
+    c.movers.filter(m => m.type === 'gate' && !m.laser).forEach(m => {
         const g = new THREE.Group();
         const w = (m.w || 0.55) * 2, H = 0.95;
         const bars = Toy.mat(0x2b2b30, { metalness: 0.7, roughness: 0.35 });
@@ -228,6 +297,31 @@ export function make(c, theme) {
         const base = m._base ?? (floorAt(c, m.x, m.z, 9, 0.1, 0)?.h ?? 0);
         g.position.set(m.x, base, m.z); group.add(g);
         live.push((dt, tt) => { g.position.y = base + (1 - gateDown(m, tt)) * 0.95; });
+    });
+
+    // A lift's doors: bars that come down whenever the lift isn't level with them.
+    c.movers.filter(m => m.type === 'liftgate').forEach(m => {
+        const g = new THREE.Group();
+        const T = c.tiles[m.tile], amp = T?.elev?.amp || 1;
+        const w = (m.w || 0.55) * 2, H = amp + 0.6;
+        const barM = theme.railGlow ? glow(0xf43f5e, 1.1) : Toy.mat(0xd62828, { roughness: 0.35 });
+        for (let i = 0; i <= 6; i++) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, H, 6), barM); b.position.set(0, H / 2, -w / 2 + w * i / 6); g.add(b); }
+        const top = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, w), Toy.mat(0xfacc15)); top.position.y = H; g.add(top);
+        if (m.axis !== 'z') g.rotation.y = Math.PI / 2;
+        const base = T ? T.y : (floorAt(c, m.x, m.z, 9, 0.1, 0)?.h ?? 0);
+        const frame = new THREE.Group();
+        [-w / 2 - 0.08, w / 2 + 0.08].forEach(z => { const post = Toy.rbox(0.16, H + 0.4, 0.16, 0.05, Toy.mat(0x4b5563, { metalness: 0.5 })); post.position.set(0, (H + 0.4) / 2, z); frame.add(post); });
+        if (m.axis !== 'z') frame.rotation.y = Math.PI / 2;
+        frame.position.set(m.x, base, m.z); group.add(frame);
+        g.position.set(m.x, base, m.z); group.add(g);
+        let k = 1;
+        live.push((dt, tt) => {
+            const want = liftGateShut(c, m, tt) ? 1 : 0;
+            k += (want - k) * Math.min(1, dt * 14);
+            // Open: the bars slide down out of the way at this door's floor level.
+            g.position.y = base - (1 - k) * (H + 0.1) + (m.at === 'top' ? 0 : 0);
+            g.visible = k > 0.02;
+        });
     });
 
     // Fans: a turbine at the side of each wind box, blades spinning, streaks blowing across.

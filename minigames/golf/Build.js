@@ -39,7 +39,7 @@ const _shade = (hex, k) => {
 /** A tile's floor as a mesh: a grid whose heights are the tile's own. */
 function _floor(t, theme) {
     const w = t.x1 - t.x0, d = t.z1 - t.z0;
-    const hilly = t.hills.length > 0 || t.ridges.length > 0 || !!t.trough;
+    const hilly = t.hills.length > 0 || t.ridges.length > 0 || !!t.trough || !!t.kick;
     const sx = Math.max(1, Math.ceil(w / (hilly ? 0.25 : 1))), sz = Math.max(1, Math.ceil(d / (hilly ? 0.25 : 1)));
     const geo = new THREE.PlaneGeometry(w, d, sx, sz);
     geo.rotateX(-Math.PI / 2);
@@ -49,6 +49,7 @@ function _floor(t, theme) {
         : t.kind === 'boost' ? (theme.boost ?? 0xffd23f) : t.kind === 'carpet' ? (theme.carpet ?? 0xc0392b) : t.kind === 'rough' ? (theme.rough ?? 0x2e7d32)
         : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? 0x9aa3b5
         : t.kind === 'conveyor' ? (theme.conveyor ?? 0x374151) : t.kind === 'creek' ? (theme.creek ?? 0x7a4a26) : t.kind === 'jelly' ? (theme.turf[0])
+        : t.kind === 'bouncy' ? (theme.bouncy ?? 0xffd166)
         : HAZARD[t.kind] ? (theme[t.kind] ?? theme.water) : theme.turf[0]);
     for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i) + t.cx, z = pos.getZ(i) + t.cz;
@@ -60,6 +61,14 @@ function _floor(t, theme) {
         if (t.kind === 'ice') c = _shade(theme.ice ?? 0x8fd0f2, Math.floor((x + z) / 0.7) % 2 ? 1.12 : 0.96);
         if (t.kind === 'felt') c = _shade(theme.felt ?? 0x2f9a45, Math.floor(Math.hypot(x - t.cx, z - t.cz) / 0.8) % 2 ? 1.06 : 0.97);
         if (t.kind === 'rough') c = _shade(theme.rough ?? theme.turf[1], 0.85 + 0.12 * Math.abs(Math.sin(x * 5.3 + z * 4.1)));
+        if (t.kind === 'bouncy') c = _shade(theme.bouncy ?? 0xffd166, Math.floor(x / 0.8) % 2 === Math.floor(z / 0.8) % 2 ? 1.08 : 0.9);
+        if (t.kind === 'lava') c = _shade(theme.lava ?? 0xff5a1f, 0.85 + 0.3 * Math.abs(Math.sin(x * 2.3 + z * 1.7)));
+        if (t.kind === 'flowers') c = _shade(0x3a2a1a, 1);
+        if (t.kick) {
+            // A kicker ramp: bright bands across the slope, so you know it'll throw you.
+            const along = Math.abs(t.gx) > Math.abs(t.gz) ? x : z;
+            c = Math.floor(along / 0.3) % 2 === 0 ? new THREE.Color(theme.kick ?? theme.accent ?? 0xff7a59) : new THREE.Color(0xfff6e6);
+        }
         if (t.kind === 'turf' && (t.ridges.length || t.trough)) {
             // Shade the slopes so a bump or a bank reads.
             const k = 1 + (tileHeight(t, x, z) - t.y) * 0.35;
@@ -69,14 +78,18 @@ function _floor(t, theme) {
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
     geo.computeVertexNormals();
-    const water = !!HAZARD[t.kind] || t.kind === 'puddle';
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: water ? 0.15 : t.kind === 'ice' ? 0.2 : 0.9,
+    const water = t.kind === 'water' || t.kind === 'goo' || t.kind === 'puddle' || t.kind === 'void';
+    const lava = t.kind === 'lava';
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: water ? 0.15 : t.kind === 'ice' ? 0.2 : t.kind === 'bouncy' ? 0.4 : 0.9,
         metalness: water ? 0.1 : 0, transparent: water, opacity: water ? 0.85 : 1,
-        emissive: water ? new THREE.Color(theme[t.kind] ?? theme.water).multiplyScalar(0.25) : 0x000000 });
+        emissive: lava ? new THREE.Color(theme.lava ?? 0xff5a1f).multiplyScalar(0.7) : water ? new THREE.Color(theme[t.kind] ?? theme.water).multiplyScalar(0.25) : 0x000000 });
+    // Floors laid over floors (a puddle, a belt) win the depth test.
+    mat.polygonOffset = true; mat.polygonOffsetFactor = -t.i * 0.25; mat.polygonOffsetUnits = -t.i;
     const m = new THREE.Mesh(geo, mat);
     m.position.set(t.cx, 0, t.cz);
     m.receiveShadow = true;
     if (water) m.userData.water = { geo, base: Array.from(pos.array) };
+    if (lava) m.userData.lava = mat;
     return m;
 }
 
@@ -129,7 +142,7 @@ function _textTex(text, bg, fg, w = 128, h = 80) {
 
 export function buildHole(stage, c, theme, holeNo = 1) {
     const root = new THREE.Group();
-    const live = { windmills: [], sweepers: [], sliders: [], water: [], bumpers: [], flag: null, chevrons: [], doors: [], pads: [], ripples: [] };
+    const live = { windmills: [], sweepers: [], sliders: [], water: [], bumpers: [], flag: null, chevrons: [], doors: [], pads: [], ripples: [], lava: [], mines: [], soft: [] };
     const edgeMat = _mat(theme.edge, { roughness: 0.8 });
     const railMat = _mat(theme.rail, { roughness: 0.5 });
     const capMat = _mat(theme.accent, { roughness: 0.5 });
@@ -151,8 +164,10 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         }
     }));
     c.tiles.forEach(t => {
-        if (t.move || t.lift) return;            // drawn by Moving: a raft, a drawbridge
+        if (t.move || t.lift || t.tilt || t.elev) return;   // drawn by Moving: a raft, a drawbridge, a see-saw, a lift
         const f = _floor(t, theme); root.add(f);
+        if (f.userData.lava) live.lava.push(f.userData.lava);
+        if (t.kick) { const k = Toy.kickerLip(t, theme); k.g.position.y = tileHeight(t, ...k.at); root.add(k.g); }
         if (f.userData.water && t.kind !== 'puddle') {
             live.water.push(f);
             // Foam round the edge and rings spreading on the surface.
@@ -172,8 +187,10 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     const mats = { rail: Toy.mat(theme.rail, { roughness: 0.5 }), cap: Toy.mat(theme.accent, { roughness: 0.35 }), railDark: Toy.mat(0x1f2937, { metalness: 0.5, roughness: 0.35 }) };
     const posts = new Map();
     c.walls.forEach(w => {
-        if (w.block) return;
-        root.add(Toy.rail(w, theme, mats));
+        if (w.block || w.moving) return;         // a see-saw's or a lift's rails ride with it (Moving)
+        const r = Toy.rail(w, theme, mats);
+        root.add(r);
+        if (r.userData.soft) live.soft.push({ g: r, t: 0, w });
         [[w.x1, w.z1, w.b1], [w.x2, w.z2, w.b2]].forEach(([x, z, b]) => {
             const k = `${Math.round(x * 20)},${Math.round(z * 20)}`;
             if (!posts.has(k)) posts.set(k, [x, b, z, w.h]);
@@ -194,10 +211,24 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             m.userData.chev = i / n; root.add(m); live.chevrons.push(m);
         }
     });
-    // Loop-the-loops.
+    // Loop-the-loops, and corkscrew slides down from one level to the next.
+    const screws = new Map();
     c.loops.forEach(l => {
+        if (l.style === 'corkscrew' && l.b) {
+            const curve = Toy.corkscrewCurve(l, _y0(c, ...l.a), _y0(c, ...l.b));
+            screws.set(l, curve);
+            root.add(Toy.corkscrew(curve, theme));
+            return;
+        }
         const n = Math.hypot(l.dir[0], l.dir[1]) || 1, mx = l.a[0] + l.dir[0] / n * l.len / 2, mz = l.a[1] + l.dir[1] / n * l.len / 2;
         root.add(Toy.loop(l, _y0(c, mx, mz), theme));
+    });
+    // Mines: kegs, spiked mines — each goes off, and is back a moment later.
+    c.mines.forEach(mn => {
+        const o = Toy.mine(theme.mine || 'garden', theme);
+        o.g.position.set(mn.x, _y0(c, mn.x, mn.z), mn.z);
+        root.add(o.g);
+        live.mines.push({ mn, g: o.g, light: o.light, gone: 0 });
     });
     // Blocks: hedges, crates, rock, bulkheads — and a windmill's walls.
     const mills = c.movers.filter(m => m.type === 'windmill');
@@ -263,12 +294,12 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             live.windmills.push({ m, sails: w.sails, gate: w.gate });
         } else if (m.type === 'sweeper') {
             const s2 = Toy.sweeper(m, theme);
-            if (theme.scenery === 'pirate') {
+            if (theme.scenery === 'pirate' && !m.r0) {
                 // A ship's wheel: a rim and handles on the spokes.
                 const rim = new THREE.Mesh(new THREE.TorusGeometry((m.len || 2) * 0.55, 0.07, 8, 28), Toy.mat(0x8b5a2b));
                 rim.rotation.x = Math.PI / 2; rim.position.y = 0.2; s2.g.add(rim);
                 for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2, hd = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.3, 8), Toy.mat(0xd9a514, { roughness: 0.3 })); hd.position.set(Math.cos(a) * (m.len || 2) * 0.55, 0.32, Math.sin(a) * (m.len || 2) * 0.55); s2.g.add(hd); }
-            } else if (theme.scenery === 'candy') {
+            } else if (theme.scenery === 'candy' && !m.r0) {
                 [-1, 1].forEach(sd => { const pop = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.12, 22), Toy.mat(sd > 0 ? 0xffd23f : 0x7ed957, { roughness: 0.25 })); pop.rotation.z = Math.PI / 2; pop.position.set(sd * (m.len || 2), 0.5, 0); s2.g.add(pop); });
             }
             s2.g.position.set(m.x, base, m.z); root.add(s2.g);
@@ -353,7 +384,13 @@ export function buildHole(stage, c, theme, holeNo = 1) {
                 h.bulge = null;
             });
             live.windmills.forEach(w => { w.sails.rotation.z = windmillAngle(w.m, t); w.gate.visible = moverWalls({ movers: [w.m], tiles: c.tiles }, t).length > 0; });
-            live.sweepers.forEach(s => { s.g.rotation.y = -t * (s.m.speed || 1.2); });
+            live.sweepers.forEach(s => { s.g.rotation.y = -(t * (s.m.speed || 1.2) + (s.m.phase || 0)); });
+            live.lava.forEach((m, i) => { m.emissiveIntensity = 0.85 + 0.25 * Math.sin(t * 2.4 + i); });
+            live.mines.forEach(M => {
+                if (M.gone > 0) { M.gone = Math.max(0, M.gone - dt); M.g.visible = M.gone < 0.01 || M.gone > 1.5; const k = M.gone < 0.4 ? 1 - M.gone / 0.4 : 0; M.g.scale.setScalar(M.gone > 0 ? Math.max(0.01, k) : 1); }
+                if (M.light) M.light.material.emissiveIntensity = 1 + Math.sin(t * 6 + M.mn.x) * 0.8;
+            });
+            live.soft.forEach(S => { if (S.t > 0) { S.t = Math.max(0, S.t - dt); const k = Math.sin(S.t * 30) * S.t * 0.35; S.g.scale.set(1, 1 - k, 1 + k); } });
             live.doors.forEach(d => {
                 const a = windmillAngle(d.m, t);
                 let near = 9;
@@ -405,6 +442,12 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             });
         },
         pulse(p) { const b = live.bumpers.find(x => x.p === p); if (b) b.t = 0.25; },
+        /** A mine went off at (x, z): it vanishes and pops back up. */
+        boom(x, z) { const M = live.mines.find(m => Math.hypot(m.mn.x - x, m.mn.z - z) < 0.05); if (M) { M.gone = 1.9; M.g.visible = false; } },
+        /** A soft (inflatable) wall was hit near (x, z): it wobbles. */
+        wobble(x, z) { let best = null, bd = 0.6; live.soft.forEach(S => { const w = S.w, ex = w.x2 - w.x1, ez = w.z2 - w.z1, L2 = ex * ex + ez * ez || 1, u = Math.max(0, Math.min(1, ((x - w.x1) * ex + (z - w.z1) * ez) / L2)); const d = Math.hypot(x - w.x1 - ex * u, z - w.z1 - ez * u); if (d < bd) { bd = d; best = S; } }); if (best) best.t = 0.45; },
+        /** Where a ball is, u (0..1) of the way down a corkscrew. */
+        loopAt(l, u) { const cv = screws.get(l); return cv ? cv.getPointAt(Math.max(0, Math.min(1, u))) : null; },
         /** Lift the flag out while a ball is on the green close by. */
         flagPop() { if (live.flag) live.flag.pop = 1; },
         flagOut(on) { if (live.flag) live.flag.cupG.children.slice(2).forEach(o => { o.visible = !on; }); },
@@ -486,9 +529,10 @@ const PROPS = {
     bed: (p) => {
         const [x0, z0, x1, z1] = p.r;
         const g = new THREE.Group();
-        for (let i = 0; i < 14; i++) {
+        const n = Math.max(14, Math.round((x1 - x0) * (z1 - z0) * 0.9));
+        for (let i = 0; i < n; i++) {
             const f = _flowers(3, 0.25);
-            f.position.set(x0 + 0.3 + ((i * 0.37) % 1) * (x1 - x0 - 0.6), -0.45, z0 + 0.3 + (i / 14) * (z1 - z0 - 0.6));
+            f.position.set(x0 + 0.3 + ((i * 0.37) % 1) * (x1 - x0 - 0.6), p.y ?? -0.45, z0 + 0.3 + (i / n) * (z1 - z0 - 0.6));
             g.add(f);
         }
         return g;

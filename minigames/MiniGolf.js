@@ -30,13 +30,16 @@ import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
 import { registerMinigameCleanup, isBotSlot as _botSlot, slotCount, extendWatchdog } from './MinigameManager.js';
 import * as Solo from './SoloArena.js';
+import * as GolfFx from './golf/Fx.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, uprightHud, effects } from '../engine/StageKit.js';
 import { MG_ORIENTATION_OVERRIDE } from '../config/MinigameRegistry.js';
 import * as P from './golf/Physics.js';
 import { plan, planSteps } from './golf/Bot.js';
-import { COURSES, courseByKey, coursePar } from './golf/Courses.js';
+import { COURSES, courseByKey, coursePar, CHALLENGES } from './golf/Courses.js';
+/** Trick shots the Mini Golf mode offers: configure({ challenge }) plays one. */
+export { CHALLENGES };
 import { buildHole, animateProps } from './golf/Build.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
@@ -75,6 +78,13 @@ export const COURSE_LIST = COURSES.map(c => ({ key: c.key, name: c.name, blurb: 
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
+let _gfx = null;   // the hole's atmosphere and sparks (golf/Fx.js)
+// Which round this is. Anything that fires later (a timer, the outro's onDone)
+// checks it: a round that's been force-ended must not reach into the next one.
+let _gen = 0;
+// A trick-shot challenge (configure({ challenge })): one hole, one ball, from a
+// set spot; sink it in one, with `tries` goes at it. { id, key, from, tries, name }.
+let _chal = null;
 // The physics clock (it runs slow near the cup), a camera shake, and the hole-in-one show.
 let _pt = 0, _slow = 1, _shake = 0, _ace = null;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _fx = null, _lights = null;
@@ -96,11 +106,14 @@ const _limit = h => h.par + 3;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
+    _gen++;
     // Solo (the Mini Golf mode only): one ball against par, played like turns.
     _n = Solo.isSolo() ? 1 : Math.max(1, Math.min(4, slotCount()));
     _mode = _n === 1 ? 'turns' : _cfg.round ? (_cfg.mode === 'chaos' ? 'chaos' : 'turns') : 'chaos';
+    _chal = !Solo.isSolo() && _cfg.challenge ? { tries: 3, ..._cfg.challenge } : null;
+    if (_chal) { _n = 1; _mode = 'turns'; }
     _list = _pickHoles();
-    _cfg = { ..._cfg, course: null, holes: 'sampler', round: false };
+    _cfg = { ..._cfg, course: null, holes: 'sampler', round: false, challenge: null };
     _last = null;
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _hole = -1; _active = -1;
     _pt = 0; _slow = 1; _shake = 0; _ace = null;
@@ -137,17 +150,24 @@ export function start(isBot, onWin, botSkill = 0.55) {
     // The first hole is built under the opening shot.
     _loadHole(0);
     const B = _c.bounds;
+    const g0 = _gen;
     _dir.open({
         place: `${_courseName} · MINI GOLF`, title: 'MINI GOLF',
         sub: `${_list.length} HOLE${_list.length > 1 ? 'S' : ''} · ${_n === 1 ? 'SOLO' : _mode === 'turns' ? 'TAKE TURNS' : 'CHAOS — ALL AT ONCE'} · PAR ${_list.reduce((a, h) => a + h.hole.par, 0)}`,
         from: { pos: [(B.x0 + B.x1) / 2 - 14, 16, (B.z0 + B.z1) / 2 + 18], look: [(B.x0 + B.x1) / 2, 0, (B.z0 + B.z1) / 2] },
         to: _fitCam(),
-        onDone: () => { if (_done) return; _phase = 'play'; _beginHole(); },
+        onDone: () => { if (_done || g0 !== _gen) return; _phase = 'play'; _beginHole(); },
     });
     _stage.start(_frame);
 }
 
 function _pickHoles() {
+    if (_chal) {
+        const all = COURSES.flatMap(c => c.holes.map(h => ({ course: c.key, hole: h })));
+        const got = all.find(x => x.hole.key === _chal.key);
+        if (got) return [got];
+        _chal = null;
+    }
     if (_forceHoles) {
         const all = COURSES.flatMap(c => c.holes.map(h => ({ course: c.key, hole: h })));
         const got = _forceHoles.map(k => all.find(x => x.hole.key === k)).filter(Boolean);
@@ -174,6 +194,7 @@ function _destroy() {
     delete MG_ORIENTATION_OVERRIDE.minigolf;   // the next golf is a party's (chaos) unless the mode says otherwise
 
     _built?.dispose?.(); _built = null; _pass = null;
+    _gfx?.dispose?.(); _gfx = null;
     if (_stage) { _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _balls = []; _figs = []; _kits = []; _dir = null; _hud = null; _fx = null; _ui = null; _card = null; _say2 = null; _c = null; _lights = null;
@@ -393,12 +414,27 @@ function _loadHole(i) {
     }
     if (_stage?.gl) {
         _built?.dispose(); _built = buildHole(_stage, _c, _theme, i + 1);
+        _gfx?.dispose(); _gfx = null;
         const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
         if (_lights) {
             const span = Math.max(B.x1 - B.x0, B.z1 - B.z0) / 2 + 4;
             const sc = _lights.key.shadow.camera;
             sc.left = -span; sc.right = span; sc.top = span; sc.bottom = -span; sc.updateProjectionMatrix();
             _lights.key.position.set(cx - 9, 16, cz + 11); _lights.key.target.position.set(cx, 0, cz);
+            // Each hole starts from the course's own light; the last third of a round is golden hour.
+            if (!_lights.base) _lights.base = { key: _lights.key.color.getHex(), ki: _lights.key.intensity, hemi: _lights.hemi.color.getHex() };
+            _lights.key.color.setHex(_lights.base.key); _lights.key.intensity = _lights.base.ki; _lights.hemi.color.setHex(_lights.base.hemi);
+        }
+        _gfx = GolfFx.make(_stage, _c, _theme, { lights: _lights, golden: _list.length >= 3 && i >= Math.ceil(_list.length * 0.67) });
+        // A trick shot's target: a glowing frame on the floor, and the start spot.
+        if (_chal?.zone && _built) {
+            const [x0, z0, x1, z1] = _chal.zone, pts = [];
+            const N = 40, edge = (ax, az, bx, bz) => { for (let k = 0; k < N; k++) { const u = k / N, x = ax + (bx - ax) * u, z = az + (bz - az) * u; pts.push(new THREE.Vector3(x, _floorY(x, z) + 0.04, z)); } };
+            edge(x0, z0, x1, z0); edge(x1, z0, x1, z1); edge(x1, z1, x0, z1); edge(x0, z1, x0, z0);
+            const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xfde047 }));
+            const fill = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ color: 0xfde047, transparent: true, opacity: 0.16, depthWrite: false }));
+            fill.rotation.x = -Math.PI / 2; fill.position.set((x0 + x1) / 2, _floorY((x0 + x1) / 2, (z0 + z1) / 2) + 0.03, (z0 + z1) / 2);
+            _built.root.add(line); _built.root.add(fill);
         }
     }
     _balls.forEach(b => {
@@ -427,8 +463,9 @@ function _beginHole() {
     _strokes.forEach(s => s.push(0)); _times.forEach(s => s.push(0));
     _holeT = 0; _active = -1; _shooter = -1; _view = 'follow';
     const h = _list[_hole].hole;
-    _hud.say(`HOLE ${_hole + 1}`, `${h.name} · PAR ${h.par}`, FLY_DUR * 1000, _t, '#fde047');
+    _hud.say(_chal ? 'TRICK SHOT' : `HOLE ${_hole + 1}`, _chal ? `${_chal.name || h.name} · ${_chal.zone ? 'STOP IT IN THE BOX' : 'SINK IT IN ONE'}` : `${h.name} · PAR ${h.par}`, FLY_DUR * 1000, _t, '#fde047');
     _sub = 'fly'; _subT = 0;
+    if (_chal) _subT = FLY_DUR * 0.55;   // a shorter look at the hole: the shot's the thing
     sfx('whistle');
 }
 
@@ -486,6 +523,17 @@ function _nextTurn() {
     }
     _active = next; _turnT = 0; _turnState = 'aim'; _botThink = null;
     const b = _balls[next];
+    if (_chal) {
+        // A trick shot: every go is from the spot. Out of goes, it's over.
+        const used = _strokes[next][_hole];
+        // Stopped in the target zone: done.
+        const z = _chal.zone;
+        if (z && used > 0 && b.on && b.p.x >= z[0] && b.p.x <= z[2] && b.p.z >= z[1] && b.p.z <= z[3]) { _chalEnd(true); return; }
+        if (used >= _chal.tries) { _chalEnd(false); return; }
+        const [fx, fz] = _chal.from;
+        b.p = P.newBall(fx, fz, _floorY(fx, fz)); b.on = true; b.from = { x: fx, y: b.p.y, z: fz };
+        if (used > 0) _hud.say(`TRY ${used + 1} OF ${_chal.tries}`, '', 1100, _t, '#fde68a');
+    }
     if (!b.on) {
         // On to the tee; if a ball is sitting there, a little to one side.
         let x = _c.tee.x, z = _c.tee.z;
@@ -518,6 +566,7 @@ function _walkTo(slot, x, z, yaw) {
     f.anim?.play('walk');
 }
 function _holeOver() {
+    if (_chal) { _chalEnd(true); return; }
     _sub = 'card'; _subT = 0; _active = -1;
     _showBtns(false); _hidePower();
     _seats().forEach(k => _hud.lit(k, false));
@@ -692,6 +741,7 @@ function _label(n, par) {
     return [`+${d}`, '#f87171'];
 }
 function _sunk(b, knocked) {
+    if (_c) _gfx?.sparks(new THREE.Vector3(_c.cup.x, _c.cup.y + 0.25, _c.cup.z), 0xffe066, 22, 2.2, 2.6, 6);
     b.done = true; b.state = 'done'; b.sinkT = 0;
     _times[b.slot][_hole] = _holeT;
     const h = _list[_hole].hole, n = _strokes[b.slot][_hole];
@@ -738,10 +788,11 @@ function _pickUp(b) {
 }
 function _penalty(b, kind) {
     const mine = b.slot === _shooter || _mode === 'chaos';
-    if (mine) _strokes[b.slot][_hole]++;
+    if (mine && !_chal) _strokes[b.slot][_hole]++;   // a trick shot's miss is just a miss
     if (kind === 'out') { sfx('land_bad'); _say2Show(`${_theme?.scenery === 'space' ? 'LOST IN SPACE' : 'OUT OF BOUNDS'}${mine ? ' · +1' : ''}`, '#fca5a5'); }
     else {
         sfx('splash');
+        _gfx?.sparks(new THREE.Vector3(b.p.x, b.p.y + 0.15, b.p.z), kind === 'lava' ? 0xffa53f : kind === 'flowers' ? 0xff8fb1 : kind === 'goo' ? 0xb07a4a : 0xd6f1ff, 22, 2.2, 3);
         if (_stage?.gl) _fx.puff(new THREE.Vector3(b.p.x, b.p.y + 0.2, b.p.z), kind === 'lava' ? 0xff7a1a : kind === 'flowers' ? 0xff8fb1 : kind === 'goo' ? 0x7a4a2a : 0xbfe8ff, 10, 0.5, 1.2);
         _say2Show(`${kind === 'flowers' ? 'IN THE FLOWERS' : kind === 'lava' ? 'LAVA!' : kind === 'goo' ? 'IN THE CHOCOLATE' : _theme?.scenery === 'pirate' ? 'SPLASH! FEED THE SHARKS' : 'SPLASH'}${mine ? ' · +1' : ''}`, '#7dd3fc');
     }
@@ -763,12 +814,28 @@ function _event(b, e) {
             if (e.v > 1.0 && b.clackT <= 0) { sfx('clack'); b.clackT = 0.07; }
             b.sq = Math.max(b.sq, Math.min(1, e.v / 8));
             if (gl && e.v > 2.5 && (e.mat === 'metal' || e.mat === 'neon')) _fx.burst(new THREE.Vector3(...e.at), 0xfff1a8, 0.08, 0.15);
+            if (e.v > 2.2) _gfx?.sparks(new THREE.Vector3(...e.at), e.mat === 'neon' ? (_theme?.rail ?? 0x22d3ee) : e.mat === 'metal' || e.mat === 'stone' ? 0xffe08a : e.mat === 'hedge' ? 0x6fd36f : e.mat === 'inflatable' ? 0xffd166 : 0xfff3d6, Math.min(16, 3 + e.v * 1.5), 1.2 + e.v * 0.25, 1.2);
             if (gl && e.v > 3 && e.mat === 'hedge') _fx.puff(at(0.2), 0x3fa548, 3, 0.3, 0.3);
             if (e.mover && e.v > 3) _shake = Math.max(_shake, 0.12);
+            if (e.mat === 'inflatable') { _built?.wobble?.(e.at[0], e.at[2]); if (e.v > 1.5) sfx('boost'); }
             break;
+        case 'boom': {
+            // A mine (a powder keg, a space mine) under the ball.
+            sfx('boom'); _shake = Math.max(_shake, 0.55); b.sq = 1;
+            _built?.boom?.(e.at[0], e.at[1]);
+            if (gl) {
+                const p0 = new THREE.Vector3(e.at[0], _floorY(e.at[0], e.at[1]) + 0.2, e.at[1]);
+                _fx.burst(p0, 0xffa53f, 0.7, 0.35); _fx.burst(p0, 0xfff1a8, 0.35, 0.2);
+                _fx.puff(p0, 0x6b7280, 10, 0.7, 1.1);
+            }
+            _gfx?.sparks(new THREE.Vector3(e.at[0], _floorY(e.at[0], e.at[1]) + 0.3, e.at[1]), 0xffa53f, 40, 5, 4, 7);
+            _say2Show(_theme?.scenery === 'pirate' ? 'KA-BOOM!' : 'BOOM!', '#fca5a5', 800);
+            break;
+        }
         case 'bumper':
             sfx('boost'); _built?.pulse(e.at); b.sq = 0.8;
             if (gl) _fx.burst(at(0.3), 0xffe08a, 0.18, 0.2);
+            _gfx?.sparks(at(0.3), _theme?.bumper ?? 0xffe08a, 12, 3, 1.5);
             break;
         case 'hammer':
             sfx('slam'); b.sq = 1; _shake = Math.max(_shake, 0.3);
@@ -786,7 +853,7 @@ function _event(b, e) {
             break;
         case 'jelly': sfx('boost'); _built?.jelly?.(b.p.x, b.p.z); b.sq = 1; break;
         case 'spray': if (gl) _fx.puff(at(0.1), 0xe9cf98, 6, 0.5, 0.6); break;
-        case 'splash': if (gl) _fx.puff(at(0.1), e.kind === 'creek' ? 0x9a6a46 : 0xbfe8ff, 5, 0.35, 0.5); break;
+        case 'splash': if (gl) _fx.puff(at(0.1), e.kind === 'creek' ? 0x9a6a46 : 0xbfe8ff, 5, 0.35, 0.5); _gfx?.sparks(at(0.1), e.kind === 'creek' ? 0xb07a4a : 0xd6f1ff, 10, 1.6, 2.2); break;
         case 'pipe': {
             const st = e.p.style || (_theme?.scenery === 'space' ? 'teleport' : 'hose');
             if (st === 'cannon') {
@@ -805,7 +872,7 @@ function _event(b, e) {
             if (gl) _fx.puff(at(0.15), (e.p?.style === 'cannon') ? 0xe9cf98 : 0xd9f99d, 6, 0.4, 0.5);
             if (e.p?.style === 'cannon') { b.sq = 1; _shake = Math.max(_shake, 0.25); }
             break;
-        case 'loop': sfx('boost'); _say2Show('LOOP!', '#fde047', 700); break;
+        case 'loop': sfx('boost'); _say2Show(e.l?.style === 'corkscrew' || b.p.loop?.l?.style === 'corkscrew' ? 'WHEEE!' : 'LOOP!', '#fde047', 700); break;
         case 'loopfail': sfx('land_bad'); _say2Show('NOT ENOUGH SPEED', '#fca5a5', 800); break;
         case 'cup': _sunk(b, _mode === 'turns' && b.slot !== _shooter); break;
         case 'water': case 'out': _penalty(b, e.kind || e.type); break;
@@ -833,6 +900,16 @@ function _frame(dt) {
     }
 
     _built?.update(pdt, _pt);
+    if (_gfx) {
+        // Read the green round the ball being aimed (a human's, in turns; the one being dragged, in chaos).
+        let rb = null;
+        if (_sub === 'play' && _phase === 'play') {
+            if (_mode === 'turns') { if (_turnState === 'aim' && !_isBot(_active) && _balls[_active]?.on) rb = _balls[_active].p; }
+            else { const d = [..._drag.values()][0]; if (d) rb = _balls[d.slot]?.p; }
+        }
+        _gfx.reading(rb && !rb.air ? rb : null);
+        _gfx.update(dt, _pt);
+    }
     if (_built) animateProps(_built.root, _pt);
     _drawBalls(dt);
     _drawFigs(dt);
@@ -888,9 +965,10 @@ function _play(dt, pdt = dt) {
             const d = [..._drag.values()].find(x => x.slot === b.slot);
             if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL * 2) _drawKit(b.slot, a); else _hideKit(b.slot); }
             if (b.clock >= CLOCK_CHAOS) {
-                const pl = plan(_c, b.p, _pt, 0.15);
+                // Out of time: the same fair putt as in turns — a stroke, not a hole that never ends.
+                const pl = plan(_c, b.p, _pt, 0.35);
                 [..._drag.entries()].forEach(([id, x]) => { if (x.slot === b.slot) _drag.delete(id); });
-                _shoot(b.slot, pl.dx, pl.dz, pl.power * 0.5);
+                _shoot(b.slot, pl.dx, pl.dz, pl.power * 0.85);
                 _say2Show(`TIME! · ${seat(b.slot).name}`, '#fca5a5');
             }
         });
@@ -1092,6 +1170,11 @@ function _ballDrawPos(b) {
         const u = 1 - p.pipe.t / (p.pipe.dur || 0.6);
         return _built.pipeAt(p.pipe.p, Math.max(0, Math.min(1, u)));
     }
+    if (p.loop && p.loop.l.style === 'corkscrew' && _built?.loopAt) {
+        // Down the corkscrew slide.
+        const q = _built.loopAt(p.loop.l, p.loop.t / p.loop.dur);
+        if (q) return q.clone().setY(q.y - 0.16 + P.R);
+    }
     if (p.loop) {
         // In along the floor, round the hoop (a corkscrew, so it clears itself), out along the floor.
         const l = p.loop.l, u = p.loop.t / p.loop.dur, n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
@@ -1132,7 +1215,11 @@ function _drawBalls(dt) {
                 const ox = b.mesh.position.x, oz = b.mesh.position.z;
                 b.mesh.position.copy(at);
                 const mx = at.x - ox, mz = at.z - oz, dist = Math.hypot(mx, mz);
-                if (dist > 1e-4 && dist < 2) { _axis.set(mz, 0, -mx).normalize(); b.sphere.rotateOnWorldAxis(_axis, dist / P.R); }
+                // The ball turns with its spin, not its travel: off the putter it
+                // skids (barely turning), then grabs and rolls.
+                const onFloor = !p.air && !p.pipe && !p.loop && p.wx != null;
+                const sx = onFloor ? p.wx * dt : mx, sz = onFloor ? p.wz * dt : mz, sd = Math.hypot(sx, sz);
+                if (sd > 1e-4 && sd < 2 && dist < 2) { _axis.set(sz, 0, -sx).normalize(); b.sphere.rotateOnWorldAxis(_axis, sd / P.R); }
             }
             // Squash on a hit, back with a wobble.
             b.sq = Math.max(0, (b.sq || 0) - dt * 4);
@@ -1257,6 +1344,29 @@ function _showCard(on, final = false) {
     requestAnimationFrame(() => { if (_card) { _card.style.opacity = '1'; _card.style.transform = 'translate(-50%,-50%) scale(1)'; } });
 }
 
+/** A trick shot is over: sunk (in how many goes) or not. */
+function _chalEnd(ok) {
+    if (_phase === 'over') return;
+    _phase = 'over';
+    _showBtns(false); _hidePower();
+    _kits.forEach((_, s) => _hideKit(s));
+    const tries = _strokes[0][_hole];
+    _last = { challenge: _chal.id, course: _list[0]?.course, holes: [_list[0].hole.key], success: ok, tries, full: false,
+              totals: [tries], toPar: [0], aces: [ok && tries === 1 ? 1 : 0], strokes: _strokes.map(x => [...x]), par: [1], winner: 0 };
+    const stars = ok ? Math.max(1, 4 - tries) : 0;
+    _last.stars = stars;
+    const holed = _balls[0]?.done && !_balls[0]?.picked;
+    _last.holed = !!holed;
+    _hud.say(ok ? (holed ? 'HOLED IT!' : tries === 1 ? 'FIRST TIME!' : 'NAILED IT!') : 'NOT THIS TIME', ok ? '★'.repeat(stars) + '☆'.repeat(3 - stars) : `${_chal.tries} GOES`, 0, _t, ok ? '#fde047' : '#fca5a5');
+    if (ok) sfx('ace'); else sfx('land_bad');
+    const g = _gen;
+    setTimeout(() => {
+        if (_done || !_dir || g !== _gen) return;
+        _hud.say('');
+        _dir.close({ winner: ok ? 0 : -1, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub: ok ? `SUNK IN ${tries}` : 'TRY AGAIN?', onDone: () => { if (g === _gen) _finish(ok ? 0 : -1, [ok ? 1 : 0]); } });
+    }, _forceHoles ? 300 : 2200);
+}
+
 // ── The end ──────────────────────────────────────────────────────────────────
 function _end() {
     if (_phase === 'over') return;
@@ -1286,10 +1396,11 @@ function _end() {
         aces: _seats().map(s => _strokes[s].filter(n => n === 1).length),
     };
     _showCard(true, true);
+    const g = _gen;
     setTimeout(() => {
-        if (_done || !_dir) return;
+        if (_done || !_dir || g !== _gen) return;
         _showCard(false);
-        _dir.close({ winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub, onDone: () => _finish(w, rank) });
+        _dir.close({ winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })), sub, onDone: () => { if (g === _gen) _finish(w, rank); } });
     }, _forceHoles ? 400 : 3200);
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = _n === 1 ? `${_fmt(tot[w] - par)} ON PAR` : w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -1302,7 +1413,7 @@ let _last = null;
 export function lastRound() { return _last ? JSON.parse(JSON.stringify(_last)) : null; }
 export function _debugState() {
     return {
-        phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view,
+        phase: _phase, n: _n, sub: _sub, hole: _hole, mode: _mode, active: _active, turn: _turnState, view: _view, chal: _chal?.id || null, clock: +_t.toFixed(2), done: _done, nextWait: _nextWait, turnT: +_turnT.toFixed(2),
         course: _list[0]?.course, holes: _list.map(x => x.hole.key), par: _list.map(x => x.hole.par),
         strokes: _strokes.map(s => [...s]), times: _times.map(s => s.map(t => +t.toFixed(2))),
         balls: _balls.map(b => ({ x: +b.p.x.toFixed(2), y: +b.p.y.toFixed(2), z: +b.p.z.toFixed(2), v: +Math.hypot(b.p.vx, b.p.vz).toFixed(2), state: b.state, holed: b.done && !b.picked, picked: b.picked, on: b.on, air: b.p.air })),
