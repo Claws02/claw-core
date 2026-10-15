@@ -449,7 +449,59 @@ const SPACE = {
     ],
 };
 
-export const COURSES = [BACKYARD, PIRATE, CANDY, SPACE];
+// ── Openings: every hole starts up high and comes down onto the course ───────
+// Each course has its own way down — so a course feels like one place:
+//   backyard  off the patio: a step down (a ledge) or the garden ramp
+//   pirate    off the ship: jump the gap to the dock, or walk the gangplank (no rails, sea both sides)
+//   candy     off the top of a cake: a tier drop, or the frosting slide
+//   space     off a launch deck: jump the void (low gravity carries you), or a ledge
+const OPENINGS = {
+    backyard: { kind: 'wood', prop: 'gnome', styles: [['ledge', 1.1], ['ramp', 1.4], ['ledge', 0.9], ['ramp', 1.6]] },
+    pirate:   { kind: 'wood', prop: 'mast', styles: [['jump', 1.4], ['plank', 1.8], ['jump', 1.2], ['plank', 1.5]] },
+    candy:    { kind: undefined, prop: 'cane', styles: [['ledge', 2.0], ['slide', 2.4], ['ledge', 1.6], ['slide', 2.0]] },
+    space:    { kind: 'metal', prop: 'beacon', styles: [['jump', 1.0], ['ledge', 1.4], ['jump', 0.8], ['jump', 1.2]] },
+};
+const NO_OPENING = new Set(['plinko', 'rockery']);   // these start high already
+function _opening(h, course, i) {
+    const O = OPENINGS[course], X = -1.5;
+    const t0 = h.tiles.find(t => t.r[0] === X && t.r[1] <= h.tee[1] && t.r[3] >= h.tee[1] && !t.y && !t.slope && !t.move && !t.tilt && !t.elev);
+    if (!O || !t0 || NO_OPENING.has(h.key) || h.tee[0] !== 0) return h;
+    const [style, H] = O.styles[i % O.styles.length];
+    const za = Math.max(t0.r[1], -2.5), zb = Math.min(t0.r[3], 2.5);
+    const kind = O.kind, tiles = h.tiles.map(t => t === t0 && style !== 'ramp' && style !== 'slide' && style !== 'plank' ? { ...t, open: (t.open || '') + 'w' } : t);
+    const links = [...(h.links || [])];
+    const add = [], L = 6;
+    let teeX;
+    if (style === 'ledge') {
+        // Straight off the edge and down onto the course.
+        add.push({ r: [X - L, za, X, zb], y: H, kind, open: 'e' });
+        teeX = X - L + 1.6;
+    } else if (style === 'ramp' || style === 'slide') {
+        const R = style === 'slide' ? 5.5 : 4, w = style === 'slide' ? 1.0 : 1.3;
+        add.push({ r: [X - R - L, -2, X - R, 2], y: H, kind },
+                 { r: [X - R, -w, X, w], y: H / 2, slope: [-H / R, 0], kind: style === 'slide' ? 'felt' : 'wood' });
+        teeX = X - R - L + 1.6;
+    } else if (style === 'plank') {
+        // The gangplank: a narrow board with no rails, the sea underneath.
+        const R = 5.5;
+        add.push({ r: [X - R - L, -2, X - R, 2], y: H, kind },
+                 { r: [X - R, -0.6, X, 0.6], y: H / 2, slope: [-H / R, 0], kind: 'wood', open: 'nswe' },
+                 { r: [X - R, -3, X, 3], y: -0.4, kind: 'water', rail: false });
+        teeX = X - R - L + 1.6;
+    } else {
+        // The jump: off the end of the deck and over the gap. Too soft and you're in it.
+        const G = course === 'space' ? 3.0 : 2.2;
+        add.push({ r: [X - G - L, -2, X - G, 2], y: H, kind, open: 'e' });
+        if (course === 'pirate') add.push({ r: [X - G, -3, X, 3], y: -0.4, kind: 'water', rail: false });
+        links.push([X - G - 0.4, 0, X + 0.4, 0]);
+        teeX = X - G - L + 1.6;
+    }
+    // Something of the course's own by the top of the way down.
+    const props = [...(h.props || []), { type: O.prop, at: [teeX + 0.6, (style === 'ledge' ? Math.min(-2.5, za) : -2) - 1.1] }];
+    return { ...h, tee: [teeX, 0], tiles: [...add, ...tiles], links, props, opening: style };
+}
+
+export const COURSES = [BACKYARD, PIRATE, CANDY, SPACE].map(c => ({ ...c, holes: c.holes.map((h, i) => _opening(h, c.key, i)) }));
 
 /**
  * Trick shots: one ball from a set spot, three goes. In if it stops in the box
