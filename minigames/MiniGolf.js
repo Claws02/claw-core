@@ -13,7 +13,7 @@
 //
 //   PRESS THE BALL, PULL BACK and LET GO: a slingshot. The ball goes the opposite
 //   way to your pull, the further the harder (soft at first, for putts). A short
-//   arrow shows the way, a ring round the ball fills with the power, a tick under
+//   arrow shows the way, a band stretches back from the ball with the power, a tick under
 //   your thumb every tenth — no predicted path, you read the green. Taking turns,
 //   a swipe anywhere off the ball orbits the camera round it and tilts it.
 //
@@ -266,12 +266,26 @@ function _buildFig(slot) {
     return f;
 }
 /**
- * The aim: a short arrow from the ball the way it'll go, and a ring round the ball that fills
- * as you pull — the feel of the power, no numbers. (`dots` stays, empty: the full predicted
- * path is gone on purpose.)
+ * The aim: a short arrow from the ball the way it'll go, and the power band — a tapered
+ * slingshot strip stretching back from the ball along your pull, longer and hotter (green to
+ * red) the harder, over a faint track the length of a full hit, with a bright cap at its end.
+ * (`dots` stays, empty: the full predicted path is gone on purpose. `ring` is the band.)
  */
+const BAND_MAX = 2.6;                  // the band's length at full power
+function _bandGeo() {
+    // A unit strip along +y, narrow at the ball (y 0), wider at the end (y 1); alpha ramps in.
+    const g = new THREE.BufferGeometry(), N = 12, pos = [], col = [], idx = [];
+    for (let i = 0; i <= N; i++) {
+        const v = i / N, w = 0.07 + v * 0.11;
+        pos.push(-w, v, 0, w, v, 0);
+        const c = 0.55 + v * 0.45; col.push(c, c, c, c, c, c);
+    }
+    for (let i = 0; i < N; i++) { const q = i * 2; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx);
+    return g;
+}
 function _buildKit(slot) {
-    const k = { slot, dots: [], band: null, ring: null, ringBg: null, on: false, tick: -1 };
+    const k = { slot, dots: [], band: null, ring: null, ringBg: null, cap: null, on: false, tick: -1 };
     if (!_stage.gl) return k;
     const top = { transparent: true, depthTest: false, depthWrite: false };
     // The arrow: a shaft and a head, flat on the floor.
@@ -281,11 +295,14 @@ function _buildKit(slot) {
     const head = new THREE.Mesh(new THREE.CircleGeometry(0.17, 3), shaftM); head.position.y = 0.95; head.rotation.z = Math.PI / 2; band.add(head);
     band.children.forEach(m => { m.renderOrder = 6; });
     band.visible = false; _stage.add(band); k.band = band;
-    // The power ring: a faint track and a fill that sweeps round, green to amber to red.
-    const ringBg = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.46, 48), new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.22, ...top }));
-    ringBg.rotation.x = -Math.PI / 2; ringBg.renderOrder = 6; ringBg.visible = false; _stage.add(ringBg); k.ringBg = ringBg;
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.46, 48, 1, 0, 0.01), new THREE.MeshBasicMaterial({ color: 0x5ee07a, opacity: 0.95, side: THREE.DoubleSide, ...top }));
-    ring.rotation.x = -Math.PI / 2; ring.renderOrder = 7; ring.visible = false; _stage.add(ring); k.ring = ring;
+    // The power band, its track and its cap.
+    const geo = _bandGeo();
+    const ringBg = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.16, side: THREE.DoubleSide, ...top }));
+    ringBg.renderOrder = 6; ringBg.visible = false; _stage.add(ringBg); k.ringBg = ringBg;
+    const ring = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x5ee07a, vertexColors: true, opacity: 0.95, side: THREE.DoubleSide, ...top }));
+    ring.renderOrder = 7; ring.visible = false; _stage.add(ring); k.ring = ring;
+    const cap = new THREE.Mesh(new THREE.CircleGeometry(0.15, 24), new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 1, side: THREE.DoubleSide, ...top }));
+    cap.renderOrder = 8; cap.visible = false; _stage.add(cap); k.cap = cap;
     return k;
 }
 
@@ -749,7 +766,7 @@ function _shoot(slot, dx, dz, power) {
 function _hideKit(slot) {
     if (_figs[slot]) _figs[slot].aimP = null;
     const k = _kits[slot]; if (!k || !k.band) return;
-    k.band.visible = false; k.ring.visible = false; k.ringBg.visible = false; k.on = false; k.tick = -1;
+    k.band.visible = false; k.ring.visible = false; k.ringBg.visible = false; k.cap.visible = false; k.on = false; k.tick = -1;
 }
 const _UP = typeof THREE !== 'undefined' ? new THREE.Vector3(0, 1, 0) : null;
 function _drawKit(slot, a) {
@@ -761,14 +778,16 @@ function _drawKit(slot, a) {
     k.band.visible = true;
     k.band.position.set(b.x, y, b.z);
     k.band.rotation.set(0, -ang - Math.PI / 2, 0); k.band.rotateX(-Math.PI / 2);
-    // The ring fills from the back of the ball (where you're pulling) round both ways.
-    const col = new THREE.Color().setHSL(0.33 - a.power * 0.33, 0.9, 0.55);
-    const sweep = Math.max(0.02, a.power) * Math.PI * 2;
-    k.ring.geometry.dispose();
-    k.ring.geometry = new THREE.RingGeometry(0.36, 0.46, 48, 1, Math.PI - ang - sweep / 2, sweep);
+    // The power band: back from the ball along the pull, growing with the power.
+    const col = new THREE.Color().setHSL(0.33 - a.power * 0.33, 0.95, 0.55);
+    const L = 0.25 + a.power * (BAND_MAX - 0.25), back = -ang + Math.PI / 2;
+    const lay = (m, len) => { m.position.set(b.x, y, b.z); m.rotation.set(0, back, 0); m.rotateX(-Math.PI / 2); m.scale.set(1, len, 1); };
+    lay(k.ringBg, BAND_MAX); lay(k.ring, L);
     k.ring.material.color.copy(col);
-    k.ring.position.set(b.x, y, b.z); k.ringBg.position.set(b.x, y - 0.001, b.z);
-    k.ring.visible = k.ringBg.visible = true;
+    k.cap.position.set(b.x - a.dx * L, y + 0.002, b.z - a.dz * L); k.cap.rotation.set(-Math.PI / 2, 0, 0);
+    k.cap.material.color.copy(col).lerp(new THREE.Color(0xffffff), 0.35);
+    k.cap.scale.setScalar(0.8 + a.power * 0.6);
+    k.ring.visible = k.ringBg.visible = k.cap.visible = true;
     if (b.loaded) _built?.aimCannon?.(b.loaded, a.dx, a.dz);
     if (_figs[slot]) _figs[slot].aimP = a.power;
     // A tick under your thumb every tenth of the way: feel it, don't read it.
