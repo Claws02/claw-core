@@ -11,9 +11,11 @@
 //   CHAOS — everyone at once on the one overhead view, a strip of the screen
 //     each, putting again as soon as your ball stops.
 //
-//   DRAG BACK and LET GO: a slingshot. The ball goes the opposite way to your
-//   pull, the further the harder. The dotted line is where it goes — round the
-//   slope, off the first rail, and a little past; the bar is how hard.
+//   PRESS THE BALL, PULL BACK and LET GO: a slingshot. The ball goes the opposite
+//   way to your pull, the further the harder (soft at first, for putts). A short
+//   arrow shows the way, a ring round the ball fills with the power, a tick under
+//   your thumb every tenth — no predicted path, you read the green. Taking turns,
+//   a swipe anywhere off the ball orbits the camera round it and tilts it.
 //
 // The courses are data (golf/Courses.js), the ball is golf/Physics.js — slopes,
 // hills, ramps and jumps, rails, bumpers, windmills, sweepers, sliders, pipes,
@@ -45,7 +47,10 @@ import { buildHole, animateProps } from './golf/Build.js';
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const SAMPLER = 3;                     // holes in a party's round
 const PULL = 0.4;                      // a full pull, as a fraction of the screen's short side
-const MIN_PULL = 0.05;                 // less than this and the drag is cancelled
+const MIN_PULL = 0.05;
+const BALL_HIT = 56;                   // px: a press this close to your ball takes it (else it's a look)
+const LOOK_YAW = 0.0065, LOOK_TILT = 0.004;   // swipe to orbit / tilt, per px
+const TILT_MIN = 0.55, TILT_MAX = 2.3;                 // less than this and the drag is cancelled
 const CLOCK_TURNS = 30, CLOCK_CHAOS = 12;
 const ROLL_MAX = 14;                   // s a ball may roll before it's called stopped
 const FLY_DUR = 3.2;
@@ -92,7 +97,7 @@ let _n = 2, _mode = 'turns', _list = [], _hole = -1, _c = null, _built = null, _
 let _balls = [], _figs = [], _kits = [], _strokes = [], _times = [], _honors = [];
 let _phase = 'intro', _sub = '', _subT = 0, _t = 0, _holeT = 0;
 let _active = -1, _turnT = 0, _turnState = 'aim', _botThink = null, _shooter = -1, _nextWait = 0.7, _holder = -1, _pass = null;
-let _cam = null, _yaw = 0, _view = 'follow', _drag = new Map(), _ui = null, _card = null, _say2 = null;
+let _cam = null, _yaw = 0, _tilt = 1, _look = null, _view = 'follow', _drag = new Map(), _ui = null, _card = null, _say2 = null;
 
 const _seats = () => Array.from({ length: _n }, (_, i) => i);
 // Across phones (SoloArena) the one ball is always the person holding it.
@@ -119,7 +124,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _pt = 0; _slow = 1; _shake = 0; _ace = null;
     _strokes = _seats().map(() => []); _times = _seats().map(() => []);
     _honors = _seats();
-    _view = 'follow'; _drag = new Map();
+    _view = 'follow'; _drag = new Map(); _look = null; _tilt = 1;
     registerMinigameCleanup(_destroy);
 
     const course = courseByKey(_list[0].course);
@@ -260,16 +265,27 @@ function _buildFig(slot) {
     }
     return f;
 }
-/** The aim: a band back from the ball along your pull, and the dotted line of where it goes. */
+/**
+ * The aim: a short arrow from the ball the way it'll go, and a ring round the ball that fills
+ * as you pull — the feel of the power, no numbers. (`dots` stays, empty: the full predicted
+ * path is gone on purpose.)
+ */
 function _buildKit(slot) {
-    const k = { slot, dots: [], band: null, on: false };
+    const k = { slot, dots: [], band: null, ring: null, ringBg: null, on: false, tick: -1 };
     if (!_stage.gl) return k;
-    for (let i = 0; i < 40; i++) {
-        const d = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthTest: false }));
-        d.visible = false; d.renderOrder = 5; _stage.add(d); k.dots.push(d);
-    }
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.02, 1, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false }));
-    band.renderOrder = 6; band.visible = false; _stage.add(band); k.band = band;
+    const top = { transparent: true, depthTest: false, depthWrite: false };
+    // The arrow: a shaft and a head, flat on the floor.
+    const band = new THREE.Group();
+    const shaftM = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.9, ...top });
+    const shaft = new THREE.Mesh(new THREE.PlaneGeometry(0.07, 0.7), shaftM); shaft.position.y = 0.55; band.add(shaft);
+    const head = new THREE.Mesh(new THREE.CircleGeometry(0.17, 3), shaftM); head.position.y = 0.95; head.rotation.z = Math.PI / 2; band.add(head);
+    band.children.forEach(m => { m.renderOrder = 6; });
+    band.visible = false; _stage.add(band); k.band = band;
+    // The power ring: a faint track and a fill that sweeps round, green to amber to red.
+    const ringBg = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.46, 48), new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.22, ...top }));
+    ringBg.rotation.x = -Math.PI / 2; ringBg.renderOrder = 6; ringBg.visible = false; _stage.add(ringBg); k.ringBg = ringBg;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.46, 48, 1, 0, 0.01), new THREE.MeshBasicMaterial({ color: 0x5ee07a, opacity: 0.95, side: THREE.DoubleSide, ...top }));
+    ring.rotation.x = -Math.PI / 2; ring.renderOrder = 7; ring.visible = false; _stage.add(ring); k.ring = ring;
     return k;
 }
 
@@ -595,29 +611,46 @@ function _input() {
         else slot = _bandOf(p.y);
         if (slot < 0 || _isBot(slot) || _balls[slot].state !== 'aim' || [..._drag.values()].some(d => d.slot === slot)) return;
         if (_view === 'map') _view = 'follow';
-        _drag.set(e.pointerId, { slot, ax: p.x, ay: p.y, x: p.x, y: p.y, armed: false, ring: _cancelRing(slot, p.x, p.y) });
+        // Taking turns: press on your ball to putt; anywhere else, swipe to look round.
+        // (Sharing a phone in chaos, the camera's shared — press anywhere in your band.)
+        let ax = p.x, ay = p.y;
+        if (_mode === 'turns') {
+            const at = _ballOnScreen(slot);
+            if (!at || Math.hypot(p.x - at.x, p.y - at.y) > at.r) { if (!_look) _look = { id: e.pointerId, x: p.x, y: p.y }; return; }
+            ax = at.x; ay = at.y;
+        }
+        _drag.set(e.pointerId, { slot, ax, ay, x: p.x, y: p.y, armed: false, ring: _cancelRing(slot, ax, ay) });
     });
     _stage.listen('pointermove', e => {
+        if (_look && _look.id === e.pointerId) {
+            // Orbit round the ball (drag the world) and tilt up to read the green.
+            const p = _stage.toLocal(e.clientX, e.clientY);
+            _yaw -= (p.x - _look.x) * LOOK_YAW; _tilt = Math.max(TILT_MIN, Math.min(TILT_MAX, _tilt - (p.y - _look.y) * LOOK_TILT));
+            _look.x = p.x; _look.y = p.y;
+            return;
+        }
         const d = _drag.get(e.pointerId); if (!d) return;
         const p = _stage.toLocal(e.clientX, e.clientY); d.x = p.x; d.y = p.y;
-        const pw = _aimOf(d).power;
-        if (pw >= MIN_PULL * 2) d.armed = true;
-        _cancelShow(d, d.armed && pw < MIN_PULL * 2);
+        const u = _aimOf(d).pull;
+        if (u >= MIN_PULL * 2) d.armed = true;
+        _cancelShow(d, d.armed && u < MIN_PULL * 2);
     });
+    const lookEnd = e => { if (_look && _look.id === e.pointerId) _look = null; };
     _stage.listen('pointerup', e => {
+        lookEnd(e);
         const d = _drag.get(e.pointerId); if (!d) return;
         _drag.delete(e.pointerId);
         const a = _aimOf(d);
         d.ring?.remove();
         _hideKit(d.slot); _hidePower();
         // Back where it started: no shot, no stroke.
-        if (!a || a.power < MIN_PULL * 2) {
+        if (!a || a.pull < MIN_PULL * 2) {
             if (d.armed) { _hud.hint(d.slot, 'NO SHOT'); _say2Show('NO SHOT', '#e5e7eb', 600); sfx('tick'); }
             return;
         }
         _shoot(d.slot, a.dx, a.dz, a.power);
     });
-    _stage.listen('pointercancel', e => { const d = _drag.get(e.pointerId); if (d) { _drag.delete(e.pointerId); d.ring?.remove(); _hideKit(d.slot); _hidePower(); } });
+    _stage.listen('pointercancel', e => { lookEnd(e); const d = _drag.get(e.pointerId); if (d) { _drag.delete(e.pointerId); d.ring?.remove(); _hideKit(d.slot); _hidePower(); } });
 }
 /**
  * Where a drag started: a faint ring, the way out of a shot. Pull back into it
@@ -659,17 +692,30 @@ function _ground(x, y, h) {
     if (k < 0) return null;
     return [o.x + dir.x * k, o.z + dir.z * k];
 }
+/** Where a ball is on the screen, and how close a press has to be to take it. */
+function _ballOnScreen(slot) {
+    const b = _balls[slot]?.p, cam = _stage?.camera;
+    if (!b || !cam || !_stage.gl) return null;
+    const v = new THREE.Vector3(b.x, b.y + P.R, b.z).project(cam);
+    if (v.z > 1) return null;
+    const x = (v.x + 1) / 2 * _stage.width, y = (1 - v.y) / 2 * _stage.height;
+    // The ball's own size on screen, made generous for a thumb.
+    const e = new THREE.Vector3(b.x, b.y + P.R * 2, b.z).project(cam), rpx = Math.abs((1 - e.y) / 2 * _stage.height - y);
+    return { x, y, r: Math.max(BALL_HIT, rpx * 4) };
+}
+// The pull to power: soft at first (fine control for putts), steeper toward a full hit.
+const _curve = u => 0.35 * u + 0.65 * u * u;
 function _aimOf(d) {
     const px = d.x - d.ax, py = d.y - d.ay, len = Math.hypot(px, py);
-    const power = Math.min(1, len / (PULL * Math.min(_stage.width, _stage.height)));
-    if (len < 6) return { dx: 0, dz: 0, power: 0 };
+    const pull = Math.min(1, len / (PULL * Math.min(_stage.width, _stage.height))), power = _curve(pull);
+    if (len < 6) return { dx: 0, dz: 0, power: 0, pull: 0 };
     const b = _balls[d.slot].p;
     const g0 = _ground(d.ax, d.ay, b.y), g1 = _ground(d.x, d.y, b.y);
     let dx, dz;
     if (g0 && g1 && Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) > 1e-4) { dx = g0[0] - g1[0]; dz = g0[1] - g1[1]; }
     else { dx = -px; dz = -py; }
     const n = Math.hypot(dx, dz) || 1;
-    return { dx: dx / n, dz: dz / n, power };
+    return { dx: dx / n, dz: dz / n, power, pull };
 }
 
 function _shoot(slot, dx, dz, power) {
@@ -691,7 +737,7 @@ function _shoot(slot, dx, dz, power) {
     _strokes[slot][_hole]++;
     _shooter = slot;
     if (!_isBot(slot)) _holder = slot;
-    if (_mode === 'turns') { _turnState = 'roll'; _showBtns(false); _view = 'follow'; }
+    if (_mode === 'turns') { _turnState = 'roll'; _showBtns(false); _view = 'follow'; _tilt = 1; _look = null; }
     sfx('putt'); if (!_isBot(slot)) haptic([14]);
     const f = _figs[slot];
     if (f) { f.swing = 1; f.swingFrom = f.club ? f.club.rotation.x : 0.25; f.aimP = null; f.shotFrom = { x: b.p.x, z: b.p.z }; f.anim?.play('shove', { restart: true }); }
@@ -703,44 +749,32 @@ function _shoot(slot, dx, dz, power) {
 function _hideKit(slot) {
     if (_figs[slot]) _figs[slot].aimP = null;
     const k = _kits[slot]; if (!k || !k.band) return;
-    k.dots.forEach(d => { d.visible = false; }); k.band.visible = false; k.on = false;
+    k.band.visible = false; k.ring.visible = false; k.ringBg.visible = false; k.on = false; k.tick = -1;
 }
 const _UP = typeof THREE !== 'undefined' ? new THREE.Vector3(0, 1, 0) : null;
 function _drawKit(slot, a) {
     const k = _kits[slot], b = _balls[slot].p;
     if (!k?.band || !_c) return;
     k.on = true;
-    const col = new THREE.Color().setHSL(0.33 - a.power * 0.33, 0.9, 0.55);
-    // The band: from the ball back along the pull.
-    const L = 0.3 + a.power * 1.6;
+    const y = b.y + 0.03, ang = Math.atan2(a.dz, a.dx);
+    // The arrow: short, the way the ball will go.
     k.band.visible = true;
-    k.band.scale.set(1, L, 1);
-    k.band.position.set(b.x - a.dx * L / 2, b.y + P.R, b.z - a.dz * L / 2);
-    k.band.quaternion.setFromUnitVectors(_UP, new THREE.Vector3(a.dx, 0, a.dz));
-    k.band.material.color.copy(col);
+    k.band.position.set(b.x, y, b.z);
+    k.band.rotation.set(0, -ang - Math.PI / 2, 0); k.band.rotateX(-Math.PI / 2);
+    // The ring fills from the back of the ball (where you're pulling) round both ways.
+    const col = new THREE.Color().setHSL(0.33 - a.power * 0.33, 0.9, 0.55);
+    const sweep = Math.max(0.02, a.power) * Math.PI * 2;
+    k.ring.geometry.dispose();
+    k.ring.geometry = new THREE.RingGeometry(0.36, 0.46, 48, 1, Math.PI - ang - sweep / 2, sweep);
+    k.ring.material.color.copy(col);
+    k.ring.position.set(b.x, y, b.z); k.ringBg.position.set(b.x, y - 0.001, b.z);
+    k.ring.visible = k.ringBg.visible = true;
     if (b.loaded) _built?.aimCannon?.(b.loaded, a.dx, a.dz);
-    // The line: the shot played out, cut off a little past the first rail.
-    const sim = P.simulate(_c, b, a.dx, a.dz, a.power, _pt, { every: 1 / 120, dt: 1 / 120, maxT: 2.5, stopAfter: 1.6 + a.power * 6.5, bounces: 1, stopAtPipe: true });
-    const pts = sim.pts, tint = sim.result === 'cup' ? 0xfde047 : sim.result === 'water' || sim.result === 'out' ? 0x7dd3fc : 0xffffff;
-    let acc = 0, di = 0, last = pts[0];
-    for (let i = 1; i < pts.length && di < k.dots.length; i++) {
-        const p = pts[i];
-        acc += Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]); last = p;
-        if (acc >= 0.32) {
-            acc = 0;
-            const d = k.dots[di++];
-            d.visible = true; d.position.set(p[0], p[1] + P.R, p[2]);
-            d.material.opacity = 0.95 * (1 - di / k.dots.length * 0.7);
-            d.material.color.setHex(tint);
-        }
-    }
-    for (; di < k.dots.length; di++) k.dots[di].visible = false;
     if (_figs[slot]) _figs[slot].aimP = a.power;
-    if (_mode === 'turns' && _ui && !_isBot(slot)) {
-        _ui.power.style.display = 'block'; _ui.powerTxt.style.display = 'block';
-        _ui.powerFill.style.width = Math.round(a.power * 100) + '%';
-        _ui.powerTxt.textContent = `POWER ${Math.round(a.power * 100)}%`;
-    } else if (_mode === 'chaos') _hud.hint(slot, `POWER ${Math.round(a.power * 100)}%`);
+    // A tick under your thumb every tenth of the way: feel it, don't read it.
+    const tick = Math.floor(a.power * 10);
+    if (k.tick >= 0 && tick !== k.tick && !_isBot(slot)) { haptic([tick >= 9 ? 12 : 5]); if (tick > k.tick) sfx('tick'); }
+    k.tick = tick;
 }
 
 // ── Scoring moments ──────────────────────────────────────────────────────────
@@ -972,7 +1006,7 @@ function _play(dt, pdt = dt) {
             else {
                 const d = [..._drag.values()].find(x => x.slot === _active);
                 _showBtns(!d);
-                if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL * 2) _drawKit(_active, a); else { _hideKit(_active); _hidePower(); } }
+                if (d) { const a = _aimOf(d); if (a.pull >= MIN_PULL * 2) _drawKit(_active, a); else { _hideKit(_active); _hidePower(); } }
                 if (_turnT >= CLOCK_TURNS) {
                     // Out of time: a fair, unspectacular putt toward the cup —
                     // the stroke is the penalty, not a hole that never ends.
@@ -993,7 +1027,7 @@ function _play(dt, pdt = dt) {
                 return;
             }
             const d = [..._drag.values()].find(x => x.slot === b.slot);
-            if (d) { const a = _aimOf(d); if (a.power >= MIN_PULL * 2) _drawKit(b.slot, a); else _hideKit(b.slot); }
+            if (d) { const a = _aimOf(d); if (a.pull >= MIN_PULL * 2) _drawKit(b.slot, a); else _hideKit(b.slot); }
             if (b.clock >= CLOCK_CHAOS) {
                 // Out of time: the same fair putt as in turns — a stroke, not a hole that never ends.
                 const pl = plan(_c, b.p, _pt, 0.35);
@@ -1119,10 +1153,11 @@ function _chaosCam() {
     const [ax, az] = _upAxis(), tilt = 0.38;
     return { h, pos: [cx - ax * h * Math.sin(tilt), h * Math.cos(tilt), cz - az * h * Math.sin(tilt)], look: [cx + ax * 0.6, 0, cz + az * 0.6] };
 }
-function _aimPose(x, y, z, yaw, back = 1) {
-    const dx = Math.cos(yaw), dz = Math.sin(yaw);
+function _aimPose(x, y, z, yaw, back = 1, tilt = 1) {
+    // tilt > 1: higher and a little closer in, looking down on the green; < 1: lower, along it.
+    const dx = Math.cos(yaw), dz = Math.sin(yaw), bk = CAM_BACK * back * (1.12 - 0.12 * tilt);
     return {
-        pos: new THREE.Vector3(x - dx * CAM_BACK * back, y + CAM_UP * back, z - dz * CAM_BACK * back),
+        pos: new THREE.Vector3(x - dx * bk, y + CAM_UP * back * tilt, z - dz * bk),
         look: new THREE.Vector3(x + dx * CAM_AHEAD, y, z + dz * CAM_AHEAD),
     };
 }
@@ -1166,8 +1201,10 @@ function _camera(dt) {
         _cam.pos.lerp(new THREE.Vector3(...f.pos), k); _cam.look.lerp(new THREE.Vector3(...f.look), k);
     } else if (_turnState === 'aim' || _turnState === 'pass') {
         const b = _balls[_active].p;
-        const a = _aimPose(b.x, b.y, b.z, _yaw);
-        if (!_drag.size) { _cam.pos.lerp(a.pos, k); _cam.look.lerp(a.look, k); }
+        const a = _aimPose(b.x, b.y, b.z, _yaw, 1, _tilt);
+        // Swiping to look: follow the finger closely.
+        const kk = _look ? Math.min(1, k * 3) : k;
+        if (!_drag.size) { _cam.pos.lerp(a.pos, kk); _cam.look.lerp(a.look, kk); }
     } else if (_inCannon()) {
         // In a cannon: it spins and fires you somewhere — pull back over the whole hole so
         // you see it turn, the arc and where it comes down (up close, the barrel fills the view).
@@ -1392,7 +1429,7 @@ function _renderHud() {
         if (seat(s).bot) { _hud.hint(s, `${now} · ${_fmt(_toPar(s))}`); return; }
         if (_mode === 'turns') {
             _hud.hint(s, s === _active && _turnState === 'aim'
-                ? (_hole === 0 && now === 0 ? 'DRAG BACK · LET GO' : `YOUR SHOT · ${Math.max(0, Math.ceil(CLOCK_TURNS - _turnT))}s`)
+                ? (_hole === 0 && now === 0 ? 'PULL BACK FROM THE BALL · SWIPE TO LOOK' : `YOUR SHOT · ${Math.max(0, Math.ceil(CLOCK_TURNS - _turnT))}s`)
                 : `${now} · ${_fmt(_toPar(s))}`);
         } else if (![..._drag.values()].some(d => d.slot === s)) {
             _hud.hint(s, b.state === 'aim' ? (_hole === 0 && now === 0 ? 'DRAG BACK ON YOUR STRIP' : `STROKE ${now + 1} · ${Math.max(0, Math.ceil(CLOCK_CHAOS - b.clock))}s`) : `ROLLING · ${now}`);
@@ -1528,7 +1565,8 @@ export function _debugState() {
         balls: _balls.map(b => ({ x: +b.p.x.toFixed(2), y: +b.p.y.toFixed(2), z: +b.p.z.toFixed(2), v: +Math.hypot(b.p.vx, b.p.vz).toFixed(2), state: b.state, holed: b.done && !b.picked, picked: b.picked, on: b.on, air: b.p.air })),
         cup: _c ? [_c.cup.x, _c.cup.z] : null, tee: _c ? [_c.tee.x, _c.tee.z] : null,
         views: 1, gl: !!_stage?.gl, turned: !!_stage?.turned, card: !!_card && _card.style.display === 'block',
-        aiming: _kits.map(k => k.on), pass: _pass ? _pass.slot : -1, dots: _kits.map(k => k.dots.filter(d => d.visible).length),
+        aiming: _kits.map(k => k.on), pass: _pass ? _pass.slot : -1, dots: _kits.map(k => k.dots.filter(d => d.visible).length), ring: _kits.map(k => !!k.ring?.visible), tilt: _tilt, yaw: _yaw,
+        onScreen: _balls.map((b, i) => { const a = _ballOnScreen(i); return a ? [Math.round(a.x), Math.round(a.y)] : null; }),
     };
 }
 /** Probes: put a ball at rest at (x, z), on the course. */
