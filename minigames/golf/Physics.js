@@ -125,7 +125,7 @@ export function compile(hole) {
             i, x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1),
             y: t.y || 0, gx: t.slope?.[0] || 0, gz: t.slope?.[1] || 0,
             hills: t.hills || [], ridges: t.ridges || [], trough: t.trough || null,
-            kind: t.kind || 'turf', open: t.open || '', boost: t.boost || null, flow: t.flow || null,
+            kind: t.kind || 'turf', open: t.open || '', norest: !!t.norest, boost: t.boost || null, flow: t.flow || null,
             spin: t.spin || 0, discR: t.discR || 0, move: t.move || null, lift: t.lift || null,
             tilt: t.tilt || null, elev: t.elev || null, railMat: t.railMat || null,
             rail: t.rail ?? !(t.move || t.lift),

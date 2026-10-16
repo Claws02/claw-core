@@ -337,7 +337,9 @@ export function make(c, theme) {
         for (let k = 0; k < 5; k++) { const bl = Toy.rbox(0.18, 0.62, 0.04, 0.04, glow(theme.accent, 0.4)); bl.position.y = 0.32; const arm = new THREE.Group(); arm.add(bl); arm.rotation.z = k / 5 * Math.PI * 2; blades.add(arm); }
         fan.add(blades);
         const stand = Toy.rbox(0.25, 0.8, 0.25, 0.06, Toy.mat(0x4b5563)); stand.position.y = -0.7; fan.add(stand);
-        fan.position.set(at[0], (c.tiles[0]?.y || 0) + 0.85, at[1]);
+        // On the floor the wind blows across (a raised deck, a bridge), not the first tile's.
+        const fy = floorAt(c, cx, cz, 99, 0, 0)?.h ?? (c.tiles[0]?.y || 0);
+        fan.position.set(at[0], fy + 0.85, at[1]);
         fan.rotation.y = Math.atan2(ux, uz);
         fan.traverse(o => { if (o.isMesh) o.castShadow = true; });
         group.add(fan);
@@ -351,7 +353,7 @@ export function make(c, theme) {
                 const u = (tt * 0.9 + ph) % 1;
                 const ax = ux ? (ux > 0 ? Math.min(x0, x1) + Math.abs(x1 - x0) * u : Math.max(x0, x1) - Math.abs(x1 - x0) * u) : Math.min(x0, x1) + Math.abs(x1 - x0) * lane;
                 const az = uz ? (uz > 0 ? Math.min(z0, z1) + Math.abs(z1 - z0) * u : Math.max(z0, z1) - Math.abs(z1 - z0) * u) : Math.min(z0, z1) + Math.abs(z1 - z0) * lane;
-                s.position.set(ax, 0.25 + (i % 3) * 0.12, az);
+                s.position.set(ax, fy + 0.25 + (i % 3) * 0.12, az);
                 s.material.opacity = 0.55 * Math.sin(u * Math.PI);
             });
         }
@@ -365,13 +367,14 @@ export function make(c, theme) {
         const ball = new THREE.Mesh(new THREE.SphereGeometry(0.55, 24, 16), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.25, roughness: 0.6 }));
         planet.add(ball);
         const ring = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.05, 6, 40), glow(0xffffff, 0.5)); ring.rotation.x = 1.2; planet.add(ring);
-        planet.position.set(m.x, 1.6, m.z); group.add(planet);
+        const my = floorAt(c, m.x, m.z, 99, 0, 0)?.h ?? 0;
+        planet.position.set(m.x, my + 1.6, m.z); group.add(planet);
         const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.4, 1.5, 12, 1, true), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.25, depthWrite: false }));
-        beam.position.set(m.x, 0.8, m.z); group.add(beam);
+        beam.position.set(m.x, my + 0.8, m.z); group.add(beam);
         const rings = [];
         for (let k = 0; k < 3; k++) {
             const r = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.0, 40), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.5, depthWrite: false }));
-            r.rotation.x = -Math.PI / 2; r.position.set(m.x, 0.02, m.z); group.add(r); rings.push(r);
+            r.rotation.x = -Math.PI / 2; r.position.set(m.x, my + 0.02, m.z); group.add(r); rings.push(r);
         }
         live.push((dt, tt) => {
             planet.rotation.y += dt * 0.6; planet.position.y = 1.6 + Math.sin(tt * 1.4 + i) * 0.12;
