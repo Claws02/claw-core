@@ -396,15 +396,15 @@ export function pipeEnd(p, end, y, theme) {
         g.position.set(q[0], y, q[1]);
         return shadowed(g);
     }
-    if (theme.scenery === 'space') {
+    if (theme.scenery === 'space' || p.style === 'teleport') {
         // A teleport pad: a hex plate, a lit ring and a beam of light.
         const plate = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.25, r + 0.3, 0.08, 6), mat(0x4b5563, { metalness: 0.6, roughness: 0.3 }));
         plate.position.y = 0.04; g.add(plate);
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.05, 0.05, 8, 28), glow(theme.pipe ?? 0xa855f7, 1.2)); ring.rotation.x = Math.PI / 2; ring.position.y = 0.09; g.add(ring);
-        const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 24), new THREE.MeshBasicMaterial({ color: theme.pipe ?? 0xa855f7, transparent: true, opacity: 0.55 }));
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.05, 0.05, 8, 28), glow((p.color ?? theme.pipe) ?? 0xa855f7, 1.2)); ring.rotation.x = Math.PI / 2; ring.position.y = 0.09; g.add(ring);
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 24), new THREE.MeshBasicMaterial({ color: (p.color ?? theme.pipe) ?? 0xa855f7, transparent: true, opacity: 0.55 }));
         disc.rotation.x = -Math.PI / 2; disc.position.y = 0.085; g.add(disc);
         const beam = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.95, r, 1.6, 20, 1, true),
-            new THREE.MeshBasicMaterial({ color: theme.pipe ?? 0xa855f7, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+            new THREE.MeshBasicMaterial({ color: (p.color ?? theme.pipe) ?? 0xa855f7, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
         beam.position.y = 0.9; g.add(beam);
         g.userData.pulse = { disc, beam, ring };
     } else if (theme.scenery === 'pirate' && end === 'b') {
@@ -415,11 +415,11 @@ export function pipeEnd(p, end, y, theme) {
         });
     } else if (theme.scenery === 'pirate') {
         // The cannon itself is a prop; the mouth on the deck is a dark hole in a brass ring.
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.05, 0.07, 8, 24), glossy(0xd9a514, { metalness: 0.6 })); ring.rotation.x = Math.PI / 2; ring.position.y = 0.04; g.add(ring);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.05, 0.07, 8, 24), glossy(p.color ?? 0xd9a514, { metalness: 0.6 })); ring.rotation.x = Math.PI / 2; ring.position.y = 0.04; g.add(ring);
         const hole = new THREE.Mesh(new THREE.CircleGeometry(r, 22), new THREE.MeshBasicMaterial({ color: 0x050505 })); hole.rotation.x = -Math.PI / 2; hole.position.y = 0.01; g.add(hole);
     } else {
         // A garden hose: a fat rubber ring, a dark throat, a brass coupling.
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.07, 0.11, 10, 26), glossy(theme.pipe ?? 0x2e9e57)); ring.rotation.x = Math.PI / 2; ring.position.y = 0.08; g.add(ring);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.07, 0.11, 10, 26), glossy((p.color ?? theme.pipe) ?? 0x2e9e57)); ring.rotation.x = Math.PI / 2; ring.position.y = 0.08; g.add(ring);
         const brass = new THREE.Mesh(new THREE.TorusGeometry(r + 0.07, 0.04, 6, 26), glossy(0xd9a514, { metalness: 0.7 })); brass.rotation.x = Math.PI / 2; brass.position.y = 0.17; g.add(brass);
         const throat = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.3, 22, 1, true), new THREE.MeshBasicMaterial({ color: 0x07110a, side: THREE.BackSide }));
         throat.position.y = -0.1; g.add(throat);
@@ -443,7 +443,7 @@ export function cannon() {
     b.rotation.z = -Math.PI / 2 + 0.4; b.position.set(0.25, 0.55, 0);
     g.add(b);
     // For the firing: the barrel kicks back, the ball leaves from the tip.
-    g.userData.barrel = b; g.userData.barrelX = b.position.x;
+    g.userData.barrel = b; g.userData.barrelX = b.position.x; g.userData.recoil = 0;
     g.userData.muzzle = () => { g.updateMatrixWorld(true); return tip.getWorldPosition(new THREE.Vector3()); };
     const cart = rbox(1.0, 0.32, 0.62, 0.06, mat(0x7a4a1e)); cart.position.set(0.55, 0.3, 0); g.add(cart);
     [-0.36, 0.36].forEach(z => [0.2, 0.9].forEach(x => {

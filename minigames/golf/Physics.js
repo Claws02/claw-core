@@ -62,7 +62,7 @@ export const SURFACE = {
     conveyor:  { roll: 1,    bounce: 0.3,  mu: 0.5, drag: 5 },
     creek:     { roll: 1.3,  bounce: 0.1,  mu: 0.3, drag: 3, splash: true },
     turntable: { roll: 1,    bounce: 0.3,  mu: 0.45, drag: 7 },
-    raft:      { roll: 1.1,  bounce: 0.35, mu: 0.45, drag: 12 },
+    raft:      { roll: 2.0,  bounce: 0.35, mu: 0.5, ride: true },    // a rough deck: rolls like a floor; stopped, it rides   // rolls on the deck like a floor; stopped, it rides
     jelly:     { roll: 1.6,  bounce: 0.88, mu: 0.6 },
     bouncy:    { roll: 1.5,  bounce: 0.75, mu: 0.6 },                   // a bouncy-castle floor
 };
@@ -105,11 +105,14 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *   hole.rail   the rails' material (default wood); hole.blockMat (default stone)
  *   hole.walls  [[x1, z1, x2, z2, h?, mat?]]
  *   hole.blocks [[x0, z0, x1, z1, h?]]
- *   hole.bumpers [[x, z, r, kick?, e?]]   (a peg: kick 0, e ~0.6)
+ *   hole.bumpers [[x, z, r, kick?, e?, jit?]]   (a peg: kick 0, e ~0.6; jit: a plinko peg's
+ *                  scatter, radians — the same on every phone, but no one can read it)
  *   hole.movers [{ type: 'windmill'|'sweeper'|'slider'|'gate'|'hammer', ... }]
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
  *   hole.magnets [{ x, z, r, k }]
- *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style? }]
+ *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max?, stop? }]  (max: uses per shot;
+ *                  stop: it sets the ball down at b, at rest — the shot ends there;
+ *                  color: its mouth and its exit drawn in this colour, to tell pipes apart)
  *   hole.loops  [{ a, dir, len, minV?, b?, style? }]  (style 'corkscrew' with b: a spiral down to b)
  *   hole.mines  [[x, z, r?, power?]]
  *   hole.gravity  a multiplier; hole.links: extra [x1, z1, x2, z2] the path field may jump
@@ -122,7 +125,7 @@ export function compile(hole) {
             i, x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1),
             y: t.y || 0, gx: t.slope?.[0] || 0, gz: t.slope?.[1] || 0,
             hills: t.hills || [], ridges: t.ridges || [], trough: t.trough || null,
-            kind: t.kind || 'turf', open: t.open || '', boost: t.boost || null, flow: t.flow || null,
+            kind: t.kind || 'turf', open: t.open || '', norest: !!t.norest, boost: t.boost || null, flow: t.flow || null,
             spin: t.spin || 0, discR: t.discR || 0, move: t.move || null, lift: t.lift || null,
             tilt: t.tilt || null, elev: t.elev || null, railMat: t.railMat || null,
             rail: t.rail ?? !(t.move || t.lift),
@@ -193,12 +196,13 @@ export function compile(hole) {
         const hh = h ?? 0.5;
         [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]].forEach(([a, b, p, q]) => c.walls.push({ ..._wall(c, a, b, p, q, hh, null, bm), block: true }));
     });
-    (hole.bumpers || []).forEach(([x, z, r, kick, e]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, y: floorAt(c, x, z, 9)?.h ?? 0 }));
-    (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32 }));
+    (hole.bumpers || []).forEach(([x, z, r, kick, e, jit]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, jit: jit || 0, y: floorAt(c, x, z, 99)?.h ?? 0 }));
+    // A cannon's ball lands still going the way it was fired.
+    (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32, dir: p.style === 'cannon' ? [p.b[0] - p.a[0], p.b[1] - p.a[1]] : p.dir }));
     (hole.loops || []).forEach(l => c.loops.push({ ...l, minV: l.minV || 6.5 }));
-    const cupF = floorAt(c, hole.cup[0], hole.cup[1], 9);
+    const cupF = floorAt(c, hole.cup[0], hole.cup[1], 99);
     c.cup = { x: hole.cup[0], z: hole.cup[1], y: cupF ? cupF.h : 0 };
-    const teeF = floorAt(c, hole.tee[0], hole.tee[1], 9);
+    const teeF = floorAt(c, hole.tee[0], hole.tee[1], 99);
     c.tee = { x: hole.tee[0], z: hole.tee[1], y: teeF ? teeF.h : 0 };
     c.bounds = tiles.reduce((b, t) => {
         const a = t.move ? t.move.amp : 0, ax = t.move?.axis === 'x' ? a : 0, az = t.move?.axis === 'z' ? a : 0;
@@ -216,8 +220,8 @@ function _swing(t) {
 }
 
 function _wall(c, x1, z1, x2, z2, h, tile, mat) {
-    const b1 = tile ? _tileH(tile, x1, z1) : (floorAt(c, x1, z1, 9)?.h ?? 0);
-    const b2 = tile ? _tileH(tile, x2, z2) : (floorAt(c, x2, z2, 9)?.h ?? 0);
+    const b1 = tile ? _tileH(tile, x1, z1) : (floorAt(c, x1, z1, 99)?.h ?? 0);
+    const b2 = tile ? _tileH(tile, x2, z2) : (floorAt(c, x2, z2, 99)?.h ?? 0);
     return { x1, z1, x2, z2, b1, b2, h, rail: !!tile, mat: MATERIAL[mat] ? mat : 'wood' };
 }
 
@@ -338,7 +342,7 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
 export function moverWalls(c, t) {
     const out = [];
     for (const m of c.movers) {
-        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 9, STEP_UP, 0)?.h ?? 0);
+        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP, 0)?.h ?? 0);
         if (m.type === 'windmill' || m.type === 'gate' || m.type === 'liftgate') {
             const shut = m.type === 'windmill' ? windmillShut(m, t) : m.type === 'gate' ? gateShut(m, t) : liftGateShut(c, m, t);
             if (shut) {
@@ -378,7 +382,7 @@ export function hammerHeads(c, t) {
         const A = m.amp || 1.5, s = m.speed || 1.6, ph = m.phase || 0;
         const o = A * Math.sin(t * s + ph), v = A * s * Math.cos(t * s + ph);
         const ax = (m.axis || 'z') === 'x' ? 1 : 0, az = 1 - ax;
-        out.push({ x: m.x + ax * o, z: m.z + az * o, r: m.r || 0.35, vx: ax * v, vz: az * v, y: m._base ?? (m._base = floorAt(c, m.x, m.z, 9, STEP_UP, 0)?.h ?? 0), m });
+        out.push({ x: m.x + ax * o, z: m.z + az * o, r: m.r || 0.35, vx: ax * v, vz: az * v, y: m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP, 0)?.h ?? 0), m });
     }
     return out;
 }
@@ -415,7 +419,7 @@ export function newBall(x, z, y = 0) {
 /** Hit it: a direction on the floor and a power 0..1. */
 export function strike(b, dx, dz, power) {
     const n = Math.hypot(dx, dz) || 1, v = Math.max(0, Math.min(1, power)) * MAXV;
-    b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false;
+    b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false; b.ride = null; b.tps = 0;
     b.wx = b.vx * PUTT_ROLL; b.wz = b.vz * PUTT_ROLL;   // off the face skidding, with a little roll
 }
 /** Is the ball skidding (its spin not caught up with its speed)? */
@@ -437,8 +441,10 @@ export function step(c, b, dt, t, others = null, ev = []) {
         if (b.pipe.t <= 0) {
             const p = b.pipe.p, sp = b.pipe.v;
             const n = Math.hypot(p.dir[0], p.dir[1]) || 1;
-            const f = floorAt(c, p.b[0], p.b[1], 9);
+            const f = floorAt(c, p.b[0], p.b[1], 99);   // (from any height: a drop can start high)
             Object.assign(b, { x: p.b[0], z: p.b[1], y: f ? f.h : 0, vx: p.dir[0] / n * sp, vz: p.dir[1] / n * sp, vy: 0, air: false, pipe: null, rest: false });
+            // A stop pipe (plinko's) puts it down at the far end and that's the shot over.
+            if (p.stop) Object.assign(b, { vx: 0, vz: 0, rest: true });
             b.wx = b.vx; b.wz = b.vz;
             ev.push({ type: 'pipeout', p });
         }
@@ -488,6 +494,27 @@ function _fields(c, b, d) {
     }
 }
 
+/**
+ * Every tile is solid down to the ground (that's how it's drawn): a ball moving
+ * from (ox, oz) into one whose floor is above it by more than it can climb hits
+ * its side and bounces back off it. True if it did.
+ */
+function _face(c, b, ox, oz, nx, nz, climb, ev) {
+    for (const t of c.tiles) {
+        if (t.move || t.lift || HAZARD[t.kind] || !_inTile(t, nx, nz) || _inTile(t, ox, oz)) continue;
+        if (_tileH(t, nx, nz, c._t) <= b.y + climb) continue;
+        const v = Math.hypot(b.vx, b.vz);
+        let hit = false;
+        if (ox < t.x0 || ox > t.x1) { b.vx *= -0.45; hit = true; }
+        if (oz < t.z0 || oz > t.z1) { b.vz *= -0.45; hit = true; }
+        if (!hit) continue;
+        b.x = ox; b.z = oz;
+        if (v > 0.6) ev.push({ type: 'wall', v: v * 0.5, mat: 'wood', at: [b.x, b.y, b.z] });
+        return true;
+    }
+    return false;
+}
+
 function _sub(c, b, d, t, movers, others, ev) {
     b._d = d;
     const cupD = Math.hypot(b.x - c.cup.x, b.z - c.cup.z);
@@ -496,8 +523,11 @@ function _sub(c, b, d, t, movers, others, ev) {
         const y0 = b.y;
         b.vy -= c.G * d;
         b.x += b.vx * d; b.y += b.vy * d; b.z += b.vz * d;
+        // Flying into the side of something higher (a deck, a ledge, a kicker): it bounces off the face.
+        _face(c, b, b.x - b.vx * d, b.z - b.vz * d, b.x, b.z, 0.15, ev);
         const over = Math.hypot(b.x - c.cup.x, b.z - c.cup.z) < CUP_R;
-        if (over && b.y < c.cup.y + 0.02) {
+        // (From above: a ball falling past far below the green never finds the cup.)
+        if (over && b.y < c.cup.y + 0.02 && y0 > c.cup.y - CUP_DEPTH - 0.3) {
             // In the cup: the bottom, the wall and the rim.
             b.inCup = true;
             if (b.y <= c.cup.y - CUP_DEPTH) { b.y = c.cup.y - CUP_DEPTH; b.vy = Math.abs(b.vy) * 0.2; b.vx *= 0.5; b.vz *= 0.5; }
@@ -532,6 +562,16 @@ function _sub(c, b, d, t, movers, others, ev) {
                 return;
             }
             if (f.kind !== 'jelly') b.jelly = false;
+            // Stopped on a raft: it rides, glued to the deck, till it's hit (or hit by a ball).
+            if (b.rest && S.ride && f.tile.move) {
+                const o = tileOffset(f.tile, c._t);
+                if (!b.ride || b.ride.t !== f.tile) b.ride = { t: f.tile, lx: b.x - o.dx, lz: b.z - o.dz };
+                b.x = b.ride.lx + o.dx; b.z = b.ride.lz + o.dz; b.y = f.h;
+                b.vx = b.wx = o.vx; b.vz = b.wz = o.vz; b.vy = 0;
+                _collide(c, b, movers, others, ev);
+                return;
+            }
+            b.ride = null;
             if (b.rest && !f.sv && !f.awake) { _collide(c, b, movers, others, ev); return; }
             const svx = f.sv ? f.sv[0] : 0, svz = f.sv ? f.sv[1] : 0;
             if (b.wx == null) { b.wx = b.vx; b.wz = b.vz; }
@@ -560,7 +600,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             b.vx += ax * d; b.vz += az * d;
             if (!skid) { b.wx += ax * d; b.wz += az * d; }
             // A moving floor drags the ball toward its own speed.
-            if (f.sv) {
+            if (f.sv && !S.ride) {
                 const k = Math.min(1, (S.drag || 5) * d);
                 b.vx += (svx - b.vx) * k; b.vz += (svz - b.vz) * k;
                 b.wx += (svx - b.wx) * k; b.wz += (svz - b.wz) * k;
@@ -574,6 +614,8 @@ function _sub(c, b, d, t, movers, others, ev) {
                 if (!skid) { b.wx = b.vx; b.wz = b.vz; }
             }
             const vyOld = b.vx * f.gx + b.vz * f.gz;
+            // Rolling into the side of a deck, a catwalk or a ramp's end overhead: off the face.
+            if (_face(c, b, b.x, b.z, b.x + b.vx * d, b.z + b.vz * d, STEP_UP + 0.05, ev)) { _collide(c, b, movers, others, ev); return; }
             const nx = b.x + b.vx * d, nz = b.z + b.vz * d;
             const yPred = b.y + vyOld * d;
             const nd = Math.hypot(nx - c.cup.x, nz - c.cup.z);
@@ -619,7 +661,8 @@ function _sub(c, b, d, t, movers, others, ev) {
     // Pipes and loops: a mouth on the floor.
     if (!b.air) {
         for (const p of c.pipes) {
-            if (Math.hypot(b.x - p.a[0], b.z - p.a[1]) < p.r) {
+            if (Math.hypot(b.x - p.a[0], b.z - p.a[1]) < p.r && !(p.max && (b.tps || 0) >= p.max)) {
+                if (p.max) b.tps = (b.tps || 0) + 1;
                 b.pipe = { p, t: p.delay ?? 0.6, dur: p.delay ?? 0.6, v: p.out ?? Math.max(3, Math.hypot(b.vx, b.vz) * (p.keep ?? 0.9)), from: [b.x, b.y, b.z] };
                 ev.push({ type: 'pipe', p }); return;
             }
@@ -773,7 +816,20 @@ function _collide(c, b, movers, others, ev) {
         nx /= dist; nz /= dist;
         b.x = p.x + nx * (p.r + R); b.z = p.z + nz * (p.r + R);
         const vn = b.vx * nx + b.vz * nz;
-        if (vn < 0) {
+        if (vn < 0 && vn > -0.35 && !b.air) {
+            // Leaning on it (a slow roll, or gravity pressing it in): it slides round, no bounce.
+            b.vx -= vn * nx; b.vz -= vn * nz;
+            if (p.jit && Math.hypot(b.vx, b.vz) < 0.25) {
+                // Balanced on top of a peg: it falls off one side or the other (a hash picks which).
+                const hs = Math.sin(b.x * 91.3 + b.z * 47.1 + p.x * 13.7) * 43758.5453, sd = hs - Math.floor(hs) < 0.5 ? -0.3 : 0.3;
+                b.vx += -nz * sd; b.vz += nx * sd;
+            }
+        } else if (vn < 0) {
+            if (p.jit) {
+                // A plinko peg: knocked a little off true, by where it was struck (a hash, not Math.random).
+                const hsh = Math.sin(b.x * 127.1 + b.z * 311.7 + vn * 74.7) * 43758.5453, a = (hsh - Math.floor(hsh) - 0.5) * 2 * p.jit;
+                const ca = Math.cos(a), sa = Math.sin(a), qx = nx * ca - nz * sa; nz = nx * sa + nz * ca; nx = qx;
+            }
             b.vx -= (1 + p.e) * vn * nx; b.vz -= (1 + p.e) * vn * nz;
             b.vx += nx * p.kick; b.vz += nz * p.kick;
             b.rest = false;
@@ -815,6 +871,20 @@ function _collide(c, b, movers, others, ev) {
  * and what happened: { x, y, z, result: 'rest'|'cup'|'water'|'out'|'time'|'cut'|'pipe',
  * pts (every `every` s), bounces, t }.
  */
+/**
+ * Places a ball can't be left: a current that would carry it off the course as
+ * soon as it's struck again (or a tile marked norest). A ball that stops on one
+ * goes back to where its shot was played from — so where you play from is
+ * always somewhere you can play from.
+ */
+export function noRest(c, x, z, y) {
+    const f = floorAt(c, x, z, y + 0.05, 0.1);
+    if (!f) return false;
+    const t = f.tile;
+    // A current with an open (rail-less) side runs out into something; a walled-in belt just pins it.
+    return !!(t.norest || HAZARD[f.kind] || (t.flow && (t.kind === 'creek' || (t.open && t.open.length))));
+}
+
 export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
     const b = { ...newBall(from.x, from.z, from.y), sunk: false };
     if (power > 0) strike(b, dx, dz, power);
@@ -837,8 +907,9 @@ export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
         if (result !== 'time') break;
         if (b.pipe || b.loop) { if (pts) pts.push([b.x, b.y, b.z]); if (opts.stopAtPipe) { result = 'pipe'; break; } }
         if (b.rest && !b.pipe && !b.loop && t >= (opts.minT || 0)) {
-            // Resting on a moving floor still moves: call it rest anyway, it's the player's turn.
-            result = 'rest'; break;
+            // Resting on a moving floor still moves: call it rest anyway, it's the player's turn
+            // — unless it's somewhere that can't be played from, which sends it back.
+            result = power > 0 && noRest(c, b.x, b.z, b.y) ? 'norest' : 'rest'; break;
         }
         if (opts.stopAfter && travelled >= opts.stopAfter) { result = 'cut'; break; }
         if (opts.bounces != null && bounces > opts.bounces) { result = 'cut'; break; }
