@@ -50,7 +50,7 @@ function _floor(t, theme) {
         : t.kind === 'boost' ? (theme.boost ?? 0xffd23f) : t.kind === 'carpet' ? (theme.carpet ?? 0xc0392b) : t.kind === 'rough' ? (theme.rough ?? 0x2e7d32)
         : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? 0x9aa3b5
         : t.kind === 'conveyor' ? (theme.conveyor ?? 0x374151) : t.kind === 'creek' ? (theme.creek ?? 0x7a4a26) : t.kind === 'jelly' ? (theme.turf[0])
-        : t.kind === 'bouncy' ? (theme.bouncy ?? 0xffd166)
+        : t.kind === 'bouncy' ? (theme.bouncy ?? 0xffd166) : t.kind === 'concrete' ? 0xb4b9c2
         : HAZARD[t.kind] ? (theme[t.kind] ?? theme.water) : theme.turf[0]);
     for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i) + t.cx, z = pos.getZ(i) + t.cz;
@@ -58,6 +58,8 @@ function _floor(t, theme) {
         let c = base;
         if (t.kind === 'turf') c = (Math.floor(x / 1.2) % 2 === 0) ? turfA : turfB;   // mown stripes
         if (t.kind === 'wood') c = _shade(theme.wood, Math.floor(x / 0.4) % 2 ? 1 : 0.88);
+        // Skatepark concrete: deeper is darker (bowls and ramps read as shapes), with expansion joints.
+        if (t.kind === 'concrete') { const dh = tileHeight(t, x, z) - (t.y || 0); c = _shade(0xb4b9c2, Math.max(0.6, Math.min(1.15, 0.88 + dh * 0.22)) * ((Math.abs(x % 2.5) < 0.06 || Math.abs(z % 2.5) < 0.06) ? 0.82 : 1)); }
         if (t.kind === 'sand') c = _shade(theme.sand, 0.95 + 0.1 * Math.abs(Math.sin(x * 7.1 + z * 3.3)));
         if (t.kind === 'ice') c = _shade(theme.ice ?? 0x8fd0f2, Math.floor((x + z) / 0.7) % 2 ? 1.12 : 0.96);
         if (t.kind === 'felt') c = _shade(theme.felt ?? 0x2f9a45, Math.floor(Math.hypot(x - t.cx, z - t.cz) / 0.8) % 2 ? 1.06 : 0.97);
@@ -246,7 +248,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     });
     // Bumpers.
     c.bumpers.forEach(p => {
-        const b = Toy.bumper(p, theme);
+        const b = Toy.bumper(c.hole.bumperStyle ? { ...p, style: c.hole.bumperStyle } : p, theme);
         root.add(b.g);
         live.bumpers.push({ p, g: b.g, flash: b.flash, squash: b.squash, base: b.flash?.emissiveIntensity ?? 0, t: 0 });
     });

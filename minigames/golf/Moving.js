@@ -287,7 +287,17 @@ export function make(c, theme) {
         g.position.set(m.x, base, m.z); group.add(g);
         live.push((dt, tt) => { const k = gateDown(m, tt); beamM.opacity = k > 0.6 ? 0.85 + Math.sin(tt * 40) * 0.1 : k * 0.25; beams.forEach(b => { b.visible = k > 0.05; }); });
     });
-    c.movers.filter(m => m.type === 'gate' && !m.laser).forEach(m => {
+    c.movers.filter(m => m.type === 'gate' && m.tentacle).forEach(m => {
+        // A kraken's arm: rises out of the sea to swat the gap, sinks back to let you through.
+        const base = m._base ?? (floorAt(c, m.x, m.z, 99, 0.1, 0)?.h ?? 0), H = (m.h ?? 1.6) + 0.4;
+        const g = new THREE.Group(), skin = Toy.mat(0x7b2d8e, { roughness: 0.45 }), suck = Toy.mat(0xf0c6f5);
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.34, H, 12), skin); arm.position.y = H / 2; g.add(arm);
+        const tip = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.1, 8, 14, Math.PI * 1.3), skin); tip.position.y = H; tip.rotation.z = Math.PI / 2; g.add(tip);
+        for (let i = 0; i < 5; i++) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), suck); s.position.set(0.25 - i * 0.03, 0.3 + i * H / 6, 0); g.add(s); }
+        g.position.set(m.x, base, m.z); group.add(g);
+        live.push((dt, tt) => { const k = gateDown(m, tt); g.position.y = base - (1 - k) * H; g.rotation.y = Math.sin(tt * 2 + m.x) * 0.4; g.visible = k > 0.02; });
+    });
+    c.movers.filter(m => m.type === 'gate' && !m.laser && !m.tentacle).forEach(m => {
         const g = new THREE.Group();
         const w = (m.w || 0.55) * 2, H = 0.95;
         const bars = Toy.mat(0x2b2b30, { metalness: 0.7, roughness: 0.35 });

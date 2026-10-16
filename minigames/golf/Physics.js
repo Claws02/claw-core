@@ -56,6 +56,7 @@ export const SURFACE = {
     ice:       { roll: 0.26, bounce: 0.45, mu: 0.04 },
     wood:      { roll: 0.9,  bounce: 0.4,  mu: 0.3 },
     metal:     { roll: 0.85, bounce: 0.45, mu: 0.18 },
+    concrete:  { roll: 0.85, bounce: 0.4,  mu: 0.3 },     // a skatepark
     carpet:    { roll: 1.4,  bounce: 0.25, mu: 0.6 },
     puddle:    { roll: 3.4,  bounce: 0.0,  mu: 0.5, splash: true },
     boost:     { roll: 0.9,  bounce: 0.3,  mu: 0.45 },
@@ -362,7 +363,7 @@ export function moverWalls(c, t) {
                 const w = m.w || 0.55;
                 // A lift's door stands the whole height of the shaft: nothing gets
                 // in or out between floors, at the bottom or the top.
-                let h = 0.5;
+                let h = m.h ?? 0.5;   // (a tentacle stands taller: it swats balls in the air)
                 if (m.type === 'liftgate') { const T = c.tiles[m.tile]; base = T ? T.y : base; h = (T?.elev?.amp || 1) + 0.6; }
                 if (m.axis === 'z') out.push({ x1: m.x, z1: m.z - w, x2: m.x, z2: m.z + w, b1: base, b2: base, h, vx: 0, vz: 0, mover: m, mat: 'wood' });
                 else out.push({ x1: m.x - w, z1: m.z, x2: m.x + w, z2: m.z, b1: base, b2: base, h, vx: 0, vz: 0, mover: m, mat: 'wood' });

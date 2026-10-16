@@ -216,7 +216,7 @@ export function bumper(p, theme) {
         g.position.set(p.x, p.y, p.z);
         return { g: shadowed(g), flash: ball.material, squash: true };
     }
-    const style = theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
+    const style = p.style || theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
     let flash;
     if (style === 'gumdrop') {
         const cols = [0xff5fa2, 0x7ed957, 0xffd23f, 0x5fb8ff, 0xb57bff];
@@ -516,8 +516,11 @@ export function sweeper(m, theme) {
         // The rim's arcs, matching the physics.
         const half = Math.PI / n * (1 - (m.rimGap ?? 0.45));
         for (let k = 0; k < n; k++) {
-            const arc = new THREE.Mesh(new THREE.TorusGeometry(m.rim, 0.1, 8, 16, 2 * half), glossy(theme.wood ?? 0x8b5a2b));
-            arc.rotation.x = -Math.PI / 2; arc.rotation.z = -(k / n * Math.PI * 2 + half); arc.position.y = 0.2; g.add(arc);
+            const arc = new THREE.Mesh(new THREE.TorusGeometry(m.rim, 0.14, 8, 20, 2 * half), glossy(theme.rim ?? 0x4a2410));
+            arc.rotation.x = -Math.PI / 2; arc.rotation.z = -(k / n * Math.PI * 2 + half); arc.position.y = 0.22; g.add(arc);
+            // A brass knob where each spoke meets the rim, like a ship's wheel.
+            const a = k / n * Math.PI * 2, hd = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.45, 10), glossy(0xd4a017));
+            hd.position.set(Math.cos(a) * m.rim, 0.42, -Math.sin(a) * m.rim); g.add(hd);
         }
     }
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 0.4, 18), glossy(theme.accent)); hub.position.y = 0.2; g.add(hub);
