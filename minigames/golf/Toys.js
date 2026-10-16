@@ -503,9 +503,23 @@ export function sweeper(m, theme) {
         ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; g.add(ring);
         return { g: shadowed(g), bar: null };
     }
-    const col = theme.sweeper ?? 0xffd23f;
-    const bar = rbox(L * 2, 0.22, 0.2, 0.1, theme.railGlow ? glow(col, 0.8) : glossy(col)); bar.position.y = 0.16; g.add(bar);
-    [-1, 1].forEach(sd => { const end = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 10), glossy(theme.accent)); end.position.set(sd * L, 0.16, 0); g.add(end); });
+    const col = theme.sweeper ?? 0xffd23f, n = m.arms || 2;
+    // One arm per spoke the physics has (not just a single bar).
+    let bar = null;
+    for (let k = 0; k < n; k++) {
+        const arm = new THREE.Group(), b = rbox(L, 0.22, 0.2, 0.1, theme.railGlow ? glow(col, 0.8) : glossy(col));
+        b.position.set(L / 2, 0.16, 0); arm.add(b); bar = bar || b;
+        const end = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 10), glossy(theme.accent)); end.position.set(L, 0.16, 0); arm.add(end);
+        arm.rotation.y = -k / n * Math.PI * 2; g.add(arm);
+    }
+    if (m.rim) {
+        // The rim's arcs, matching the physics.
+        const half = Math.PI / n * (1 - (m.rimGap ?? 0.45));
+        for (let k = 0; k < n; k++) {
+            const arc = new THREE.Mesh(new THREE.TorusGeometry(m.rim, 0.1, 8, 16, 2 * half), glossy(theme.wood ?? 0x8b5a2b));
+            arc.rotation.x = -Math.PI / 2; arc.rotation.z = -(k / n * Math.PI * 2 + half); arc.position.y = 0.2; g.add(arc);
+        }
+    }
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 0.4, 18), glossy(theme.accent)); hub.position.y = 0.2; g.add(hub);
     const dome = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), glossy(0xffffff)); dome.position.y = 0.4; g.add(dome);
     return { g: shadowed(g), bar };

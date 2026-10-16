@@ -59,7 +59,7 @@ export const SURFACE = {
     carpet:    { roll: 1.4,  bounce: 0.25, mu: 0.6 },
     puddle:    { roll: 3.4,  bounce: 0.0,  mu: 0.5, splash: true },
     boost:     { roll: 0.9,  bounce: 0.3,  mu: 0.45 },
-    conveyor:  { roll: 1,    bounce: 0.3,  mu: 0.5, drag: 5 },
+    conveyor:  { roll: 0.75, bounce: 0.3,  mu: 0.4, drag: 2.2 },   // a belt carries; it doesn't grab
     creek:     { roll: 1.3,  bounce: 0.1,  mu: 0.3, drag: 3, splash: true },
     turntable: { roll: 1,    bounce: 0.3,  mu: 0.45, drag: 7 },
     raft:      { roll: 2.0,  bounce: 0.35, mu: 0.5, ride: true },    // a rough deck: rolls like a floor; stopped, it rides   // rolls on the deck like a floor; stopped, it rides
@@ -110,7 +110,10 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *   hole.movers [{ type: 'windmill'|'sweeper'|'slider'|'gate'|'hammer', ... }]
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
  *   hole.magnets [{ x, z, r, k }]
- *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max?, stop? }]  (max: uses per shot;
+ *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max?, stop?, shuffle?, scatter?, aim? }]
+ *                  (shuffle: exits swapped among the shuffle pipes each round; scatter: [[x,z]…] a cannon
+ *                  that picks a landing spot per shot; aim: a cannon that holds the ball and fires the next
+ *                  shot as a lob, aimV/muzzle tune it.  max: uses per shot;
  *                  stop: it sets the ball down at b, at rest — the shot ends there;
  *                  color: its mouth and its exit drawn in this colour, to tell pipes apart)
  *   hole.loops  [{ a, dir, len, minV?, b?, style? }]  (style 'corkscrew' with b: a spiral down to b)
@@ -118,7 +121,7 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *   hole.gravity  a multiplier; hole.links: extra [x1, z1, x2, z2] the path field may jump
  *   hole.cup [x, z], hole.tee [x, z]
  */
-export function compile(hole) {
+export function compile(hole, opts = {}) {
     const tiles = hole.tiles.map((t, i) => {
         const [x0, z0, x1, z1] = t.r;
         const T = {
@@ -198,7 +201,16 @@ export function compile(hole) {
     });
     (hole.bumpers || []).forEach(([x, z, r, kick, e, jit]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, jit: jit || 0, y: floorAt(c, x, z, 99)?.h ?? 0 }));
     // A cannon's ball lands still going the way it was fired.
-    (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32, dir: p.style === 'cannon' ? [p.b[0] - p.a[0], p.b[1] - p.a[1]] : p.dir }));
+    (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32, dir: p.style === 'cannon' && !p.scatter && !p.aim ? [p.b[0] - p.a[0], p.b[1] - p.a[1]] : p.dir }));
+    // Shuffled teleporters: the pipes marked `shuffle` swap exits each round, by the round's seed.
+    const sh = c.pipes.filter(p => p.shuffle);
+    if (sh.length > 1 && opts.seed) {
+        let s = (opts.seed * 2654435761) >>> 0;
+        const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+        const outs = sh.map(p => ({ b: p.b, dir: p.dir, out: p.out, stop: p.stop }));
+        for (let i = outs.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [outs[i], outs[j]] = [outs[j], outs[i]]; }
+        sh.forEach((p, i) => Object.assign(p, outs[i]));
+    }
     (hole.loops || []).forEach(l => c.loops.push({ ...l, minV: l.minV || 6.5 }));
     const cupF = floorAt(c, hole.cup[0], hole.cup[1], 99);
     c.cup = { x: hole.cup[0], z: hole.cup[1], y: cupF ? cupF.h : 0 };
@@ -331,7 +343,8 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
  * spin) so a hit can pass speed on. Pure in t: the bot and the preview see
  * where they'll be.
  *   windmill { x, z, axis: 'x'|'z', w, speed }  the door is shut while a sail is down
- *   sweeper  { x, z, len, speed, arms?, r0?, phase?, mat? } bars spinning flat round (x, z); arms 3+ is
+ *   sweeper  { x, z, len, speed, arms?, r0?, phase?, mat?, rim?, rimGap? } bars spinning flat round (x, z); arms 3+ is
+ *                                                (rim: a wheel's rim at that radius, in arcs with gaps between the spokes)
  *                                                a turnstile; r0 leaves the middle open (a spinner maze)
  *   slider   { x, z, len, bar, axis, amp, speed, phase }
  *   gate     { x, z, axis, w, speed, phase }     a portcullis: shut half the time
@@ -361,6 +374,18 @@ export function moverWalls(c, t) {
                 const ex = m.x + Math.cos(a + s) * L, ez = m.z + Math.sin(a + s) * L;
                 const sx = m.x + Math.cos(a + s) * r0, sz = m.z + Math.sin(a + s) * r0;
                 out.push({ x1: sx, z1: sz, x2: ex, z2: ez, b1: base, b2: base, h: 0.4, spin: m.speed || 1.2, cx: m.x, cz: m.z, mover: m, mat: m.mat || 'rubber', thick: 0.06 });
+            }
+            // A rim (a ship's wheel): an arc round each spoke's end, with gaps between to time it through.
+            if (m.rim) {
+                const half = Math.PI / n * (1 - (m.rimGap ?? 0.45)), segs = 4;
+                for (let k = 0; k < n; k++) {
+                    const c0 = a + k / n * Math.PI * 2;
+                    for (let j = 0; j < segs; j++) {
+                        const u0 = c0 - half + (2 * half) * j / segs, u1 = c0 - half + (2 * half) * (j + 1) / segs;
+                        out.push({ x1: m.x + Math.cos(u0) * m.rim, z1: m.z + Math.sin(u0) * m.rim, x2: m.x + Math.cos(u1) * m.rim, z2: m.z + Math.sin(u1) * m.rim,
+                            b1: base, b2: base, h: 0.4, spin: m.speed || 1.2, cx: m.x, cz: m.z, mover: m, mat: m.mat || 'wood', thick: 0.06 });
+                    }
+                }
             }
         } else if (m.type === 'slider') {
             const L = m.len || 1.6, sp = m.speed || 1.4, A = m.amp || 1.5, ph = m.phase || 0;
@@ -419,6 +444,13 @@ export function newBall(x, z, y = 0) {
 /** Hit it: a direction on the floor and a power 0..1. */
 export function strike(b, dx, dz, power) {
     const n = Math.hypot(dx, dz) || 1, v = Math.max(0, Math.min(1, power)) * MAXV;
+    if (b.loaded) {
+        // Fired from the cannon: a lob at 45°, out of the muzzle.
+        const L = b.loaded, k = (L.aimV ?? 0.85) * v * Math.SQRT1_2;
+        Object.assign(b, { vx: dx / n * k, vz: dz / n * k, vy: k + 1.5, y: b.y + (L.muzzle ?? 0.9), air: true, rest: false, loaded: null, ride: null, tps: 0 });
+        b.x += dx / n * 0.5; b.z += dz / n * 0.5; b.wx = b.vx; b.wz = b.vz;
+        return;
+    }
     b.vx = dx / n * v; b.vz = dz / n * v; b.vy = 0; b.rest = false; b.ride = null; b.tps = 0;
     b.wx = b.vx * PUTT_ROLL; b.wz = b.vz * PUTT_ROLL;   // off the face skidding, with a little roll
 }
@@ -439,10 +471,11 @@ export function step(c, b, dt, t, others = null, ev = []) {
     if (b.pipe) {
         b.pipe.t -= dt;
         if (b.pipe.t <= 0) {
-            const p = b.pipe.p, sp = b.pipe.v;
-            const n = Math.hypot(p.dir[0], p.dir[1]) || 1;
-            const f = floorAt(c, p.b[0], p.b[1], 99);   // (from any height: a drop can start high)
-            Object.assign(b, { x: p.b[0], z: p.b[1], y: f ? f.h : 0, vx: p.dir[0] / n * sp, vz: p.dir[1] / n * sp, vy: 0, air: false, pipe: null, rest: false });
+            const p = b.pipe.p, sp = b.pipe.v, to = b.pipe.dest || p.b;
+            const dir = b.pipe.dest ? [to[0] - p.a[0], to[1] - p.a[1]] : p.dir;
+            const n = Math.hypot(dir[0], dir[1]) || 1;
+            const f = floorAt(c, to[0], to[1], 99);   // (from any height: a drop can start high)
+            Object.assign(b, { x: to[0], z: to[1], y: f ? f.h : 0, vx: dir[0] / n * sp, vz: dir[1] / n * sp, vy: 0, air: false, pipe: null, rest: false });
             // A stop pipe (plinko's) puts it down at the far end and that's the shot over.
             if (p.stop) Object.assign(b, { vx: 0, vz: 0, rest: true });
             b.wx = b.vx; b.wz = b.vz;
@@ -663,8 +696,15 @@ function _sub(c, b, d, t, movers, others, ev) {
         for (const p of c.pipes) {
             if (Math.hypot(b.x - p.a[0], b.z - p.a[1]) < p.r && !(p.max && (b.tps || 0) >= p.max)) {
                 if (p.max) b.tps = (b.tps || 0) + 1;
+                if (p.aim) {
+                    // A cannon you aim: it holds the ball; the next shot fires it.
+                    Object.assign(b, { x: p.a[0], z: p.a[1], vx: 0, vz: 0, vy: 0, wx: 0, wz: 0, rest: true, loaded: p });
+                    ev.push({ type: 'load', p }); return;
+                }
                 b.pipe = { p, t: p.delay ?? 0.6, dur: p.delay ?? 0.6, v: p.out ?? Math.max(3, Math.hypot(b.vx, b.vz) * (p.keep ?? 0.9)), from: [b.x, b.y, b.z] };
-                ev.push({ type: 'pipe', p }); return;
+                // A scatter cannon picks where it lands you as you go in (a hash of how you came in: the same on every phone).
+                if (p.scatter) { const h = Math.sin(b.vx * 12.9898 + b.vz * 78.233 + b.x * 3.7) * 43758.5453; b.pipe.dest = p.scatter[Math.floor((h - Math.floor(h)) * p.scatter.length)]; }
+                ev.push({ type: 'pipe', p, dest: b.pipe.dest }); return;
             }
         }
         for (const l of c.loops) {
@@ -887,6 +927,8 @@ export function noRest(c, x, z, y) {
 
 export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
     const b = { ...newBall(from.x, from.z, from.y), sunk: false };
+    // Sitting in an aim cannon: the shot is a firing.
+    if (power > 0) for (const p of c.pipes) if (p.aim && Math.hypot(from.x - p.a[0], from.z - p.a[1]) < 0.05) b.loaded = p;
     if (power > 0) strike(b, dx, dz, power);
     const dt = opts.dt || 1 / 60, maxT = opts.maxT ?? 8, every = opts.every ?? 0;
     const pts = every ? [[b.x, b.y, b.z]] : null;

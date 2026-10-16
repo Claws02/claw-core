@@ -27,7 +27,8 @@ function _cane() {
     return _caneTex;
 }
 
-const SKIRT_TO = -0.7;        // the course stands on a plinth down to here
+const SKIRT_TO = -0.7;
+const SPIN = 0.6;              // how much of a scatter cannon's delay it spends spinning        // the course stands on a plinth down to here
 
 function _mat(color, o = {}) { return new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...o }); }
 const _shade = (hex, k) => {
@@ -294,7 +295,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             live.windmills.push({ m, sails: w.sails, gate: w.gate });
         } else if (m.type === 'sweeper') {
             const s2 = Toy.sweeper(m, theme);
-            if (theme.scenery === 'pirate' && !m.r0) {
+            if (theme.scenery === 'pirate' && !m.r0 && !m.rim) {
                 // A ship's wheel: a rim and handles on the spokes.
                 const rim = new THREE.Mesh(new THREE.TorusGeometry((m.len || 2) * 0.55, 0.07, 8, 28), Toy.mat(0x8b5a2b));
                 rim.rotation.x = Math.PI / 2; rim.position.y = 0.2; s2.g.add(rim);
@@ -344,13 +345,16 @@ export function buildHole(stage, c, theme, holeNo = 1) {
          * Where a ball in a pipe is, u 0..1 of the way through, for drawing:
          * along the hose, on its arc out of the cannon, or null (a teleporter: it's nowhere).
          */
-        pipeAt(pipe, u) {
+        pipeAt(pipe, u, dest) {
             const style = pipe.style || (theme.scenery === 'space' ? 'teleport' : 'hose');
             if (style === 'teleport') return null;
             if (style === 'cannon') {
                 const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
                 const from = cn ? cn.o.userData.muzzle() : new THREE.Vector3(pipe.a[0], 1, pipe.a[1]);
-                const to = new THREE.Vector3(pipe.b[0], _y0(c, pipe.b[0], pipe.b[1]) + R, pipe.b[1]);
+                // A scatter cannon spins first (the ball's in the barrel), then fires.
+                if (dest) { if (u < SPIN) return from; u = (u - SPIN) / (1 - SPIN); }
+                const tb = dest || pipe.b;
+                const to = new THREE.Vector3(tb[0], _y0(c, tb[0], tb[1]) + R, tb[1]);
                 const p = from.clone().lerp(to, u);
                 p.y += Math.sin(u * Math.PI) * (2.4 + from.distanceTo(to) * 0.12);
                 return p;
@@ -362,11 +366,21 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             return p;
         },
         /** The cannon fires: recoil and smoke. Returns the muzzle, for the puff. */
-        fire(pipe) {
+        fire(pipe, dest) {
             const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
             if (!cn) return null;
+            if (dest) {
+                // Spin round for a moment, swing onto where it's decided, then fire.
+                cn.o.userData.spin = { t: 0, dur: (pipe.delay ?? 1.6) * SPIN, to: -Math.atan2(dest[1] - pipe.a[1], dest[0] - pipe.a[0]) };
+                return null;
+            }
             cn.o.userData.recoil = 1;
             return cn.o.userData.muzzle();
+        },
+        /** An aim cannon follows the shot being lined up. */
+        aimCannon(pipe, dx, dz) {
+            const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
+            if (cn && (dx || dz)) cn.o.rotation.y = -Math.atan2(dz, dx);
         },
         /** A ball bounced on a jelly pad. */
         jelly(x, z) { moving.jelly(x, z); },
@@ -374,6 +388,11 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             moving.update(dt, t);
             cannons.forEach(k => {
                 const u = k.o.userData;
+                if (u.spin) {
+                    u.spin.t += dt;
+                    if (u.spin.t < u.spin.dur) k.o.rotation.y += dt * 13;
+                    else { k.o.rotation.y = u.spin.to; u.spin = null; u.recoil = 1; }
+                }
                 if (u.recoil > 0) { u.recoil = Math.max(0, u.recoil - dt * 2.2); }
                 // (recoil starts unset: NaN here would hide the barrel till the first shot)
                 u.barrel.position.x = u.barrelX - Math.sin(Math.min(1, u.recoil || 0) * Math.PI) * 0.35;
