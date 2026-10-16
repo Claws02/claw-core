@@ -23,13 +23,29 @@ import * as Toy from './Toys.js';
 
 const glow = (color, k = 0.9) => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: k, roughness: 0.3 });
 
-function _stripeTex(a, b, n = 4) {
+// A rubber belt: dark, with raised ribs across it (across = `cross` true: ribs run along u).
+function _beltTex(cross) {
     const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
     const x = cv.getContext('2d');
-    x.fillStyle = a; x.fillRect(0, 0, 64, 64); x.fillStyle = b;
-    for (let i = 0; i < n; i++) { x.beginPath(); x.moveTo(0, i * 64 / n); x.lineTo(32, i * 64 / n + 64 / n / 2); x.lineTo(64, i * 64 / n); x.lineTo(64, i * 64 / n + 64 / n / 3); x.lineTo(32, i * 64 / n + 64 / n * 0.83); x.lineTo(0, i * 64 / n + 64 / n / 3); x.fill(); }
+    x.fillStyle = '#23272e'; x.fillRect(0, 0, 64, 64);
+    for (let i = 0; i < 4; i++) {
+        const p = i * 16 + 4;
+        x.fillStyle = '#3a404a'; cross ? x.fillRect(0, p, 64, 6) : x.fillRect(p, 0, 6, 64);
+        x.fillStyle = '#5b6474'; cross ? x.fillRect(0, p, 64, 1) : x.fillRect(p, 0, 1, 64);
+    }
     const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping;
     return t;
+}
+// Yellow-and-black hazard stripes.
+let _hazTex = null;
+function _hazardTex() {
+    if (_hazTex) return _hazTex;
+    const cv = document.createElement('canvas'); cv.width = 64; cv.height = 16;
+    const x = cv.getContext('2d');
+    x.fillStyle = '#facc15'; x.fillRect(0, 0, 64, 16); x.fillStyle = '#111827';
+    for (let i = -1; i < 5; i++) { x.beginPath(); x.moveTo(i * 16, 16); x.lineTo(i * 16 + 8, 16); x.lineTo(i * 16 + 16, 0); x.lineTo(i * 16 + 8, 0); x.fill(); }
+    _hazTex = new THREE.CanvasTexture(cv); _hazTex.wrapS = _hazTex.wrapT = THREE.RepeatWrapping;
+    return _hazTex;
 }
 function _waterTex(a, b) {
     const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
@@ -62,13 +78,15 @@ export function make(c, theme) {
         if (t.flow && (t.kind === 'conveyor' || t.kind === 'creek')) {
             const belt = t.kind === 'conveyor';
             const choc = !belt && theme.creekStyle === 'choc';
-            const tex = belt ? _stripeTex(hex(theme.conveyor ?? 0x374151), '#facc15') : choc ? _chocTex() : _waterTex(hex(theme.creek ?? 0x7a4a26), hex(new THREE.Color(theme.creek ?? 0x7a4a26).offsetHSL(0, 0, 0.12)));
+            const tex = belt ? _beltTex(Math.abs(t.flow[0]) <= Math.abs(t.flow[1])) : choc ? _chocTex() : _waterTex(hex(theme.creek ?? 0x7a4a26), hex(new THREE.Color(theme.creek ?? 0x7a4a26).offsetHSL(0, 0, 0.12)));
             const along = Math.abs(t.flow[0]) > Math.abs(t.flow[1]) ? 'x' : 'z';
             tex.repeat.set(along === 'x' ? w / 1.5 : Math.max(1, Math.round(w)), along === 'x' ? Math.max(1, Math.round(d)) : d / 1.5);
             const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial(choc ? { map: tex, roughness: 0.12, metalness: 0.18 } : { map: tex, roughness: belt ? 0.5 : 0.25, metalness: belt ? 0.3 : 0.05, transparent: !belt, opacity: belt ? 1 : 0.92 }));
             m.rotation.x = -Math.PI / 2;
             if (along === 'x') m.rotation.z = 0; else tex.rotation = 0;
             m.position.set(t.cx, tileHeight(t, t.cx, t.cz) + 0.012, t.cz);
+            // Win the depth test over the floor it lies on (floors offset themselves by their index).
+            m.material.polygonOffset = true; m.material.polygonOffsetFactor = -(t.i + 2) * 0.25; m.material.polygonOffsetUnits = -(t.i + 2);
             m.receiveShadow = true; group.add(m);
             const sp = Math.hypot(t.flow[0], t.flow[1]) * (belt ? 1 : 0.8);
             const sgn = along === 'x' ? Math.sign(t.flow[0]) : Math.sign(t.flow[1]);
@@ -82,6 +100,16 @@ export function make(c, theme) {
                     if (along === 'x') r.rotation.x = Math.PI / 2; else r.rotation.z = Math.PI / 2;
                     r.position.set(ex, t.y - 0.02, ez); group.add(r);
                     live.push(dt => { if (along === 'x') r.rotation.y += sgn * sp * dt / 0.12; else r.rotation.x += sgn * sp * dt / 0.12; });
+                });
+                // Hazard stripes down both edges of the belt.
+                const hz = _hazardTex().clone(); hz.needsUpdate = true;
+                const L = along === 'x' ? w : d; hz.repeat.set(L / 1.2, 1);
+                const hzM = new THREE.MeshStandardMaterial({ map: hz, roughness: 0.6 });
+                [-1, 1].forEach(sd => {
+                    const e = new THREE.Mesh(new THREE.BoxGeometry(L, 0.035, 0.14), hzM);
+                    if (along === 'x') e.position.set(t.cx, t.y + 0.02, t.cz + sd * (d / 2 - 0.07));
+                    else { e.rotation.y = Math.PI / 2; e.position.set(t.cx + sd * (w / 2 - 0.07), t.y + 0.02, t.cz); }
+                    e.receiveShadow = true; group.add(e);
                 });
                 // Arrows painted on, pulsing the way it runs.
                 for (let i = 0; i < 3; i++) {
@@ -231,6 +259,48 @@ export function make(c, theme) {
             });
             plat.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
             plat.position.set(t.cx, t.y, t.cz); group.add(plat);
+            if (theme.scenery === 'space') {
+                // An anti-grav lift: no pistons — a glowing pad in a column of light between four
+                // emitter pylons, rings of light rising up it, chevrons showing which way it pushes.
+                const amp = t.elev.amp || 1, H = amp + 0.9, beamC = theme.rail ?? 0x22d3ee;
+                const cv = document.createElement('canvas'); cv.width = 8; cv.height = 64;
+                const gx = cv.getContext('2d'), gr = gx.createLinearGradient(0, 0, 0, 64);
+                gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(255,255,255,0.9)'); gx.fillStyle = gr; gx.fillRect(0, 0, 8, 64);
+                const fade = new THREE.CanvasTexture(cv);
+                const beam = new THREE.Mesh(new THREE.BoxGeometry(w - 0.1, H, d - 0.1, 1, 1, 1), new THREE.MeshBasicMaterial({ color: beamC, map: fade, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+                beam.material.map.wrapS = THREE.ClampToEdgeWrapping;
+                // (top and bottom faces would glow solid: drop them)
+                beam.geometry.groups = beam.geometry.groups.filter((g, i) => i !== 2 && i !== 3);
+                beam.position.set(t.cx, t.y + H / 2 - 0.2, t.cz); group.add(beam);
+                const rings = [];
+                for (let i = 0; i < 4; i++) {
+                    const hw = (w - 0.1) / 2, hd = (d - 0.1) / 2;
+                    const r = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-hw, 0, -hd), new THREE.Vector3(hw, 0, -hd), new THREE.Vector3(hw, 0, hd), new THREE.Vector3(-hw, 0, hd)]),
+                        new THREE.LineBasicMaterial({ color: beamC, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+                    r.position.set(t.cx, t.y, t.cz); r.userData.ph = i / 4; group.add(r); rings.push(r);
+                }
+                const pyM = Toy.mat(0x374151, { metalness: 0.7, roughness: 0.3 });
+                [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => {
+                    const x = t.cx + sx * (w / 2 + 0.12), z = t.cz + sz * (d / 2 + 0.12);
+                    const py = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, H, 8), pyM); py.position.set(x, t.y + H / 2 - 0.2, z); group.add(py);
+                    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), glow(beamC, 1)); tip.position.set(x, t.y + H - 0.2, z); group.add(tip);
+                });
+                // Chevrons on the pad, the way it pushes.
+                if (t.boost) {
+                    const a = Math.atan2(t.boost[1], t.boost[0]), cm = glow(0xfacc15, 0.9);
+                    for (let i = -1; i <= 1; i++) {
+                        const ch = new THREE.Group();
+                        [-1, 1].forEach(sd => { const bar = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.015, 0.08), cm); bar.position.set(-0.12, 0, sd * 0.13); bar.rotation.y = sd * 0.75; ch.add(bar); });
+                        ch.position.set(Math.cos(a) * i * 0.75, 0.012, -Math.sin(-a) * i * 0.75); ch.rotation.y = -a; plat.add(ch);
+                    }
+                }
+                live.push((dt, tt) => {
+                    const e = elevAt(t, tt);
+                    plat.position.y = t.y + e;
+                    rings.forEach(r => { const k = (tt * 0.45 + r.userData.ph) % 1; r.position.y = t.y + k * (H - 0.3); r.material.opacity = 0.55 * Math.sin(k * Math.PI); });
+                });
+                return;
+            }
             // Pistons: a fixed sleeve and a rod that slides out of it.
             const sleeveM = Toy.mat(0x4b5563, { metalness: 0.6, roughness: 0.35 }), rodM = Toy.mat(0xd1d5db, { metalness: 0.8, roughness: 0.2 });
             const rods = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => {
@@ -311,11 +381,28 @@ export function make(c, theme) {
         const w = (m.w || 0.55) * 2, base = m._base ?? (floorAt(c, m.x, m.z, 99, 0.1, 0)?.h ?? 0);
         const g = new THREE.Group();
         const beamM = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.85, depthWrite: false });
-        const beams = [0.12, 0.26, 0.4].map(y => { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, w, 6), beamM); b.rotation.x = Math.PI / 2; b.position.y = y; g.add(b); return b; });
+        const coreM = new THREE.MeshBasicMaterial({ color: 0xffd6de, transparent: true, opacity: 1, depthWrite: false });
+        const haloM = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
+        const beams = [0.12, 0.26, 0.4].map(y => {
+            const b = new THREE.Group();
+            const core = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, w, 6), coreM); b.add(core);
+            const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, w, 8), beamM); b.add(mid);
+            const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, w, 10, 1, true), haloM); b.add(halo);
+            b.rotation.x = Math.PI / 2; b.position.y = y; g.add(b); return b;
+        });
+        // A strip on the deck under the fence that glows when it's live.
+        const stripM = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.5, depthWrite: false });
+        const strip = new THREE.Mesh(new THREE.PlaneGeometry(0.14, w), stripM); strip.rotation.x = -Math.PI / 2; strip.position.y = 0.012; g.add(strip);
         [-w / 2, w / 2].forEach(z => { const em = Toy.rbox(0.22, 0.6, 0.22, 0.05, Toy.mat(0x374151, { metalness: 0.6 })); em.position.set(0, 0.3, z); g.add(em); const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), glow(0xff2d55, 1.6)); eye.position.set(0, 0.42, z * 0.92); g.add(eye); });
         if (m.axis !== 'z') g.rotation.y = Math.PI / 2;
         g.position.set(m.x, base, m.z); group.add(g);
-        live.push((dt, tt) => { const k = gateDown(m, tt); beamM.opacity = k > 0.6 ? 0.85 + Math.sin(tt * 40) * 0.1 : k * 0.25; beams.forEach(b => { b.visible = k > 0.05; }); });
+        live.push((dt, tt) => {
+            const k = gateDown(m, tt), on = k > 0.6;
+            beamM.opacity = on ? 0.85 + Math.sin(tt * 40) * 0.1 : k * 0.25;
+            coreM.opacity = on ? 1 : k * 0.3; haloM.opacity = on ? 0.3 + Math.sin(tt * 23) * 0.08 : k * 0.1;
+            stripM.opacity = on ? 0.55 : 0.12 + k * 0.2;
+            beams.forEach(b => { b.visible = k > 0.05; });
+        });
     });
     c.movers.filter(m => m.type === 'gate' && m.tentacle).forEach(m => {
         // A kraken's arm: rises out of the sea to swat the gap, sinks back to let you through.
@@ -400,7 +487,50 @@ export function make(c, theme) {
     });
 
     // Magnets: a little planet hovering over each pull, rings sinking into it.
-    (c.hole.magnets || []).forEach((m, i) => {
+    // Black holes: an accretion disc swirling over the whole pull (so you can see how far it
+    // reaches), a black event horizon ringed with light, and debris spiralling in.
+    let _discTex = null;
+    const discTex = () => {
+        if (_discTex) return _discTex;
+        const S = 256, cv = document.createElement('canvas'); cv.width = cv.height = S;
+        const x = cv.getContext('2d'), C = S / 2;
+        const g = x.createRadialGradient(C, C, 0, C, C, C);
+        g.addColorStop(0, 'rgba(255,240,210,1)'); g.addColorStop(0.12, 'rgba(255,170,60,0.95)'); g.addColorStop(0.35, 'rgba(236,72,153,0.55)');
+        g.addColorStop(0.7, 'rgba(124,58,237,0.22)'); g.addColorStop(1, 'rgba(30,10,60,0)');
+        x.fillStyle = g; x.fillRect(0, 0, S, S);
+        x.globalCompositeOperation = 'lighter';
+        for (let arm = 0; arm < 4; arm++) {
+            x.beginPath();
+            for (let k = 0; k <= 120; k++) { const u = k / 120, r = C * (0.1 + u * 0.9), a = arm * Math.PI / 2 + u * 5.2; x.lineTo(C + Math.cos(a) * r, C + Math.sin(a) * r); }
+            x.strokeStyle = 'rgba(255,200,140,0.35)'; x.lineWidth = 6; x.stroke();
+        }
+        _discTex = new THREE.CanvasTexture(cv); return _discTex;
+    };
+    (c.hole.magnets || []).filter(m => m.hole).forEach((m, i) => {
+        const my = floorAt(c, m.x, m.z, 99, 0, 0)?.h ?? 0;
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(m.r, 48), new THREE.MeshBasicMaterial({ map: discTex(), transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
+        disc.rotation.x = -Math.PI / 2; disc.position.set(m.x, my + 0.03, m.z); group.add(disc);
+        const hor = new THREE.Mesh(new THREE.CircleGeometry(0.78, 32), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+        hor.rotation.x = -Math.PI / 2; hor.position.set(m.x, my + 0.05, m.z); group.add(hor);
+        const photon = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.05, 8, 48), glow(0xffd9a0, 1.2)); photon.rotation.x = Math.PI / 2; photon.position.set(m.x, my + 0.07, m.z); group.add(photon);
+        // A lensing halo stood up round it, always facing the camera.
+        const halo = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.05, 40), new THREE.MeshBasicMaterial({ color: 0xffb46b, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+        halo.position.set(m.x, my + 0.6, m.z); halo.rotation.y = Math.PI / 2; group.add(halo);
+        const bits = [];
+        for (let k = 0; k < 10; k++) {
+            const d = new THREE.Mesh(new THREE.SphereGeometry(0.05 + (k % 3) * 0.02, 6, 4), new THREE.MeshBasicMaterial({ color: k % 2 ? 0xffd9a0 : 0xf472b6 }));
+            d.userData.ph = k / 10; group.add(d); bits.push(d);
+        }
+        live.push((dt, tt) => {
+            disc.rotation.z -= dt * 0.9;
+            bits.forEach(d => {
+                const u = (tt * 0.22 + d.userData.ph) % 1, r = 0.85 + (1 - u) * (m.r - 0.9), a = (1 - u) * 9 + d.userData.ph * 6.28 + tt * 0.3;
+                d.position.set(m.x + Math.cos(a) * r, my + 0.1 + u * 0.05, m.z + Math.sin(a) * r);
+                d.scale.setScalar(u > 0.92 ? (1 - u) / 0.08 : 1);
+            });
+        });
+    });
+    (c.hole.magnets || []).filter(m => !m.hole).forEach((m, i) => {
         const cols = [0xf59e0b, 0x22d3ee, 0xa855f7, 0x84cc16];
         const col = cols[i % cols.length];
         const planet = new THREE.Group();

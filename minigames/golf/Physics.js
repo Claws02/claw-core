@@ -110,7 +110,7 @@ const MINE_V = 7;                      // a mine's blast (power 1)
  *                  scatter, radians — the same on every phone, but no one can read it)
  *   hole.movers [{ type: 'windmill'|'sweeper'|'slider'|'gate'|'hammer', ... }]
  *   hole.fans   [{ r: [x0, z0, x1, z1], f: [ax, az] }]
- *   hole.magnets [{ x, z, r, k }]
+ *   hole.magnets [{ x, z, r, k, hole? }]  (hole: drawn as a black hole, over a void)
  *   hole.pipes  [{ a, b, dir, r?, delay?, keep?, out?, style?, max?, stop?, shuffle?, scatter?, aim? }]
  *                  (shuffle: exits swapped among the shuffle pipes each round; scatter: [[x,z]…] a cannon
  *                  that picks a landing spot per shot; aim: a cannon that holds the ball and fires the next
@@ -735,8 +735,9 @@ function _sub(c, b, d, t, movers, others, ev) {
         const hold = C0 * S.roll;
         // Pinned against a rail by a moving floor counts as stopped too.
         const pinned = b.touch && Math.hypot(b.vx, b.vz) < 0.25 && f?.sv;
-        // A creek carries a ball on down it (it isn't at rest till it's out, or pinned on a bank).
-        const carried = f?.kind === 'creek' && f.sv && !pinned;
+        // A creek carries a ball on down it (it isn't at rest till it's out, or pinned on a bank);
+        // a lift carries it up till its door opens and it rolls off.
+        const carried = (f?.kind === 'creek' && f.sv && !pinned) || !!f?.tile?.elev;
         if ((v < STOP_V && (pull < hold || b.touch) && f?.kind !== 'boost' && !carried) || pinned) {
             if (pinned) { b.vx = 0; b.vz = 0; } else { b.vx = svx; b.vz = svz; }
             b.wx = b.vx; b.wz = b.vz;

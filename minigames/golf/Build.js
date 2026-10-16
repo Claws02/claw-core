@@ -48,7 +48,7 @@ function _floor(t, theme) {
     const turfA = new THREE.Color(theme.turf[0]), turfB = new THREE.Color(theme.turf[1]);
     const base = new THREE.Color(t.kind === 'sand' ? theme.sand : t.kind === 'wood' ? theme.wood : t.kind === 'ice' ? (theme.ice ?? 0xdff4ff)
         : t.kind === 'boost' ? (theme.boost ?? 0xffd23f) : t.kind === 'carpet' ? (theme.carpet ?? 0xc0392b) : t.kind === 'rough' ? (theme.rough ?? 0x2e7d32)
-        : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? 0x9aa3b5
+        : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? (theme.metal ?? 0x9aa3b5)
         : t.kind === 'conveyor' ? (theme.conveyor ?? 0x374151) : t.kind === 'creek' ? (theme.creek ?? 0x7a4a26) : t.kind === 'jelly' ? (theme.turf[0])
         : t.kind === 'bouncy' ? (theme.bouncy ?? 0xffd166) : t.kind === 'concrete' ? 0xb4b9c2
         : HAZARD[t.kind] ? (theme[t.kind] ?? theme.water) : theme.turf[0]);
@@ -776,6 +776,25 @@ Object.assign(PROPS, {
             tex.offset.y += dt * 1.4;
             foam.forEach(r => { const k = (t * 0.6 + r.userData.ph) % 1; r.scale.set(0.6 + k * 1.4, (0.6 + k * 1.4) * Math.min(1.6, w / 2.4), 1); r.material.opacity = 0.55 * (1 - k); });
         };
+        return g;
+    },
+    container: (p, c) => {
+        // A ribbed shipping container, doors at one end, a stencilled stripe.
+        const g = new THREE.Group(), col = p.color ?? 0x2563eb, L = p.len || 3, W = 1.2, H = 1.25;
+        const cv = document.createElement('canvas'); cv.width = 64; cv.height = 8;
+        const x = cv.getContext('2d'), base = '#' + new THREE.Color(col).getHexString(), dark = '#' + new THREE.Color(col).multiplyScalar(0.7).getHexString();
+        x.fillStyle = base; x.fillRect(0, 0, 64, 8); x.fillStyle = dark; for (let i = 0; i < 8; i++) x.fillRect(i * 8 + 5, 0, 3, 8);
+        const tex = new THREE.CanvasTexture(cv); tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(L * 2, 1);
+        const body = new THREE.Mesh(new THREE.BoxGeometry(L, H, W), _mat(0xffffff, { map: tex, roughness: 0.6, metalness: 0.35 }));
+        body.position.y = H / 2; g.add(body);
+        const frame = _mat(0x1f2937, { metalness: 0.6, roughness: 0.4 });
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => { const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, H + 0.02, 0.1), frame); post.position.set(sx * (L / 2 - 0.04), H / 2, sz * (W / 2 - 0.04)); g.add(post); });
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(L * 0.5, 0.12, W + 0.01), _mat(0xf8fafc, { roughness: 0.5 })); stripe.position.set(0, H * 0.72, 0); g.add(stripe);
+        const doors = new THREE.Mesh(new THREE.BoxGeometry(0.03, H - 0.1, W - 0.12), _mat(new THREE.Color(col).multiplyScalar(0.8).getHex(), { metalness: 0.4, roughness: 0.5 }));
+        doors.position.set(L / 2 + 0.01, H / 2, 0); g.add(doors);
+        if (p.stack) { const top = g.clone(); top.position.y = H; top.rotation.y = 0.08; g.add(top); }
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = p.rot ?? 0;
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         return g;
     },
     gummy: (p, c) => {

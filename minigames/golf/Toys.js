@@ -635,6 +635,19 @@ export function mine(kind, theme) {
         for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2, sp = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), spikeM); sp.position.set(Math.cos(a) * 0.22, 0.2, Math.sin(a) * 0.22); sp.rotation.z = -Math.PI / 2; sp.rotation.y = -a; sp.rotation.order = 'YZX'; g.add(sp); }
         const top = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), spikeM); top.position.y = 0.43; g.add(top);
         light = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), glow(kind === 'spike' ? 0xf43f5e : 0xffd23f, 1.6)); light.position.y = 0.36; g.add(light);
+        if (kind === 'spike') {
+            // A space mine: a glowing red band round its middle, spikes up and down too, and a
+            // danger ring on the deck round it.
+            const band = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.025, 8, 28), glow(0xf43f5e, 1.4)); band.rotation.x = Math.PI / 2; band.position.y = 0.2; g.add(band);
+            for (let i = 0; i < 6; i++) {
+                const a = i / 6 * Math.PI * 2 + 0.5;
+                [-1, 1].forEach(sd => { const sp = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), spikeM); sp.position.set(Math.cos(a) * 0.15, 0.2 + sd * 0.15, Math.sin(a) * 0.15); sp.lookAt(Math.cos(a) * 1, 0.2 + sd * 1, Math.sin(a) * 1); sp.rotateX(Math.PI / 2); g.add(sp); });
+            }
+            const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 32), new THREE.MeshBasicMaterial({ color: 0xf43f5e, transparent: true, opacity: 0.45, depthWrite: false }));
+            ring.rotation.x = -Math.PI / 2; ring.position.y = 0.015; g.add(ring);
+            const hatch = new THREE.Mesh(new THREE.CircleGeometry(0.42, 32), new THREE.MeshBasicMaterial({ color: 0xf43f5e, transparent: true, opacity: 0.1, depthWrite: false }));
+            hatch.rotation.x = -Math.PI / 2; hatch.position.y = 0.012; g.add(hatch);
+        }
     }
     return { g: shadowed(g), light };
 }

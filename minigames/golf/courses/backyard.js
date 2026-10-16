@@ -26,17 +26,18 @@ export const COURSE = {
             path: [[23.5, 0], [23.5, 10], [16, 17]],
             props: [{ type: 'gnome', at: [10, -4.4] }, { type: 'bed', r: [8, 2.5, 21, 9], y: -0.25 }, { type: 'tree', at: [29, 6] }, { type: 'flowers', at: [16, 20.3] }, { type: 'flowers', at: [3, 6] }, { type: 'tree', at: [3, -7.5] }] },
 
-        {   key: 'maze', name: 'THE HEDGE MAZE', sig: 'the hose lottery', par: 5, tee: [0, 0], cup: [24.5, 4.6], rail: 'hedge', blockMat: 'hedge',
+        {   key: 'maze', name: 'THE HEDGE MAZE', sig: 'the hose lottery', par: 3, tee: [0, 0], cup: [24.5, 4.6], rail: 'hedge', blockMat: 'hedge',
             // Four hedges, four turns — or a hose under them. Three hose nooks in the
             // first garden room, each easy to reach. One comes out by the cup, one
             // halfway, one back by the tee — but which is which changes every round.
             tiles: [{ r: [-1.5, -7, 27, 7] }],
             walls: [[6, -7, 6, 3.4, 0.6, 'hedge'], [11, -3.4, 11, 7, 0.6, 'hedge'], [16, -7, 16, 3.4, 0.6, 'hedge'], [21, -3.4, 21, 7, 0.6, 'hedge'],
                     // the three nooks
-                    [-1.5, -4.3, 0.9, -4.3, 0.6, 'hedge'], [3.3, -4.3, 6, -4.3, 0.6, 'hedge'], [3.3, 2.3, 6, 2.3, 0.6, 'hedge']],
+                    [-1.5, -4.3, -0.3, -4.3, 0.6, 'hedge'], [1.3, -4.3, 2.8, -4.3, 0.6, 'hedge'], [4.6, -4.3, 6, -4.3, 0.6, 'hedge'], [2.2, -7, 2.2, -4.3, 0.6, 'hedge'],
+                    [3.3, 2.3, 6, 2.3, 0.6, 'hedge']],
             blocks: [[12.8, 0.2, 14.2, 1.6, 0.6], [17.8, -2.2, 19.2, -0.8, 0.6], [23.4, 0.2, 27, 1.2, 0.6]],
-            pipes: [{ a: [-0.4, -5.8], b: [22.6, -5.6], dir: [1, 0], r: 0.38, delay: 1.1, out: 2.0, style: 'hose', color: 0x3fbf4f, shuffle: true },
-                    { a: [4.8, -5.8], b: [13.5, -5.4], dir: [1, 0], r: 0.38, delay: 1.0, out: 2.0, style: 'hose', color: 0xffd23f, shuffle: true },
+            pipes: [{ a: [0.5, -5.8], b: [22, 5.4], dir: [1, -0.2], r: 0.38, delay: 1.1, out: 2.0, style: 'hose', color: 0x3fbf4f, shuffle: true },
+                    { a: [3.9, -5.8], b: [13.5, -5.4], dir: [1, 0], r: 0.38, delay: 1.0, out: 2.0, style: 'hose', color: 0xffd23f, shuffle: true },
                     { a: [4.8, 3.7], b: [0.4, 6.0], dir: [1, 0], r: 0.38, delay: 0.8, out: 1.2, style: 'hose', color: 0xe8443c, shuffle: true }],
             path: [[4, 5.2], [8.5, 4], [8.5, -5.2], [13.5, -5.2], [13.5, 5.2], [18.5, 5.2], [18.5, -5.2], [23.5, -5.2]],
             props: [{ type: 'gnome', at: [10, 7.8] }, { type: 'flowers', at: [14, -7.8] }, { type: 'tree', at: [-4, 4] }, { type: 'flowers', at: [28, 2] }] },
@@ -124,6 +125,7 @@ export const COURSE = {
             tiles: [{ r: [-1.5, -4.5, 8, 4.5] },
                     { r: [8, -6.5, 27, 6.5], kind: 'bouncy', railMat: 'inflatable' },
                     { r: [14.6, -1.3, 16.8, 1.3], y: 0.03, kind: 'jelly' },
+                    { r: [16.8, -2.5, 18.5, 2.5], y: 0.02, kind: 'bouncy', norest: true },
                     { r: [18.5, -2.5, 22.5, 2.5], y: 0.8, kind: 'bouncy', railMat: 'inflatable', hills: [[21, -1.2, 1.0, -0.06]] },
                     { r: [22.5, -1, 25.5, 1], y: 0.4, slope: [-0.2667, 0], kind: 'bouncy' }],
             bumpers: [[11, -3.6, 0.5, 0.35, 0.95], [11, 3.6, 0.5, 0.35, 0.95], [20.5, -4.8, 0.5, 0.35, 0.95], [20.5, 4.8, 0.5, 0.35, 0.95], [24.8, -3.6, 0.5, 0.35, 0.95], [24.8, 3.6, 0.5, 0.35, 0.95]],
@@ -171,5 +173,5 @@ export const CHALLENGES = [
     { id: 'rock-drop',  course: 'backyard', key: 'rockery',    name: 'Off the Top Rock',      from: [6, 0],       zone: [8, 5.5, 24, 14.5] },
     { id: 'hp-transfer', course: 'backyard', key: 'skate',     name: 'Half-Pipe Transfer',    from: [21, 9],      zone: [20, 2.5, 25, 6] },
     { id: 'bowl-carve', course: 'backyard', key: 'skate',      name: 'Carve Out of the Bowl', from: [22, -7],     zone: [17, -2, 26, 6] },
-    { id: 'turret',     course: 'backyard', key: 'castle',     name: 'Bounce to the Turret',  from: [10, -2],       zone: [18.5, -2.5, 22.5, 2.5] },
+    { id: 'turret',     course: 'backyard', key: 'castle',     name: 'Bounce to the Turret',  from: [10, 0],       zone: [18.5, -2.5, 22.5, 2.5] },
 ];
