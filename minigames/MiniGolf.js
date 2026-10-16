@@ -410,7 +410,9 @@ function _say2Show(text, color = '#fff8ee', ms = 1100) {
 // ── Holes ────────────────────────────────────────────────────────────────────
 function _loadHole(i) {
     const entry = _list[i];
-    _c = P.compile(entry.hole);
+    // The round's draw (the same on every phone in a shared round) shuffles teleporters that swap exits.
+    const seed = 1 + Math.floor((Solo.isSolo() ? Solo.draw(300 + i) : Math.random()) * 1e6);
+    _c = P.compile(entry.hole, { seed });
     const course = courseByKey(entry.course);
     if (course.theme !== _theme) {
         _theme = course.theme; _courseName = course.name;
@@ -677,6 +679,13 @@ function _shoot(slot, dx, dz, power) {
     // Play is going on: the manager's backstop only fires after a long quiet.
     extendWatchdog(HOLE_WATCHDOG);
     b.from = { x: b.p.x, y: b.p.y, z: b.p.z };
+    // Fired from an aim cannon: boom.
+    if (b.p.loaded && _built) {
+        _built.aimCannon?.(b.p.loaded, dx, dz);
+        const mz = _built.fire?.(b.p.loaded);
+        sfx('boom'); _shake = Math.max(_shake, 0.5);
+        if (_stage?.gl && mz) { _fx.puff(mz, 0xd1d5db, 12, 0.7, 1.2); _fx.burst(mz, 0xffa53f, 0.4, 0.2); }
+    }
     P.strike(b.p, dx, dz, power);
     b.state = 'roll'; b.rollT = 0; if (b.trailPts) b.trailPts = [];
     _strokes[slot][_hole]++;
@@ -709,6 +718,7 @@ function _drawKit(slot, a) {
     k.band.position.set(b.x - a.dx * L / 2, b.y + P.R, b.z - a.dz * L / 2);
     k.band.quaternion.setFromUnitVectors(_UP, new THREE.Vector3(a.dx, 0, a.dz));
     k.band.material.color.copy(col);
+    if (b.loaded) _built?.aimCannon?.(b.loaded, a.dx, a.dz);
     // The line: the shot played out, cut off a little past the first rail.
     const sim = P.simulate(_c, b, a.dx, a.dz, a.power, _pt, { every: 1 / 120, dt: 1 / 120, maxT: 2.5, stopAfter: 1.6 + a.power * 6.5, bounces: 1, stopAtPipe: true });
     const pts = sim.pts, tint = sim.result === 'cup' ? 0xfde047 : sim.result === 'water' || sim.result === 'out' ? 0x7dd3fc : 0xffffff;
@@ -869,13 +879,14 @@ function _event(b, e) {
         case 'jelly': sfx('boost'); _built?.jelly?.(b.p.x, b.p.z); b.sq = 1; break;
         case 'spray': if (gl) _fx.puff(at(0.1), 0xe9cf98, 6, 0.5, 0.6); break;
         case 'splash': if (gl) _fx.puff(at(0.1), e.kind === 'creek' ? 0x9a6a46 : 0xbfe8ff, 5, 0.35, 0.5); _gfx?.sparks(at(0.1), e.kind === 'creek' ? 0xb07a4a : 0xd6f1ff, 10, 1.6, 2.2); break;
+        case 'load': sfx('swap'); _say2Show('IN THE CANNON · AIM AND FIRE', '#fde68a', 1400); break;
         case 'pipe': {
             const st = e.p.style || (_theme?.scenery === 'space' ? 'teleport' : 'hose');
             if (st === 'cannon') {
-                const mz = _built?.fire?.(e.p);
+                const mz = _built?.fire?.(e.p, e.dest);
                 sfx('boom'); _shake = 0.6;
                 if (gl && mz) { _fx.puff(mz, 0xd1d5db, 12, 0.7, 1.2); _fx.burst(mz, 0xffa53f, 0.4, 0.2); }
-                _say2Show('FIRE!', '#fca5a5', 800);
+                _say2Show(e.dest ? 'WHERE WILL IT GO?!' : 'FIRE!', '#fca5a5', e.dest ? 1300 : 800);
             } else if (st === 'teleport') {
                 sfx('swap');
                 if (e.p.stop) _say2Show('BACK TO THE TOP · SHOOT AGAIN', '#c4b5fd', 1500);
@@ -1009,7 +1020,8 @@ function _play(dt, pdt = dt) {
         for (const e of ev) _event(b, e);
         // Stopped.
         if (!b.done && b.p.rest && !was && b.state === 'roll') {
-            b.state = _mode === 'chaos' ? 'aim' : 'wait'; b.clock = 0;
+            // (A ball knocked while its player is lining up — a sweeper, a hammer — is still theirs to play.)
+            b.state = _mode === 'chaos' || (b.slot === _active && _turnState === 'aim') ? 'aim' : 'wait'; b.clock = 0;
             _noRestBack(b);
             b.from = { x: b.p.x, y: b.p.y, z: b.p.z };
             if (_strokes[b.slot][_hole] >= _limit(h)) _pickUp(b);
@@ -1244,7 +1256,7 @@ function _ballDrawPos(b) {
     const p = b.p;
     if (p.pipe && _built) {
         const u = 1 - p.pipe.t / (p.pipe.dur || 0.6);
-        return _built.pipeAt(p.pipe.p, Math.max(0, Math.min(1, u)));
+        return _built.pipeAt(p.pipe.p, Math.max(0, Math.min(1, u)), p.pipe.dest);
     }
     if (p.loop && p.loop.l.style === 'corkscrew' && _built?.loopAt) {
         // Down the corkscrew slide.
@@ -1254,7 +1266,7 @@ function _ballDrawPos(b) {
     if (p.loop) {
         // In along the floor, round the hoop (a corkscrew, so it clears itself), out along the floor.
         const l = p.loop.l, u = p.loop.t / p.loop.dur, n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
-        const rad = 0.9 + P.R, base = _floorY(l.a[0], l.a[1]);
+        const rad = l.rad ?? 0.9 + P.R, base = _floorY(l.a[0], l.a[1]);
         let along, h = 0, side = 0;
         if (u < 0.2) along = l.len / 2 * (u / 0.2);
         else if (u > 0.8) along = l.len / 2 + l.len / 2 * ((u - 0.8) / 0.2);

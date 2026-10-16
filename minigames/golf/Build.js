@@ -27,7 +27,8 @@ function _cane() {
     return _caneTex;
 }
 
-const SKIRT_TO = -0.7;        // the course stands on a plinth down to here
+const SKIRT_TO = -0.7;
+const SPIN = 0.6;              // how much of a scatter cannon's delay it spends spinning        // the course stands on a plinth down to here
 
 function _mat(color, o = {}) { return new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...o }); }
 const _shade = (hex, k) => {
@@ -47,9 +48,9 @@ function _floor(t, theme) {
     const turfA = new THREE.Color(theme.turf[0]), turfB = new THREE.Color(theme.turf[1]);
     const base = new THREE.Color(t.kind === 'sand' ? theme.sand : t.kind === 'wood' ? theme.wood : t.kind === 'ice' ? (theme.ice ?? 0xdff4ff)
         : t.kind === 'boost' ? (theme.boost ?? 0xffd23f) : t.kind === 'carpet' ? (theme.carpet ?? 0xc0392b) : t.kind === 'rough' ? (theme.rough ?? 0x2e7d32)
-        : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? 0x9aa3b5
+        : t.kind === 'felt' ? (theme.felt ?? 0x2f9a45) : t.kind === 'puddle' ? (theme.puddle ?? 0x7cc4ea) : t.kind === 'metal' ? (theme.metal ?? 0x9aa3b5)
         : t.kind === 'conveyor' ? (theme.conveyor ?? 0x374151) : t.kind === 'creek' ? (theme.creek ?? 0x7a4a26) : t.kind === 'jelly' ? (theme.turf[0])
-        : t.kind === 'bouncy' ? (theme.bouncy ?? 0xffd166)
+        : t.kind === 'bouncy' ? (theme.bouncy ?? 0xffd166) : t.kind === 'concrete' ? 0xb4b9c2
         : HAZARD[t.kind] ? (theme[t.kind] ?? theme.water) : theme.turf[0]);
     for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i) + t.cx, z = pos.getZ(i) + t.cz;
@@ -57,6 +58,8 @@ function _floor(t, theme) {
         let c = base;
         if (t.kind === 'turf') c = (Math.floor(x / 1.2) % 2 === 0) ? turfA : turfB;   // mown stripes
         if (t.kind === 'wood') c = _shade(theme.wood, Math.floor(x / 0.4) % 2 ? 1 : 0.88);
+        // Skatepark concrete: deeper is darker (bowls and ramps read as shapes), with expansion joints.
+        if (t.kind === 'concrete') { const dh = tileHeight(t, x, z) - (t.y || 0); c = _shade(0xb4b9c2, Math.max(0.6, Math.min(1.15, 0.88 + dh * 0.22)) * ((Math.abs(x % 2.5) < 0.06 || Math.abs(z % 2.5) < 0.06) ? 0.82 : 1)); }
         if (t.kind === 'sand') c = _shade(theme.sand, 0.95 + 0.1 * Math.abs(Math.sin(x * 7.1 + z * 3.3)));
         if (t.kind === 'ice') c = _shade(theme.ice ?? 0x8fd0f2, Math.floor((x + z) / 0.7) % 2 ? 1.12 : 0.96);
         if (t.kind === 'felt') c = _shade(theme.felt ?? 0x2f9a45, Math.floor(Math.hypot(x - t.cx, z - t.cz) / 0.8) % 2 ? 1.06 : 0.97);
@@ -81,7 +84,7 @@ function _floor(t, theme) {
     const water = t.kind === 'water' || t.kind === 'goo' || t.kind === 'puddle' || t.kind === 'void';
     const lava = t.kind === 'lava';
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: water ? 0.15 : t.kind === 'ice' ? 0.2 : t.kind === 'bouncy' ? 0.4 : 0.9,
-        metalness: water ? 0.1 : 0, transparent: water, opacity: water ? 0.85 : 1,
+        metalness: water ? 0.1 : 0, transparent: water && t.kind !== 'goo', opacity: water && t.kind !== 'goo' ? 0.85 : 1,
         emissive: lava ? new THREE.Color(theme.lava ?? 0xff5a1f).multiplyScalar(0.7) : water ? new THREE.Color(theme[t.kind] ?? theme.water).multiplyScalar(0.25) : 0x000000 });
     // Floors laid over floors (a puddle, a belt) win the depth test.
     mat.polygonOffset = true; mat.polygonOffsetFactor = -t.i * 0.25; mat.polygonOffsetUnits = -t.i;
@@ -245,7 +248,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     });
     // Bumpers.
     c.bumpers.forEach(p => {
-        const b = Toy.bumper(p, theme);
+        const b = Toy.bumper(c.hole.bumperStyle ? { ...p, style: c.hole.bumperStyle } : p, theme);
         root.add(b.g);
         live.bumpers.push({ p, g: b.g, flash: b.flash, squash: b.squash, base: b.flash?.emissiveIntensity ?? 0, t: 0 });
     });
@@ -294,7 +297,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             live.windmills.push({ m, sails: w.sails, gate: w.gate });
         } else if (m.type === 'sweeper') {
             const s2 = Toy.sweeper(m, theme);
-            if (theme.scenery === 'pirate' && !m.r0) {
+            if (theme.scenery === 'pirate' && !m.r0 && !m.rim) {
                 // A ship's wheel: a rim and handles on the spokes.
                 const rim = new THREE.Mesh(new THREE.TorusGeometry((m.len || 2) * 0.55, 0.07, 8, 28), Toy.mat(0x8b5a2b));
                 rim.rotation.x = Math.PI / 2; rim.position.y = 0.2; s2.g.add(rim);
@@ -314,11 +317,12 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     const moving = Moving.make(c, theme);
     root.add(moving.group);
     // Props and the world round the course.
-    const cannons = [], hoses = [];
+    const cannons = [], hoses = [], ticks = [];
     (c.hole.props || []).forEach(p => {
         const o = PROPS[p.type]?.(p, c, theme);
         if (!o) return;
         root.add(o);
+        if (o.userData.tick) ticks.push(o.userData.tick);
         if (p.type === 'cannon' && !p.deco) cannons.push({ p, o });
         if (p.type === 'hose') {
             // A bulge that runs down the hose with the ball inside.
@@ -344,13 +348,16 @@ export function buildHole(stage, c, theme, holeNo = 1) {
          * Where a ball in a pipe is, u 0..1 of the way through, for drawing:
          * along the hose, on its arc out of the cannon, or null (a teleporter: it's nowhere).
          */
-        pipeAt(pipe, u) {
+        pipeAt(pipe, u, dest) {
             const style = pipe.style || (theme.scenery === 'space' ? 'teleport' : 'hose');
             if (style === 'teleport') return null;
             if (style === 'cannon') {
                 const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
                 const from = cn ? cn.o.userData.muzzle() : new THREE.Vector3(pipe.a[0], 1, pipe.a[1]);
-                const to = new THREE.Vector3(pipe.b[0], _y0(c, pipe.b[0], pipe.b[1]) + R, pipe.b[1]);
+                // A scatter cannon spins first (the ball's in the barrel), then fires.
+                if (dest) { if (u < SPIN) return from; u = (u - SPIN) / (1 - SPIN); }
+                const tb = dest || pipe.b;
+                const to = new THREE.Vector3(tb[0], _y0(c, tb[0], tb[1]) + R, tb[1]);
                 const p = from.clone().lerp(to, u);
                 p.y += Math.sin(u * Math.PI) * (2.4 + from.distanceTo(to) * 0.12);
                 return p;
@@ -362,18 +369,34 @@ export function buildHole(stage, c, theme, holeNo = 1) {
             return p;
         },
         /** The cannon fires: recoil and smoke. Returns the muzzle, for the puff. */
-        fire(pipe) {
+        fire(pipe, dest) {
             const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
             if (!cn) return null;
+            if (dest) {
+                // Spin round for a moment, swing onto where it's decided, then fire.
+                cn.o.userData.spin = { t: 0, dur: (pipe.delay ?? 1.6) * SPIN, to: -Math.atan2(dest[1] - pipe.a[1], dest[0] - pipe.a[0]) };
+                return null;
+            }
             cn.o.userData.recoil = 1;
             return cn.o.userData.muzzle();
+        },
+        /** An aim cannon follows the shot being lined up. */
+        aimCannon(pipe, dx, dz) {
+            const cn = cannons.find(k => Math.hypot(k.p.at[0] - pipe.a[0], k.p.at[1] - pipe.a[1]) < 1);
+            if (cn && (dx || dz)) cn.o.rotation.y = -Math.atan2(dz, dx);
         },
         /** A ball bounced on a jelly pad. */
         jelly(x, z) { moving.jelly(x, z); },
         update(dt, t) {
             moving.update(dt, t);
+            ticks.forEach(f => f(dt, t));
             cannons.forEach(k => {
                 const u = k.o.userData;
+                if (u.spin) {
+                    u.spin.t += dt;
+                    if (u.spin.t < u.spin.dur) k.o.rotation.y += dt * 13;
+                    else { k.o.rotation.y = u.spin.to; u.spin = null; u.recoil = 1; }
+                }
                 if (u.recoil > 0) { u.recoil = Math.max(0, u.recoil - dt * 2.2); }
                 // (recoil starts unset: NaN here would hide the barrel till the first shot)
                 u.barrel.position.x = u.barrelX - Math.sin(Math.min(1, u.recoil || 0) * Math.PI) * 0.35;
@@ -725,6 +748,69 @@ Object.assign(PROPS, {
         }
         // Glowing crystals in the dark.
         for (let i = 0; i < 6; i++) { const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x38bdf8, emissiveIntensity: 1 })); cr.position.set(x0 + 1 + i * (x1 - x0 - 2) / 5, 0.25, i % 2 ? z0 + 0.25 : z1 - 0.25); g.add(cr); }
+        return g;
+    },
+    chocfall: (p, c) => {
+        // A chocolate waterfall: the river pours off the lip at `at` (heading `dir`), `w` wide,
+        // down into a churning pool, with a curl of steam off the splash.
+        const g = new THREE.Group(), w = p.w || 3, drop = p.drop || 2.4, d = p.dir || [1, 0];
+        const cv = document.createElement('canvas'); cv.width = 64; cv.height = 128;
+        const x = cv.getContext('2d'); x.fillStyle = '#4a2614'; x.fillRect(0, 0, 64, 128);
+        for (let i = 0; i < 14; i++) { x.fillStyle = i % 3 ? '#5e3219' : 'rgba(214,160,104,0.5)'; x.fillRect((i * 37) % 64, 0, i % 3 ? 5 : 1.5, 128); }
+        const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(w / 1.2, 1);
+        const sheetM = _mat(0xffffff, { map: tex, roughness: 0.12, metalness: 0.18, side: THREE.DoubleSide });
+        // The sheet curls over the lip and falls: a bent plane.
+        const geo = new THREE.PlaneGeometry(w, 1, 1, 10), pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) { const v = 0.5 - pos.getY(i); pos.setXYZ(i, pos.getX(i), -v * drop, Math.sqrt(v) * 0.9); }
+        geo.computeVertexNormals();
+        const sheet = new THREE.Mesh(geo, sheetM); sheet.rotation.y = Math.PI / 2; g.add(sheet);
+        const pool = new THREE.Mesh(new THREE.CircleGeometry(1, 28), _mat(0x3d1f10, { roughness: 0.1, metalness: 0.2 }));
+        pool.scale.set(1.1, w * 0.62, 1); pool.rotation.set(-Math.PI / 2, 0, 0); pool.position.set(1.1, -drop + 0.02, 0); g.add(pool);
+        const foam = [];
+        for (let i = 0; i < 3; i++) {
+            const r = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 28), _mat(0xc8925a, { transparent: true, opacity: 0.5, roughness: 0.4, depthWrite: false }));
+            r.rotation.x = -Math.PI / 2; r.position.set(0.9, -drop + 0.04, 0); r.userData.ph = i / 3; g.add(r); foam.push(r);
+        }
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = -Math.atan2(d[1], d[0]);
+        g.userData.tick = (dt, t) => {
+            tex.offset.y += dt * 1.4;
+            foam.forEach(r => { const k = (t * 0.6 + r.userData.ph) % 1; r.scale.set(0.6 + k * 1.4, (0.6 + k * 1.4) * Math.min(1.6, w / 2.4), 1); r.material.opacity = 0.55 * (1 - k); });
+        };
+        return g;
+    },
+    container: (p, c) => {
+        // A ribbed shipping container, doors at one end, a stencilled stripe.
+        const g = new THREE.Group(), col = p.color ?? 0x2563eb, L = p.len || 3, W = 1.2, H = 1.25;
+        const cv = document.createElement('canvas'); cv.width = 64; cv.height = 8;
+        const x = cv.getContext('2d'), base = '#' + new THREE.Color(col).getHexString(), dark = '#' + new THREE.Color(col).multiplyScalar(0.7).getHexString();
+        x.fillStyle = base; x.fillRect(0, 0, 64, 8); x.fillStyle = dark; for (let i = 0; i < 8; i++) x.fillRect(i * 8 + 5, 0, 3, 8);
+        const tex = new THREE.CanvasTexture(cv); tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(L * 2, 1);
+        const body = new THREE.Mesh(new THREE.BoxGeometry(L, H, W), _mat(0xffffff, { map: tex, roughness: 0.6, metalness: 0.35 }));
+        body.position.y = H / 2; g.add(body);
+        const frame = _mat(0x1f2937, { metalness: 0.6, roughness: 0.4 });
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => { const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, H + 0.02, 0.1), frame); post.position.set(sx * (L / 2 - 0.04), H / 2, sz * (W / 2 - 0.04)); g.add(post); });
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(L * 0.5, 0.12, W + 0.01), _mat(0xf8fafc, { roughness: 0.5 })); stripe.position.set(0, H * 0.72, 0); g.add(stripe);
+        const doors = new THREE.Mesh(new THREE.BoxGeometry(0.03, H - 0.1, W - 0.12), _mat(new THREE.Color(col).multiplyScalar(0.8).getHex(), { metalness: 0.4, roughness: 0.5 }));
+        doors.position.set(L / 2 + 0.01, H / 2, 0); g.add(doors);
+        if (p.stack) { const top = g.clone(); top.position.y = H; top.rotation.y = 0.08; g.add(top); }
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = p.rot ?? 0;
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        return g;
+    },
+    gummy: (p, c) => {
+        // A big gummy bear, glossy and see-through, sitting up.
+        const g = new THREE.Group(), col = p.color ?? 0xff4f6a, s = p.s || 1;
+        const m = new THREE.MeshPhysicalMaterial({ color: col, emissive: col, emissiveIntensity: 0.15, roughness: 0.08, clearcoat: 1, transparent: true, opacity: 0.85 });
+        const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1) => { const o = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), m); o.position.set(x, y, z); o.scale.set(sx, sy, sz); g.add(o); return o; };
+        ball(0.42, 0, 0.5, 0, 1, 1.15, 0.9);                     // body
+        ball(0.32, 0, 1.08, 0, 1.05, 0.95, 0.95);                 // head
+        ball(0.11, -0.22, 1.33, 0); ball(0.11, 0.22, 1.33, 0);    // ears
+        ball(0.12, 0, 1.0, 0.28, 1.2, 0.8, 0.8);                  // snout
+        ball(0.13, -0.4, 0.68, 0.12, 1, 1.4, 1); ball(0.13, 0.4, 0.68, 0.12, 1, 1.4, 1);   // arms
+        ball(0.16, -0.24, 0.14, 0.22, 1, 0.8, 1.4); ball(0.16, 0.24, 0.14, 0.22, 1, 0.8, 1.4); // feet
+        const eye = _mat(0x2a0a12, { roughness: 0.2 });
+        [-0.11, 0.11].forEach(x => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), eye); e.position.set(x, 1.14, 0.29); g.add(e); });
+        g.scale.setScalar(s); g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = p.rot ?? 0;
         return g;
     },
     cookie: (p, c) => {

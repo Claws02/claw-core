@@ -216,7 +216,7 @@ export function bumper(p, theme) {
         g.position.set(p.x, p.y, p.z);
         return { g: shadowed(g), flash: ball.material, squash: true };
     }
-    const style = theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
+    const style = p.style || theme.bumperStyle || (theme.scenery === 'candy' ? 'gumdrop' : theme.scenery === 'space' ? 'rock' : theme.scenery === 'pirate' ? 'barrel' : 'post');
     let flash;
     if (style === 'gumdrop') {
         const cols = [0xff5fa2, 0x7ed957, 0xffd23f, 0x5fb8ff, 0xb57bff];
@@ -459,7 +459,47 @@ export function cannon() {
 export function loop(l, y, theme) {
     const g = new THREE.Group();
     const n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
-    const rad = 0.9 + R;
+    const rad = l.rad ?? 0.9 + R;
+    if (theme.scenery === 'candy' && l.track) {
+        // A real loop-the-loop: a wafer deck with candy-cane rails, in flat along the floor, up round
+        // the hoop (offset sideways a little, so it clears itself — the path the ball's drawn on) and
+        // out the far side, standing on a pair of iced donuts.
+        const N = 120, deck = [], rails = [[], []], W = 0.34, L = l.len;
+        const at = (u, off, lift) => {
+            // u 0..1 along the track; off = sideways; lift = out from the ball's centre line.
+            let along, h, side = 0, nx = 0, ny = 1;
+            if (u < 0.2) { along = -L / 2 + L / 2 * (u / 0.2); h = 0; }
+            else if (u > 0.8) { along = L / 2 * ((u - 0.8) / 0.2); h = 0; }
+            else { const th = (u - 0.2) / 0.6 * Math.PI * 2; along = Math.sin(th) * rad; h = rad * (1 - Math.cos(th)); side = (th / (Math.PI * 2) - 0.5) * 0.36; nx = -Math.sin(th); ny = Math.cos(th); }
+            // The track surface sits a ball's radius below the ball's centre, along the normal.
+            return new THREE.Vector3(along - nx * (R + lift), h - ny * (R + lift) + R - rad, side + off);
+        };
+        for (let i = 0; i <= N; i++) { const u = i / N; deck.push(at(u, -W, -0.03), at(u, W, -0.03)); rails[0].push(at(u, -W, -0.12)); rails[1].push(at(u, W, -0.12)); }
+        const pos = [], idx = [];
+        deck.forEach(v => pos.push(v.x, v.y, v.z));
+        for (let i = 0; i < N; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+        const dg = new THREE.BufferGeometry(); dg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); dg.setIndex(idx); dg.computeVertexNormals();
+        const wafer = glossy(0xf2c27a, { roughness: 0.55, side: THREE.DoubleSide });
+        g.add(new THREE.Mesh(dg, wafer));
+        const t = caneTex().clone(); t.needsUpdate = true; t.repeat.set(60, 1);
+        const cane = new THREE.MeshStandardMaterial({ map: t, roughness: 0.3 });
+        rails.forEach(pts => g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 240, 0.07, 8, false), cane)));
+        // Ties under the deck every so often, in icing pink.
+        const tie = glossy(0xff8ac4, { roughness: 0.3 });
+        for (let i = 2; i < N; i += 4) { const a = at(i / N, -W - 0.04, 0.07), b2 = at(i / N, W + 0.04, 0.07), m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, a.distanceTo(b2)), tie); m.position.copy(a).lerp(b2, 0.5); m.lookAt(b2); g.add(m); }
+        // Two big iced donuts the hoop stands on, with sprinkles.
+        const cols = [0xffffff, 0xffd23f, 0x5fb8ff, 0x7ed957, 0xe8243c];
+        [-1, 1].forEach(sd => {
+            const d = new THREE.Group(), dr = rad * 0.42;
+            d.add(new THREE.Mesh(new THREE.TorusGeometry(dr, dr * 0.45, 14, 32), glossy(0xc98b4a, { roughness: 0.6 })));
+            const ic = new THREE.Mesh(new THREE.TorusGeometry(dr, dr * 0.47, 14, 32, Math.PI), glossy(sd < 0 ? 0xff8ac4 : 0x8a5cf6, { roughness: 0.25 })); d.add(ic);
+            for (let i = 0; i < 22; i++) { const a = (i / 22) * Math.PI, sp = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.13), mat(cols[i % 5])); sp.position.set(Math.cos(a) * dr, Math.sin(a) * dr + dr * 0.47, (i % 3 - 1) * dr * 0.25); sp.rotation.set(i, i * 1.3, 0); d.add(sp); }
+            d.position.set(0, -rad + R + dr + dr * 0.45 - 0.05, sd * (W + dr * 0.5 + 0.25)); g.add(d);
+        });
+        g.position.set(l.a[0] + ux * l.len / 2, y + rad, l.a[1] + uz * l.len / 2);
+        g.rotation.y = -Math.atan2(uz, ux);
+        return shadowed(g);
+    }
     if (theme.scenery === 'candy') {
         // A donut, iced, with sprinkles.
         const dough = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.3, 14, 40), glossy(0xc98b4a, { roughness: 0.6 })); g.add(dough);
@@ -503,9 +543,26 @@ export function sweeper(m, theme) {
         ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; g.add(ring);
         return { g: shadowed(g), bar: null };
     }
-    const col = theme.sweeper ?? 0xffd23f;
-    const bar = rbox(L * 2, 0.22, 0.2, 0.1, theme.railGlow ? glow(col, 0.8) : glossy(col)); bar.position.y = 0.16; g.add(bar);
-    [-1, 1].forEach(sd => { const end = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 10), glossy(theme.accent)); end.position.set(sd * L, 0.16, 0); g.add(end); });
+    const col = theme.sweeper ?? 0xffd23f, n = m.arms || 2;
+    // One arm per spoke the physics has (not just a single bar).
+    let bar = null;
+    for (let k = 0; k < n; k++) {
+        const arm = new THREE.Group(), b = rbox(L, 0.22, 0.2, 0.1, theme.railGlow ? glow(col, 0.8) : glossy(col));
+        b.position.set(L / 2, 0.16, 0); arm.add(b); bar = bar || b;
+        const end = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 10), glossy(theme.accent)); end.position.set(L, 0.16, 0); arm.add(end);
+        arm.rotation.y = -k / n * Math.PI * 2; g.add(arm);
+    }
+    if (m.rim) {
+        // The rim's arcs, matching the physics.
+        const half = Math.PI / n * (1 - (m.rimGap ?? 0.45));
+        for (let k = 0; k < n; k++) {
+            const arc = new THREE.Mesh(new THREE.TorusGeometry(m.rim, 0.14, 8, 20, 2 * half), glossy(theme.rim ?? 0x4a2410));
+            arc.rotation.x = -Math.PI / 2; arc.rotation.z = -(k / n * Math.PI * 2 + half); arc.position.y = 0.22; g.add(arc);
+            // A brass knob where each spoke meets the rim, like a ship's wheel.
+            const a = k / n * Math.PI * 2, hd = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.45, 10), glossy(0xd4a017));
+            hd.position.set(Math.cos(a) * m.rim, 0.42, -Math.sin(a) * m.rim); g.add(hd);
+        }
+    }
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 0.4, 18), glossy(theme.accent)); hub.position.y = 0.2; g.add(hub);
     const dome = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), glossy(0xffffff)); dome.position.y = 0.4; g.add(dome);
     return { g: shadowed(g), bar };
@@ -578,6 +635,19 @@ export function mine(kind, theme) {
         for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2, sp = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), spikeM); sp.position.set(Math.cos(a) * 0.22, 0.2, Math.sin(a) * 0.22); sp.rotation.z = -Math.PI / 2; sp.rotation.y = -a; sp.rotation.order = 'YZX'; g.add(sp); }
         const top = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), spikeM); top.position.y = 0.43; g.add(top);
         light = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), glow(kind === 'spike' ? 0xf43f5e : 0xffd23f, 1.6)); light.position.y = 0.36; g.add(light);
+        if (kind === 'spike') {
+            // A space mine: a glowing red band round its middle, spikes up and down too, and a
+            // danger ring on the deck round it.
+            const band = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.025, 8, 28), glow(0xf43f5e, 1.4)); band.rotation.x = Math.PI / 2; band.position.y = 0.2; g.add(band);
+            for (let i = 0; i < 6; i++) {
+                const a = i / 6 * Math.PI * 2 + 0.5;
+                [-1, 1].forEach(sd => { const sp = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), spikeM); sp.position.set(Math.cos(a) * 0.15, 0.2 + sd * 0.15, Math.sin(a) * 0.15); sp.lookAt(Math.cos(a) * 1, 0.2 + sd * 1, Math.sin(a) * 1); sp.rotateX(Math.PI / 2); g.add(sp); });
+            }
+            const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 32), new THREE.MeshBasicMaterial({ color: 0xf43f5e, transparent: true, opacity: 0.45, depthWrite: false }));
+            ring.rotation.x = -Math.PI / 2; ring.position.y = 0.015; g.add(ring);
+            const hatch = new THREE.Mesh(new THREE.CircleGeometry(0.42, 32), new THREE.MeshBasicMaterial({ color: 0xf43f5e, transparent: true, opacity: 0.1, depthWrite: false }));
+            hatch.rotation.x = -Math.PI / 2; hatch.position.y = 0.012; g.add(hatch);
+        }
     }
     return { g: shadowed(g), light };
 }
