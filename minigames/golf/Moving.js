@@ -39,6 +39,16 @@ function _waterTex(a, b) {
     const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping;
     return t;
 }
+// Molten chocolate: dark swirls with milk-chocolate ribbons and a glint of cream.
+function _chocTex() {
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
+    const x = cv.getContext('2d');
+    x.fillStyle = '#4a2614'; x.fillRect(0, 0, 128, 128);
+    const band = (col, w, n, amp, ph) => { x.strokeStyle = col; x.lineWidth = w; for (let i = 0; i < n; i++) { x.beginPath(); for (let k = -4; k <= 132; k += 4) x.lineTo(k, (i + 0.5) * 128 / n + Math.sin(k / 128 * Math.PI * 2 * 2 + i * 1.7 + ph) * amp); x.stroke(); } };
+    band('#5e3219', 9, 4, 6, 0); band('#74401f', 4, 4, 7, 1.1); band('rgba(214,160,104,0.55)', 1.5, 6, 5, 2.3);
+    const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+}
 const hex = c => '#' + new THREE.Color(c).getHexString();
 
 export function make(c, theme) {
@@ -51,10 +61,11 @@ export function make(c, theme) {
         // Conveyors and creeks: a scrolling surface laid just above the floor.
         if (t.flow && (t.kind === 'conveyor' || t.kind === 'creek')) {
             const belt = t.kind === 'conveyor';
-            const tex = belt ? _stripeTex(hex(theme.conveyor ?? 0x374151), '#facc15') : _waterTex(hex(theme.creek ?? 0x7a4a26), hex(new THREE.Color(theme.creek ?? 0x7a4a26).offsetHSL(0, 0, 0.12)));
+            const choc = !belt && theme.creekStyle === 'choc';
+            const tex = belt ? _stripeTex(hex(theme.conveyor ?? 0x374151), '#facc15') : choc ? _chocTex() : _waterTex(hex(theme.creek ?? 0x7a4a26), hex(new THREE.Color(theme.creek ?? 0x7a4a26).offsetHSL(0, 0, 0.12)));
             const along = Math.abs(t.flow[0]) > Math.abs(t.flow[1]) ? 'x' : 'z';
             tex.repeat.set(along === 'x' ? w / 1.5 : Math.max(1, Math.round(w)), along === 'x' ? Math.max(1, Math.round(d)) : d / 1.5);
-            const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({ map: tex, roughness: belt ? 0.5 : 0.25, metalness: belt ? 0.3 : 0.05, transparent: !belt, opacity: belt ? 1 : 0.92 }));
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial(choc ? { map: tex, roughness: 0.12, metalness: 0.18 } : { map: tex, roughness: belt ? 0.5 : 0.25, metalness: belt ? 0.3 : 0.05, transparent: !belt, opacity: belt ? 1 : 0.92 }));
             m.rotation.x = -Math.PI / 2;
             if (along === 'x') m.rotation.z = 0; else tex.rotation = 0;
             m.position.set(t.cx, tileHeight(t, t.cx, t.cz) + 0.012, t.cz);
@@ -234,18 +245,37 @@ export function make(c, theme) {
                 rods.forEach(r => { const h = Math.max(0.05, e + 0.2); r.rod.scale.y = h; r.rod.position.set(r.x, t.y - 0.2 + h / 2, r.z); });
             });
         }
-        // Jelly pads: wobbling blocks of jelly.
+        // Jelly pads: wobbling blocks of jelly — a clear glossy gel with a deeper core, bubbles
+        // caught inside and a sugar-dusted top, that squashes and flashes when a ball bounces.
         if (t.kind === 'jelly') {
-            const pad = Toy.rbox(w - 0.06, 0.16, d - 0.06, 0.08, new THREE.MeshStandardMaterial({ color: theme.jelly ?? 0xff4fa0, emissive: theme.jelly ?? 0xff4fa0, emissiveIntensity: 0.18, roughness: 0.1, transparent: true, opacity: 0.88 }));
-            pad.position.set(t.cx, t.y - 0.05, t.cz); group.add(pad);
-            const shine = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.6, 0.12), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }));
-            shine.rotation.x = -Math.PI / 2; shine.position.set(t.cx - w * 0.1, t.y + 0.04, t.z0 + d * 0.25); group.add(shine);
+            const col = new THREE.Color(theme.jelly ?? 0xff4fa0);
+            const pad = new THREE.Group(); pad.position.set(t.cx, t.y + 0.04, t.cz); group.add(pad);
+            const gel = new THREE.MeshPhysicalMaterial({ color: col, emissive: col, emissiveIntensity: 0.22, roughness: 0.04, clearcoat: 1, clearcoatRoughness: 0.05, transparent: true, opacity: 0.84, depthWrite: false });
+            const shell = Toy.rbox(w - 0.06, 0.26, d - 0.06, 0.12, gel); shell.position.y = -0.05; shell.renderOrder = 2; pad.add(shell);
+            const core = Toy.rbox(w - 0.5, 0.14, d - 0.5, 0.06, new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.62), emissive: col, emissiveIntensity: 0.12, roughness: 0.3 }));
+            core.position.y = -0.12; pad.add(core);
+            // Bubbles held in the gel.
+            const bub = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+            const nb = Math.min(24, Math.round(w * d * 1.4));
+            for (let i = 0; i < nb; i++) {
+                const r = 0.03 + ((i * 7) % 5) * 0.012, s2 = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), bub);
+                s2.position.set(((i * 0.618) % 1 - 0.5) * (w - 0.4), -0.05 + ((i * 0.37) % 1) * 0.08, ((i * 0.414) % 1 - 0.5) * (d - 0.4)); pad.add(s2);
+            }
+            // Sugar crystals glinting on top, and a long highlight.
+            const sugar = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            for (let i = 0; i < Math.round(w * d * 3); i++) {
+                const q = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.02, 0.035), sugar);
+                q.position.set(((i * 0.7548) % 1 - 0.5) * (w - 0.2), 0.085, ((i * 0.5698) % 1 - 0.5) * (d - 0.2)); q.rotation.y = i; pad.add(q);
+            }
+            const shine = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.55, 0.1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }));
+            shine.rotation.x = -Math.PI / 2; shine.position.set(-w * 0.12, 0.088, -d * 0.28); pad.add(shine);
             const J = { pad, t, k: 0 };
             jellies.push(J);
             live.push((dt, tt) => {
                 J.k = Math.max(0, J.k - dt * 1.6);
                 const wob = Math.sin(tt * 18) * J.k * 0.25 + Math.sin(tt * 3 + t.cx) * 0.02;
                 pad.scale.set(1 + wob * 0.5, 1 - wob * 1.5, 1 + wob * 0.5);
+                gel.emissiveIntensity = 0.22 + J.k * 0.6;
             });
         }
     });

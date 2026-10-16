@@ -26,10 +26,10 @@ import { compile, floorAt, pathLeft, HAZARD, R, CUP_R } from './Physics.js';
 const FOOT = {
     tree: 1.1, flowers: 0.55, gnome: 0.35, hedge: 0.6, bucket: 0.35, spade: 0.3, duck: 0.3, bed: 0.8, flag: 0.3,
     shed: 1.4, rocks: 0.8, cookie: 0.6, ginger: 0.45, gumballs: 0.5, crate: 0.5, palm: 0.7, barrel: 0.4, chest: 0.45,
-    flagpole: 0.3, mast: 0.5, fin: 0.35, lollipop: 0.45, cane: 0.3, cupcake: 0.7, gumdrop: 0.45, cherry: 0.35,
+    flagpole: 0.3, mast: 0.5, fin: 0.35, lollipop: 0.45, cane: 0.3, cupcake: 0.7, gumdrop: 0.45, cherry: 0.35, gummy: 0.5,
     beacon: 0.4, satellite: 0.8, planet: 1.0, crystal: 0.5,
 };
-const ON_COURSE = new Set(['pool', 'hose', 'sprinkler', 'windmill', 'fort', 'cave', 'fan', 'cannon', 'wheel', 'skull', 'kraken', 'duck', 'fin']);
+const ON_COURSE = new Set(['pool', 'hose', 'sprinkler', 'windmill', 'fort', 'cave', 'fan', 'cannon', 'wheel', 'skull', 'kraken', 'duck', 'fin', 'chocfall']);
 const TEE_HALF = 0.6;
 
 const segDist = (px, pz, ax, az, bx, bz) => {

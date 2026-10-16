@@ -735,7 +735,9 @@ function _sub(c, b, d, t, movers, others, ev) {
         const hold = C0 * S.roll;
         // Pinned against a rail by a moving floor counts as stopped too.
         const pinned = b.touch && Math.hypot(b.vx, b.vz) < 0.25 && f?.sv;
-        if ((v < STOP_V && (pull < hold || b.touch) && f?.kind !== 'boost') || pinned) {
+        // A creek carries a ball on down it (it isn't at rest till it's out, or pinned on a bank).
+        const carried = f?.kind === 'creek' && f.sv && !pinned;
+        if ((v < STOP_V && (pull < hold || b.touch) && f?.kind !== 'boost' && !carried) || pinned) {
             if (pinned) { b.vx = 0; b.vz = 0; } else { b.vx = svx; b.vz = svz; }
             b.wx = b.vx; b.wz = b.vz;
             b.vy = 0;

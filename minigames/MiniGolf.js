@@ -1266,7 +1266,7 @@ function _ballDrawPos(b) {
     if (p.loop) {
         // In along the floor, round the hoop (a corkscrew, so it clears itself), out along the floor.
         const l = p.loop.l, u = p.loop.t / p.loop.dur, n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
-        const rad = 0.9 + P.R, base = _floorY(l.a[0], l.a[1]);
+        const rad = l.rad ?? 0.9 + P.R, base = _floorY(l.a[0], l.a[1]);
         let along, h = 0, side = 0;
         if (u < 0.2) along = l.len / 2 * (u / 0.2);
         else if (u > 0.8) along = l.len / 2 + l.len / 2 * ((u - 0.8) / 0.2);

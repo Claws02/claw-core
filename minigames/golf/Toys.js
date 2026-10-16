@@ -459,7 +459,47 @@ export function cannon() {
 export function loop(l, y, theme) {
     const g = new THREE.Group();
     const n = Math.hypot(l.dir[0], l.dir[1]) || 1, ux = l.dir[0] / n, uz = l.dir[1] / n;
-    const rad = 0.9 + R;
+    const rad = l.rad ?? 0.9 + R;
+    if (theme.scenery === 'candy' && l.track) {
+        // A real loop-the-loop: a wafer deck with candy-cane rails, in flat along the floor, up round
+        // the hoop (offset sideways a little, so it clears itself — the path the ball's drawn on) and
+        // out the far side, standing on a pair of iced donuts.
+        const N = 120, deck = [], rails = [[], []], W = 0.34, L = l.len;
+        const at = (u, off, lift) => {
+            // u 0..1 along the track; off = sideways; lift = out from the ball's centre line.
+            let along, h, side = 0, nx = 0, ny = 1;
+            if (u < 0.2) { along = -L / 2 + L / 2 * (u / 0.2); h = 0; }
+            else if (u > 0.8) { along = L / 2 * ((u - 0.8) / 0.2); h = 0; }
+            else { const th = (u - 0.2) / 0.6 * Math.PI * 2; along = Math.sin(th) * rad; h = rad * (1 - Math.cos(th)); side = (th / (Math.PI * 2) - 0.5) * 0.36; nx = -Math.sin(th); ny = Math.cos(th); }
+            // The track surface sits a ball's radius below the ball's centre, along the normal.
+            return new THREE.Vector3(along - nx * (R + lift), h - ny * (R + lift) + R - rad, side + off);
+        };
+        for (let i = 0; i <= N; i++) { const u = i / N; deck.push(at(u, -W, -0.03), at(u, W, -0.03)); rails[0].push(at(u, -W, -0.12)); rails[1].push(at(u, W, -0.12)); }
+        const pos = [], idx = [];
+        deck.forEach(v => pos.push(v.x, v.y, v.z));
+        for (let i = 0; i < N; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+        const dg = new THREE.BufferGeometry(); dg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); dg.setIndex(idx); dg.computeVertexNormals();
+        const wafer = glossy(0xf2c27a, { roughness: 0.55, side: THREE.DoubleSide });
+        g.add(new THREE.Mesh(dg, wafer));
+        const t = caneTex().clone(); t.needsUpdate = true; t.repeat.set(60, 1);
+        const cane = new THREE.MeshStandardMaterial({ map: t, roughness: 0.3 });
+        rails.forEach(pts => g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 240, 0.07, 8, false), cane)));
+        // Ties under the deck every so often, in icing pink.
+        const tie = glossy(0xff8ac4, { roughness: 0.3 });
+        for (let i = 2; i < N; i += 4) { const a = at(i / N, -W - 0.04, 0.07), b2 = at(i / N, W + 0.04, 0.07), m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, a.distanceTo(b2)), tie); m.position.copy(a).lerp(b2, 0.5); m.lookAt(b2); g.add(m); }
+        // Two big iced donuts the hoop stands on, with sprinkles.
+        const cols = [0xffffff, 0xffd23f, 0x5fb8ff, 0x7ed957, 0xe8243c];
+        [-1, 1].forEach(sd => {
+            const d = new THREE.Group(), dr = rad * 0.42;
+            d.add(new THREE.Mesh(new THREE.TorusGeometry(dr, dr * 0.45, 14, 32), glossy(0xc98b4a, { roughness: 0.6 })));
+            const ic = new THREE.Mesh(new THREE.TorusGeometry(dr, dr * 0.47, 14, 32, Math.PI), glossy(sd < 0 ? 0xff8ac4 : 0x8a5cf6, { roughness: 0.25 })); d.add(ic);
+            for (let i = 0; i < 22; i++) { const a = (i / 22) * Math.PI, sp = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.13), mat(cols[i % 5])); sp.position.set(Math.cos(a) * dr, Math.sin(a) * dr + dr * 0.47, (i % 3 - 1) * dr * 0.25); sp.rotation.set(i, i * 1.3, 0); d.add(sp); }
+            d.position.set(0, -rad + R + dr + dr * 0.45 - 0.05, sd * (W + dr * 0.5 + 0.25)); g.add(d);
+        });
+        g.position.set(l.a[0] + ux * l.len / 2, y + rad, l.a[1] + uz * l.len / 2);
+        g.rotation.y = -Math.atan2(uz, ux);
+        return shadowed(g);
+    }
     if (theme.scenery === 'candy') {
         // A donut, iced, with sprinkles.
         const dough = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.3, 14, 40), glossy(0xc98b4a, { roughness: 0.6 })); g.add(dough);

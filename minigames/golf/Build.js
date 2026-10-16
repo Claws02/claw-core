@@ -84,7 +84,7 @@ function _floor(t, theme) {
     const water = t.kind === 'water' || t.kind === 'goo' || t.kind === 'puddle' || t.kind === 'void';
     const lava = t.kind === 'lava';
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: water ? 0.15 : t.kind === 'ice' ? 0.2 : t.kind === 'bouncy' ? 0.4 : 0.9,
-        metalness: water ? 0.1 : 0, transparent: water, opacity: water ? 0.85 : 1,
+        metalness: water ? 0.1 : 0, transparent: water && t.kind !== 'goo', opacity: water && t.kind !== 'goo' ? 0.85 : 1,
         emissive: lava ? new THREE.Color(theme.lava ?? 0xff5a1f).multiplyScalar(0.7) : water ? new THREE.Color(theme[t.kind] ?? theme.water).multiplyScalar(0.25) : 0x000000 });
     // Floors laid over floors (a puddle, a belt) win the depth test.
     mat.polygonOffset = true; mat.polygonOffsetFactor = -t.i * 0.25; mat.polygonOffsetUnits = -t.i;
@@ -317,11 +317,12 @@ export function buildHole(stage, c, theme, holeNo = 1) {
     const moving = Moving.make(c, theme);
     root.add(moving.group);
     // Props and the world round the course.
-    const cannons = [], hoses = [];
+    const cannons = [], hoses = [], ticks = [];
     (c.hole.props || []).forEach(p => {
         const o = PROPS[p.type]?.(p, c, theme);
         if (!o) return;
         root.add(o);
+        if (o.userData.tick) ticks.push(o.userData.tick);
         if (p.type === 'cannon' && !p.deco) cannons.push({ p, o });
         if (p.type === 'hose') {
             // A bulge that runs down the hose with the ball inside.
@@ -388,6 +389,7 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         jelly(x, z) { moving.jelly(x, z); },
         update(dt, t) {
             moving.update(dt, t);
+            ticks.forEach(f => f(dt, t));
             cannons.forEach(k => {
                 const u = k.o.userData;
                 if (u.spin) {
@@ -746,6 +748,50 @@ Object.assign(PROPS, {
         }
         // Glowing crystals in the dark.
         for (let i = 0; i < 6; i++) { const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x38bdf8, emissiveIntensity: 1 })); cr.position.set(x0 + 1 + i * (x1 - x0 - 2) / 5, 0.25, i % 2 ? z0 + 0.25 : z1 - 0.25); g.add(cr); }
+        return g;
+    },
+    chocfall: (p, c) => {
+        // A chocolate waterfall: the river pours off the lip at `at` (heading `dir`), `w` wide,
+        // down into a churning pool, with a curl of steam off the splash.
+        const g = new THREE.Group(), w = p.w || 3, drop = p.drop || 2.4, d = p.dir || [1, 0];
+        const cv = document.createElement('canvas'); cv.width = 64; cv.height = 128;
+        const x = cv.getContext('2d'); x.fillStyle = '#4a2614'; x.fillRect(0, 0, 64, 128);
+        for (let i = 0; i < 14; i++) { x.fillStyle = i % 3 ? '#5e3219' : 'rgba(214,160,104,0.5)'; x.fillRect((i * 37) % 64, 0, i % 3 ? 5 : 1.5, 128); }
+        const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(w / 1.2, 1);
+        const sheetM = _mat(0xffffff, { map: tex, roughness: 0.12, metalness: 0.18, side: THREE.DoubleSide });
+        // The sheet curls over the lip and falls: a bent plane.
+        const geo = new THREE.PlaneGeometry(w, 1, 1, 10), pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) { const v = 0.5 - pos.getY(i); pos.setXYZ(i, pos.getX(i), -v * drop, Math.sqrt(v) * 0.9); }
+        geo.computeVertexNormals();
+        const sheet = new THREE.Mesh(geo, sheetM); sheet.rotation.y = Math.PI / 2; g.add(sheet);
+        const pool = new THREE.Mesh(new THREE.CircleGeometry(1, 28), _mat(0x3d1f10, { roughness: 0.1, metalness: 0.2 }));
+        pool.scale.set(1.1, w * 0.62, 1); pool.rotation.set(-Math.PI / 2, 0, 0); pool.position.set(1.1, -drop + 0.02, 0); g.add(pool);
+        const foam = [];
+        for (let i = 0; i < 3; i++) {
+            const r = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 28), _mat(0xc8925a, { transparent: true, opacity: 0.5, roughness: 0.4, depthWrite: false }));
+            r.rotation.x = -Math.PI / 2; r.position.set(0.9, -drop + 0.04, 0); r.userData.ph = i / 3; g.add(r); foam.push(r);
+        }
+        g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = -Math.atan2(d[1], d[0]);
+        g.userData.tick = (dt, t) => {
+            tex.offset.y += dt * 1.4;
+            foam.forEach(r => { const k = (t * 0.6 + r.userData.ph) % 1; r.scale.set(0.6 + k * 1.4, (0.6 + k * 1.4) * Math.min(1.6, w / 2.4), 1); r.material.opacity = 0.55 * (1 - k); });
+        };
+        return g;
+    },
+    gummy: (p, c) => {
+        // A big gummy bear, glossy and see-through, sitting up.
+        const g = new THREE.Group(), col = p.color ?? 0xff4f6a, s = p.s || 1;
+        const m = new THREE.MeshPhysicalMaterial({ color: col, emissive: col, emissiveIntensity: 0.15, roughness: 0.08, clearcoat: 1, transparent: true, opacity: 0.85 });
+        const ball = (r, x, y, z, sx = 1, sy = 1, sz = 1) => { const o = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), m); o.position.set(x, y, z); o.scale.set(sx, sy, sz); g.add(o); return o; };
+        ball(0.42, 0, 0.5, 0, 1, 1.15, 0.9);                     // body
+        ball(0.32, 0, 1.08, 0, 1.05, 0.95, 0.95);                 // head
+        ball(0.11, -0.22, 1.33, 0); ball(0.11, 0.22, 1.33, 0);    // ears
+        ball(0.12, 0, 1.0, 0.28, 1.2, 0.8, 0.8);                  // snout
+        ball(0.13, -0.4, 0.68, 0.12, 1, 1.4, 1); ball(0.13, 0.4, 0.68, 0.12, 1, 1.4, 1);   // arms
+        ball(0.16, -0.24, 0.14, 0.22, 1, 0.8, 1.4); ball(0.16, 0.24, 0.14, 0.22, 1, 0.8, 1.4); // feet
+        const eye = _mat(0x2a0a12, { roughness: 0.2 });
+        [-0.11, 0.11].forEach(x => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), eye); e.position.set(x, 1.14, 0.29); g.add(e); });
+        g.scale.setScalar(s); g.position.set(p.at[0], _y0(c, ...p.at), p.at[1]); g.rotation.y = p.rot ?? 0;
         return g;
     },
     cookie: (p, c) => {
