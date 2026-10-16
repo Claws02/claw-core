@@ -1168,6 +1168,11 @@ function _camera(dt) {
         const b = _balls[_active].p;
         const a = _aimPose(b.x, b.y, b.z, _yaw);
         if (!_drag.size) { _cam.pos.lerp(a.pos, k); _cam.look.lerp(a.look, k); }
+    } else if (_inCannon()) {
+        // In a cannon: it spins and fires you somewhere — pull back over the whole hole so
+        // you see it turn, the arc and where it comes down (up close, the barrel fills the view).
+        const f = _fitCam();
+        _cam.pos.lerp(new THREE.Vector3(...f.pos), k * 0.6); _cam.look.lerp(new THREE.Vector3(...f.look), k * 0.6);
     } else {
         // Chase the ball that was putted (the knocks it makes are in front of it):
         // where it's drawn — on its arc out of a cannon, round a loop.
@@ -1191,6 +1196,12 @@ function _camera(dt) {
     if (_shake > 0) cam.position.add(new THREE.Vector3((Math.random() - 0.5) * _shake * 0.4, (Math.random() - 0.5) * _shake * 0.3, (Math.random() - 0.5) * _shake * 0.4));
     cam.lookAt(_cam.look);
     cam.userData.look = _cam.look.toArray();
+}
+
+/** The ball being chased is riding a cannon (spinning in it, or flying out of it). */
+function _inCannon() {
+    const sb = _balls[_shooter] || _balls[_active];
+    return !!(sb && sb.p.pipe && sb.p.pipe.p.style === 'cannon');
 }
 
 // ── Seeing through ──────────────────────────────────────────────────────────
