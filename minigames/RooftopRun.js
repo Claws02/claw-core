@@ -30,6 +30,7 @@ import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
+import { createMatch } from './Match.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const LEN        = 100;         // start line at 0, finish here
@@ -54,7 +55,7 @@ const LANE_GAP   = 1.1;         // lane to lane at three or four
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _figs = [], _bot = [], _course = null, _hazards = [];
-let _n = 2, _round = 0, _score = [0, 0];
+let _n = 2, _round = 0, _score = [0, 0], _match = null;
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 let _dirOwns = false, _cam = { x: 0, y: 0, d: 13 }, _zones = [];
 let _winner = -1;
@@ -63,6 +64,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _n = Math.max(2, Math.min(4, slotCount()));
+    // A dead heat doesn't use up a race; level after three is a sudden-death race.
+    _match = createMatch({ seats: _seats().length, firstTo: WIN_ROUNDS, maxRounds: MAX_ROUNDS, type: 'rooftop' });
     _round = 0; _score = _seats().map(() => 0); _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0;
     _bot = _seats().map(() => ({ hold: 0, slide: 0, seen: -1, err: 0, miss: false }));
     registerMinigameCleanup(_destroy);           // R3
@@ -282,14 +285,15 @@ function _botStep(slot, dt) {
 function _enter(phase) {
     _phase = phase; _phaseT = 0;
     if (phase === 'ready') {
-        _round++;
+        const next = _match.begin();
+        _round = next.round;
         if (_round > 1) { _newCourse(); _seats().forEach(s => _hud.hint(s, '')); }
         _resetRound();
-        _hud.say(`RACE ${_round}`, 'FIRST TO THE BANNER', READY_TIME * 1000, _t, '#ff7ac0');
+        _hud.say(next.label.replace(/^ROUND/, 'RACE'), 'FIRST TO THE BANNER', READY_TIME * 1000, _t, '#ff7ac0');
     } else if (phase === 'play') { _hud.say('GO!', '', 600, _t, '#34f5a0'); sfx('go'); }
     else if (phase === 'result') {
         const w = _winner;
-        if (w >= 0) _score[w]++;
+        _score = _match.end(w).wins;
         _hud.say(w < 0 ? 'DEAD HEAT' : `${seat(w).name} TAKES IT`, _seats().reverse().map(s => _score[s]).join(' – '), RESULT_TIME * 1000, _t, w >= 0 ? seat(w).css : '');
         sfx(w < 0 ? 'land_bad' : 'coin_gain');
         _figs.forEach(f => { if (f.anim) f.anim.play(f.slot === w ? 'victory' : 'defeat'); });
@@ -375,7 +379,7 @@ function _frame(dt) {
     _hud.tick(_t);
     if (_phase === 'ready' && _phaseT > READY_TIME) _enter('play');
     else if (_phase === 'result' && _phaseT > RESULT_TIME) {
-        if (_score.some(v => v >= WIN_ROUNDS) || _round >= MAX_ROUNDS) _end();
+        if (_match.over) _end();
         else _enter('ready');
     }
 
@@ -499,8 +503,7 @@ function _end() {
     _phase = 'over';
     _hud.say('');
     _zones.forEach(z => { if (z) z.style.opacity = '0'; });
-    const top = Math.max(..._score), lead = _seats().filter(s => _score[s] === top);
-    const w = lead.length === 1 ? lead[0] : -1, rank = _score.slice();
+    const w = _match.winner, rank = _score.slice();
     // Everybody on the finish roof for the verdict, in a line, slot 0 on the right.
     const fr = _course.roofs[_course.roofs.length - 1];
     const off = slot => (_n === 2 ? (slot === 0 ? 1.3 : -1.3) : ((_n - 1) / 2 - slot) * 1.3);
