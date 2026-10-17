@@ -829,7 +829,6 @@ function _sunk(b, knocked) {
             if (!_done && _fx) _fx.burst(at.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 1.5 + Math.random() * 2, (Math.random() - 0.5) * 3)), [0xfde047, s.color, 0xff5d8f, 0x7dd3fc][k % 4], 0.35, 0.5);
         }, k * 160);
     }
-    _built?.flagPop?.();
     b.sinkFrom = { x: b.p.x, z: b.p.z };
     if (n === 1) {
         sfx('ace'); _nextWait = 3.2;
@@ -1405,8 +1404,6 @@ function _drawBalls(dt) {
         b.trailPts.forEach((q, i) => pos.setXYZ(i, q[0], q[1], q[2]));
         pos.needsUpdate = true; b.trail.geometry.setDrawRange(0, b.trailPts.length);
     });
-    // The flag comes out while a ball is close to the cup.
-    _built?.flagOut(_balls.some(b => b.on && !b.done && Math.hypot(b.p.x - _c.cup.x, b.p.z - _c.cup.z) < 2.2));
 }
 function _drawFigs(dt) {
     if (!_c) return;

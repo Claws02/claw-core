@@ -146,7 +146,7 @@ function _textTex(text, bg, fg, w = 128, h = 80) {
 
 export function buildHole(stage, c, theme, holeNo = 1) {
     const root = new THREE.Group();
-    const live = { windmills: [], sweepers: [], sliders: [], water: [], bumpers: [], flag: null, chevrons: [], doors: [], pads: [], ripples: [], lava: [], mines: [], soft: [] };
+    const live = { windmills: [], sweepers: [], sliders: [], water: [], bumpers: [], chevrons: [], doors: [], pads: [], ripples: [], lava: [], mines: [], soft: [] };
     const edgeMat = _mat(theme.edge, { roughness: 0.8 });
     const railMat = _mat(theme.rail, { roughness: 0.5 });
     const capMat = _mat(theme.accent, { roughness: 0.5 });
@@ -253,23 +253,28 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         root.add(b.g);
         live.bumpers.push({ p, g: b.g, flash: b.flash, squash: b.squash, base: b.flash?.emissiveIntensity ?? 0, t: 0 });
     });
-    // The cup, its rim and the flag.
+    // The cup: a hole in the green, and a flagstick standing in it. Nothing about it
+    // moves. It's drawn over the floor whatever the angle: floors pull themselves
+    // toward the camera by their tile index (polygonOffset) and a cup in a dip has
+    // the floor curving up round it, so the cup pulls harder than any floor can.
     {
         const cupG = new THREE.Group();
-        const hole = new THREE.Mesh(new THREE.CircleGeometry(CUP_R, 28), new THREE.MeshBasicMaterial({ color: 0x050806 }));
-        hole.rotation.x = -Math.PI / 2; hole.position.y = 0.012; cupG.add(hole);
-        const rim = new THREE.Mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.05, 28), new THREE.MeshBasicMaterial({ color: 0xf7f7f2 }));
-        rim.rotation.x = -Math.PI / 2; rim.position.y = 0.014; cupG.add(rim);
+        const onTop = (color) => new THREE.MeshBasicMaterial({ color, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -200 });
+        const flat = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.rotation.x = -Math.PI / 2; m.position.y = y; m.renderOrder = 1; cupG.add(m); return m; };
+        // The white lip, a dark band of inside wall, then the black bottom: it
+        // reads as a hole with some depth from any side.
+        flat(new THREE.RingGeometry(CUP_R, CUP_R + 0.05, 32), onTop(0xf7f7f2), 0.014);
+        flat(new THREE.RingGeometry(CUP_R * 0.72, CUP_R, 32), onTop(0x2a2e27), 0.013);
+        flat(new THREE.CircleGeometry(CUP_R * 0.72, 32), onTop(0x050806), 0.012);
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.1, 6), _mat(0xf2f2f2, { roughness: 0.3, metalness: 0.4 }));
         pole.position.y = 1.05; cupG.add(pole);
-        const fg = new THREE.PlaneGeometry(0.9, 0.56, 8, 2);
+        const fg = new THREE.PlaneGeometry(0.9, 0.56);
         fg.translate(0.45, 0, 0);
         const flagTex = _textTex(String(holeNo), '#' + new THREE.Color(theme.flag ?? 0xff3b3b).getHexString(), '#ffffff');
         const flag = new THREE.Mesh(fg, new THREE.MeshStandardMaterial({ map: flagTex, side: THREE.DoubleSide, roughness: 0.7 }));
         flag.position.set(0.03, 1.8, 0); cupG.add(flag);
         cupG.position.set(c.cup.x, c.cup.y, c.cup.z);
         root.add(cupG);
-        live.flag = { flag, base: Array.from(fg.attributes.position.array), cupG, pole };
     }
     // The tee mat.
     {
@@ -449,21 +454,6 @@ export function buildHole(stage, c, theme, holeNo = 1) {
                 for (let i = 0; i < pos.count; i++) pos.array[i * 3 + 1] = base[i * 3 + 1] + Math.sin(t * 2.2 + base[i * 3] * 1.7 + base[i * 3 + 2] * 1.3) * 0.025;
                 pos.needsUpdate = true;
             });
-            if (live.flag) {
-                const { flag, base } = live.flag, pos = flag.geometry.attributes.position;
-                for (let i = 0; i < pos.count; i++) { const x = base[i * 3]; pos.array[i * 3 + 2] = Math.sin(t * 5 - x * 4) * 0.08 * x; }
-                pos.needsUpdate = true;
-                // A sink: the flag hops out of the cup and spins.
-                const F = live.flag;
-                if (F.pop > 0) {
-                    F.pop = Math.max(0, F.pop - dt / 1.1);
-                    const u = 1 - F.pop, h = Math.sin(Math.min(1, u * 1.4) * Math.PI) * 0.9;
-                    F.pole.visible = F.flag.visible = true;
-                    F.pole.position.y = 1.05 + h; F.flag.position.y = 1.8 + h;
-                    F.flag.rotation.y = u * Math.PI * 4;
-                    if (F.pop === 0) F.flag.rotation.y = 0;
-                }
-            }
             live.bumpers.forEach(b => {
                 if (b.t > 0) b.t = Math.max(0, b.t - dt);
                 const k = b.t / 0.25;
@@ -489,8 +479,6 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         /** Where a ball is, u (0..1) of the way down a corkscrew. */
         loopAt(l, u) { const cv = screws.get(l); return cv ? cv.getPointAt(Math.max(0, Math.min(1, u))) : null; },
         /** Lift the flag out while a ball is on the green close by. */
-        flagPop() { if (live.flag) live.flag.pop = 1; },
-        flagOut(on) { if (live.flag) live.flag.cupG.children.slice(2).forEach(o => { o.visible = !on; }); },
         dispose() {
             stage.scene.remove(root);
             root.traverse(o => { o.geometry?.dispose(); if (o.material) { o.material.map?.dispose(); o.material.dispose(); } });
