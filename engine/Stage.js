@@ -230,22 +230,39 @@ export function createStage(host, opts = {}) {
     // ADAPTIVE RESOLUTION. A full lit set with shadows at DPR 2 is the most
     // expensive thing this game draws, and a phone that cannot hold it does not
     // just stutter: dt is capped at 0.1 s (R1), so below 10 fps the GAME CLOCK
-    // slows down with it and a 30 s round takes 90. When frames run long for a
-    // second and a half the stage steps its pixel ratio down, and keeps
-    // stepping until it holds or reaches the floor. It never steps back up —
-    // resolution flickering between two values reads worse than either.
+    // slows down with it and a 30 s round takes 90. When frames run slower than
+    // about 45 fps for a second and a half, the stage steps its pixel ratio
+    // down, and keeps stepping until it holds or reaches the floor.
+    // A step that didn't make frames any faster is undone, and that's the end of
+    // it: the phone is held back by something else (a display or battery-saver
+    // cap at 30, or the CPU), and fewer pixels would only look worse for nothing.
+    // It never steps back up otherwise: resolution flickering between two
+    // values reads worse than either.
     const STEPS = [2, 1.5, 1, 0.75];
-    stage.quality = { ratio: Math.min(window.devicePixelRatio || 1, DPR_CAP), ema: 1 / 60, since: 0, drops: 0 };
+    const SLOW = 1 / 45;
+    stage.quality = { ratio: Math.min(window.devicePixelRatio || 1, DPR_CAP), ema: 1 / 60, since: 0, drops: 0, before: null, done: false };
+    function setRatio(v) {
+        stage.quality.ratio = v;
+        stage.renderer.setPixelRatio(v);
+        stage.renderer.setSize(stage.width, stage.height, false);
+    }
     function adapt(rawDt) {
         const q = stage.quality;
         q.ema += (rawDt - q.ema) * 0.08;
         q.since += rawDt;
-        if (!stage.renderer || q.since < 1.5 || q.ema < 1 / 30) return;
+        if (!stage.renderer || q.done || q.since < 1.5) return;
+        if (q.before) {
+            // Judge the last step: under 10% faster is no help.
+            const { ratio, ema } = q.before;
+            q.before = null;
+            if (q.ema > ema * 0.9) { setRatio(ratio); q.drops--; q.done = true; q.since = 0; return; }
+        }
+        if (q.ema < SLOW) return;
         const next = STEPS.find(v => v < q.ratio - 0.01);
-        if (next === undefined) return;
-        q.ratio = next; q.since = 0; q.drops++;
-        stage.renderer.setPixelRatio(next);
-        stage.renderer.setSize(stage.width, stage.height, false);
+        if (next === undefined) { q.done = true; return; }
+        q.before = { ratio: q.ratio, ema: q.ema };
+        q.since = 0; q.drops++;
+        setRatio(next);
     }
 
     // SPLIT SCREEN. `stage.views` is null (the one full-frame stage.camera) or

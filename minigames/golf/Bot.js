@@ -38,6 +38,11 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
     if (!targets.some(p => p === c.path[c.path.length - 1])) targets.push(c.path[c.path.length - 1]);
     const tShot = t + 0.4;
     const res = [];
+    // A frame's share of the work: when it's spent, hand the frame back (the game
+    // calls next() once a frame). plan() runs it all at once, as before.
+    const _now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    let _t0 = _now();
+    const tired = () => _now() - _t0 > 4;
     const run = (a, p, at = from, when = tShot, extra = 0) => {
         const r = simulate(c, at, Math.cos(a), Math.sin(a), p, when, { maxT: 7 * c.Q, dt: 1 / 45 });
         const s = { a, p, s: _score(c, r, from, when) + extra, r: r.result, wait: when - tShot };
@@ -50,16 +55,16 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
         const base = Math.min(1, Math.sqrt(dist / (34 * c.S)));
         for (let i = 0; i < fine; i++) {
             const a = dir + (i - (fine - 1) / 2) * 0.07;
-            for (const k of [0.55, 0.8, 1.05, 1.35, 1.8]) run(a, Math.max(0.06, Math.min(1, base * k)));
+            for (const k of [0.55, 0.8, 1.05, 1.35, 1.8]) { run(a, Math.max(0.06, Math.min(1, base * k))); if (tired()) { yield; _t0 = _now(); } }
         }
         yield;
     }
     // A ring all the way round, for banks off the rails.
-    for (let i = 0; i < 20; i++) { const a = i / 20 * Math.PI * 2 + rand() * 0.1; run(a, 0.4); run(a, 0.75); }
+    for (let i = 0; i < 20; i++) { const a = i / 20 * Math.PI * 2 + rand() * 0.1; run(a, 0.4); run(a, 0.75); if (tired()) { yield; _t0 = _now(); } }
     yield;
     res.sort((x, y) => x.s - y.s);
     // Refine round the best three.
-    for (const best of res.slice(0, 3)) for (let k = 0; k < 4 + Math.round(skill * 6); k++) run(best.a + (rand() - 0.5) * 0.06, Math.max(0.05, Math.min(1, best.p * (0.93 + rand() * 0.14))));
+    for (const best of res.slice(0, 3)) for (let k = 0; k < 4 + Math.round(skill * 6); k++) { run(best.a + (rand() - 0.5) * 0.06, Math.max(0.05, Math.min(1, best.p * (0.93 + rand() * 0.14)))); if (tired()) { yield; _t0 = _now(); } }
     yield;
     res.sort((x, y) => x.s - y.s);
     let best = res[0];
@@ -72,17 +77,17 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
             const at = simulate(c, from, 0, 0, 0, tShot, { maxT: w, minT: w, dt: 1 / 30 });
             if (at.result === 'water' || at.result === 'out') break;
             const pos = { x: at.x, y: at.y, z: at.z };
-            for (const cand of top) run(cand.a, cand.p, pos, tShot + w, w * 0.3);
+            for (const cand of top) { run(cand.a, cand.p, pos, tShot + w, w * 0.3); if (tired()) { yield; _t0 = _now(); } }
             for (const tg of targets) {
                 const dir = Math.atan2(tg[1] - pos.z, tg[0] - pos.x), base = Math.min(1, Math.sqrt(Math.hypot(tg[0] - pos.x, tg[1] - pos.z) / (34 * c.S)));
-                for (let i = -2; i <= 2; i++) for (const k of [0.8, 1.1, 1.5]) run(dir + i * 0.08, Math.min(1, base * k), pos, tShot + w, w * 0.3);
+                for (let i = -2; i <= 2; i++) for (const k of [0.8, 1.1, 1.5]) { run(dir + i * 0.08, Math.min(1, base * k), pos, tShot + w, w * 0.3); if (tired()) { yield; _t0 = _now(); } }
             }
             // A raft within reach: a soft putt to stop on its deck.
             for (const tl of rafts) {
                 const o = tileOffset(tl, tShot + w), rx = tl.cx + o.dx, rz = tl.cz + o.dz, dd = Math.hypot(rx - pos.x, rz - pos.z);
                 if (dd > 9) continue;
                 const dir = Math.atan2(rz - pos.z, rx - pos.x);
-                for (let i = -1; i <= 1; i++) for (const k of [0.75, 0.9, 1.05, 1.2]) run(dir + i * 0.05, Math.max(0.06, Math.min(1, Math.sqrt(dd / (34 * c.S)) * k)), pos, tShot + w, w * 0.3);
+                for (let i = -1; i <= 1; i++) for (const k of [0.75, 0.9, 1.05, 1.2]) { run(dir + i * 0.05, Math.max(0.06, Math.min(1, Math.sqrt(dd / (34 * c.S)) * k)), pos, tShot + w, w * 0.3); if (tired()) { yield; _t0 = _now(); } }
             }
             yield;
         }
