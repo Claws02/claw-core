@@ -110,9 +110,9 @@ The golf loop, generalized:
 ## 7. Status
 
 - [x] Plan written (this file)
-- [ ] Phase 0: golf weak spots
+- [x] Phase 0: golf weak spots: Castle, Black Holes, Walk the Plank fixed, plus a bot risk fix (`golf/PLAN.md` §3)
 - [ ] Phase 1: match lab plus scorecard
-- [ ] Phase 2: `Match.js` pilot
+- [ ] Phase 2: `Match.js` pilot: built and tested (22 checks); Express, Light Cycles, Lily Pad, Rooftop Run moved onto it, browser check pending
 - [ ] Phase 3: batches
 
 ### Scorecard

@@ -101,13 +101,17 @@ work, builds it, verifies it, ships it, and reports in plain language.
 - [ ] Low-power putting feel (the curve is `0.35u + 0.65u²`).
 - [ ] The Cargo Bay belt fix, once #29 and #25 are merged.
 
-**Known weak spots** (bot data):
-- **Bouncy Castle** is the hardest hole: about par+2 at skill 0.55. "Bounce to the Turret" is at
-  0.6%, below the 1–8% target.
-- **Occasional 10-stroke caps at skill 0.55:** Pool, Rockery, Crow's Nest, Jelly Jump, Teleporter
-  Hub. Not regular, but worth a pass.
-- **Black Holes:** the slingshot window is narrow (it needs about full power and a tight angle).
-  The visuals are good now; the line could be friendlier.
+**Known weak spots** (bot data, re-measured 2026-10-17 at 20 trials a hole; 6–10 trials is
+too noisy to call a hole: Black Holes read 5.2 at 10 trials and 3.8 at 24):
+- **Fixed 2026-10-17:** Bouncy Castle 5.5 → 3.25 (a rubber runway, lower turret, domed pad, back
+  wall; Turret challenge 1.0%). Black Holes 5.25 → ~4.0 (smaller pull radius, rear hole by the
+  hull; Slingshot 1.0%). Walk the Plank 5.6 → 4.6 (a dock-end rail so the tee shot can land on
+  the dock, and a bot fix below).
+- **Bot fix:** the bot's "is this shot too risky for me" check only looked 7 s ahead, so long
+  hero lines that miss into water late looked safe. It looks 12 s now. Course totals at 0.55:
+  Backyard 33.7 → 31.4, Pirate 38.9 → 33.8, Candy 32.7, Space ~37; 10-caps across 36 holes 10 → 3.
+- **Still above par+1.5 or capping now and then:** Airlocks (5.5 on par 5, fine), Solar Wind
+  (one cap in 20 with either bot), Rockery and Moon Craters (~par+1.6). Worth a pass, not urgent.
 - **Chaos mode at 1.5×:** the balls get smaller on a shared screen. Check readability.
 
 **Housekeeping:**
