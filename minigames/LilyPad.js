@@ -24,6 +24,7 @@ import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, seatEdge, faceoffHud, touch, effects, overheadCam } from '../engine/StageKit.js';
+import { createMatch } from './Match.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const COLS = 5, ROWS = 8, GAP = 2.2;
@@ -43,7 +44,7 @@ const FIG_SCALE = 1.05;
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _pads = [], _figs = [], _bot = [], _aimRings = [];
-let _n = 2, _round = 0, _score = [0, 0];
+let _n = 2, _round = 0, _score = [0, 0], _match = null;
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 let _dirOwns = false;
 let _nextRise = 0;
@@ -52,6 +53,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _n = Math.max(2, Math.min(4, slotCount()));
+    // A round where everybody goes in doesn't use one up; level after three is sudden death.
+    _match = createMatch({ seats: _n, firstTo: WIN_ROUNDS, maxRounds: MAX_ROUNDS, type: 'lilypad' });
     _round = 0; _score = new Array(_n).fill(0); _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0;
     _bot = Array.from({ length: _n }, () => ({ wait: 0 }));
     registerMinigameCleanup(_destroy);           // R3
@@ -259,13 +262,13 @@ function _botStep(slot, dt) {
 // ── The loop ─────────────────────────────────────────────────────────────────
 function _enter(phase) {
     _phase = phase; _phaseT = 0;
-    if (phase === 'ready') { _round++; _resetRound(); _hud.say(`ROUND ${_round}`, 'LAST ONE DRY', READY_TIME * 1000, _t); }
+    if (phase === 'ready') { const next = _match.begin(); _round = next.round; _resetRound(); _hud.say(next.label, 'LAST ONE DRY', READY_TIME * 1000, _t); }
     else if (phase === 'play') sfx('go');
     else if (phase === 'result') {
         // The one left dry takes the round; nobody dry is nobody's.
         const dry = _figs.filter(f => !f.out);
         const w = dry.length === 1 ? dry[0].slot : -1;
-        if (w >= 0) _score[w]++;
+        _score = _match.end(w).wins;
         _hud.say(w < 0 ? (_n === 2 ? 'BOTH IN!' : 'ALL IN!') : `${seat(w).name} STAYS DRY`, _score.join(' – '), RESULT_TIME * 1000, _t);
         _figs.forEach(f => { if (!f.out) f.anim?.play('victory'); });
     }
@@ -277,7 +280,7 @@ function _frame(dt) {
     _hud.tick(_t);
     if (_phase === 'ready' && _phaseT > READY_TIME) _enter('play');
     else if (_phase === 'result' && _phaseT > RESULT_TIME) {
-        if (_score.some(v => v >= WIN_ROUNDS) || _round >= MAX_ROUNDS) _end();
+        if (_match.over) _end();
         else _enter('ready');
     }
 
@@ -397,8 +400,7 @@ function _renderHud() {
 function _end() {
     _phase = 'over';
     _hud.say('');
-    const top = Math.max(..._score), lead = _score.reduce((a, v, i) => (v === top ? a.concat(i) : a), []);
-    const w = lead.length === 1 ? lead[0] : -1;
+    const w = _match.winner;
     // Everyone back on a pad for the verdict.
     _figs.forEach(f => {
         f.out = false; f.hop = null; f.y = 0;

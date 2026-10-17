@@ -100,15 +100,15 @@ export const COURSE = {
 
         {   key: 'magnets', name: 'BLACK HOLES', sig: 'slingshot round the black holes', par: 3, tee: [0, 0], cup: [25, 0], rail: 'neon', blockMat: 'metal',
             // An asteroid sits dead in line with the cup. Curve round it on the
-            // pull of a black hole: the near one pulls hard (a tight, quick
-            // line — and if it catches you, you're gone), the far one gently
-            // (a wide, safe arc). Or bank it round off the hull.
+            // pull of a black hole (skim the rim and it bends you in; get too
+            // close and you're gone), or bank it round off the hull. A third
+            // waits by the back hull for anything that runs well past the cup.
             tiles: [{ r: [-1.5, -9, 32, 9] },
                     { r: [13.9, -4.8, 15.1, -3.6], y: 0.03, kind: 'void' },
                     { r: [13.9, 3.6, 15.1, 4.8], y: 0.03, kind: 'void' },
-                    { r: [28.6, -0.5, 29.6, 0.5], y: 0.03, kind: 'void' }],
+                    { r: [30.1, -0.5, 31.1, 0.5], y: 0.03, kind: 'void' }],
             blocks: [[13.4, -1.4, 15.6, 1.4, 0.8]],
-            magnets: [{ x: 14.5, z: -4.2, r: 4.6, k: 8, hole: true }, { x: 14.5, z: 4.2, r: 4.6, k: 8, hole: true }, { x: 29.1, z: 0, r: 2.6, k: 5, hole: true }],
+            magnets: [{ x: 14.5, z: -4.2, r: 3.8, k: 8, hole: true }, { x: 14.5, z: 4.2, r: 3.8, k: 8, hole: true }, { x: 30.6, z: 0, r: 1.6, k: 5, hole: true }],
             props: [{ type: 'planet', at: [-10, 16] }] },
 
         {   key: 'airlock', name: 'THE AIRLOCKS', sig: 'airlocks or the spacewalk', par: 5, tee: [0, 0], cup: [4, 13], rail: 'neon', blockMat: 'metal',

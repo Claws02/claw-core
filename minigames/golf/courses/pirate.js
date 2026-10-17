@@ -29,7 +29,10 @@ export const COURSE = {
                     { r: [17, 0.3, 19, 1.3], kind: 'wood', open: 'nswe' },
                     { r: [7, -7, 19, -5], kind: 'wood' },
                     { r: [19, -7, 27, 3], hills: [[21.5, -5.2, 1.5, 0.16], [24.5, -2, 1.3, -0.06], [21, 1.3, 1.4, 0.14]] }],
-            walls: [[3, -5.4, 4.6, -7, 0.4]],
+            // A rail across the end of the dock, open only where the plank
+            // starts: the jump off the ship comes to rest on the dock, and the
+            // choice (plank or pier) is the second shot.
+            walls: [[3, -5.4, 4.6, -7, 0.4], [7, -2.5, 7, 1.3, 0.35, 'wood']],
             path: [[5, 1.8], [19.5, 0.7]],
             props: [{ type: 'barrel', at: [1, -8.3] }, { type: 'palm', at: [29, -4] }, { type: 'palm', at: [22, 5] }, { type: 'fin', at: [13, 2.8] }, { type: 'fin', at: [12, -2.6] }] },
 

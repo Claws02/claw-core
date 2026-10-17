@@ -27,6 +27,7 @@ import { registerMinigameCleanup, isBotSlot, seatFor } from './MinigameManager.j
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
+import { createMatch } from './Match.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const ROOF_Y      = 3.4;
@@ -59,7 +60,7 @@ let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null;
 let _figs = [];
 let _in = [];                  // per slot: pointer state
 let _bot = [];
-let _round = 0, _score = [0, 0];
+let _round = 0, _score = [0, 0], _match = null;
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 let _bridge = null;            // { x0, t0, obj, prevX, warned }
 let _nextBridge = 0;
@@ -71,6 +72,7 @@ let _dirOwns = false;
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
+    _match = createMatch({ seats: 2, firstTo: WIN_ROUNDS, maxRounds: MAX_ROUNDS, type: 'express' });
     _round = 0; _score = [0, 0]; _t = 0; _clock = 0; _shake = 0; _result = null; _bridge = null;
     _in = [0, 1].map(() => ({ pid: null, ax: 0, ay: 0, t0: 0, moved: false, drive: 0, held: false }));
     _bot = [0, 1].map(() => ({ tick: 0, drive: 0, duck: false, miss: false, jit: 0 }));
@@ -164,17 +166,18 @@ function _faceOf(f) {
 function _enter(phase) {
     _phase = phase; _phaseT = 0;
     if (phase === 'ready') {
-        _round++;
+        const next = _match.begin();
+        _round = next.round;
         // The how-to line is for the first round; after that it is clutter.
         if (_round > 1 && _hud) _hud.pads.forEach(p => { p.h.style.display = 'none'; });
         _resetRound();
-        _say(`ROUND ${_round}`, 'SHOVE THEM OFF THE TRAIN', READY_TIME * 1000);
+        _say(next.label, 'SHOVE THEM OFF THE TRAIN', READY_TIME * 1000);
     } else if (phase === 'play') {
         _say('');
         sfx('go');
     } else if (phase === 'result') {
         const r = _result;
-        if (r.winner >= 0) _score[r.winner]++;
+        _score = _match.end(r.winner).wins;
         _say(r.title, r.sub, RESULT_TIME * 1000);
         sfx(r.winner < 0 ? 'land_bad' : 'coin_gain');
     }
@@ -190,7 +193,7 @@ function _endRound(winner, title, sub) {
 function _endMatch() {
     _phase = 'over';
     _say('');
-    const w = _score[0] > _score[1] ? 0 : _score[1] > _score[0] ? 1 : -1;
+    const w = _match.winner;
     // Anyone who went over the side is back up for the verdict — on the roof.
     _figs.forEach(f => {
         Object.assign(f, { out: false, x: _home(f.slot), v: 0, y: ROOF_Y, duck: false, lunge: 0 });
@@ -298,7 +301,7 @@ function _frame(dt) {
 
     if (_phase === 'ready' && _phaseT > READY_TIME) _enter('play');
     else if (_phase === 'result' && _phaseT > RESULT_TIME) {
-        if (_score[0] >= WIN_ROUNDS || _score[1] >= WIN_ROUNDS || _round >= MAX_ROUNDS) _endMatch();
+        if (_match.over) _endMatch();
         else _enter('ready');
     }
 

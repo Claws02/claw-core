@@ -28,6 +28,7 @@ import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
 import { registerMinigameCleanup, slotCount, isBotSlot, seatFor } from './MinigameManager.js';
 import { zonesFor } from '../config/MinigameLayout.js';
+import { createMatch } from './Match.js';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const WIN_ROUNDS  = 2;      // best of 3
@@ -63,7 +64,7 @@ let _W = 0, _H = 0, _cols = 0, _rows = 0, _ox = 0, _oy = 0;
 let _n = 2;                       // slots, not seats
 let _grid = null;                 // Int8Array: 0 empty, slot+1 = that slot's trail
 let _cycles = [];                 // { cx, cy, dir, fx, fy, alive }
-let _wins = [];
+let _wins = [], _match = null;
 let _zones = [];                  // input quadrants — the ARENA stays whole
 let _round = 0;
 let _roundT = 0, _graceT = 0;
@@ -94,6 +95,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _done = false; _onWin = onWin; _isBot = isBot; _botSkill = botSkill;
     _n = Math.max(2, Math.min(4, slotCount()));
     _wins = new Array(_n).fill(0); _botCd = new Array(_n).fill(0);
+    // A round where everybody crashes doesn't use one up; level after three is sudden death.
+    _match = createMatch({ seats: _n, firstTo: WIN_ROUNDS, maxRounds: MAX_ROUNDS, type: 'lightcycles' });
     _round = 0; _last = 0; _between = false;
     _mFrac = 0; _mx = 0; _my = 0;
     _flash = 0; _flashMsg = ''; _sticks = [];
@@ -295,7 +298,8 @@ function _applyMargin() {
 // ── Rounds ──────────────────────────────────────────────────────────────────
 function _startRound() {
     if (_done) return;
-    _round++;
+    const next = _match.begin();
+    _round = next.round;
     _between = false;
     _roundT = 0;
     _graceT = GRACE;
@@ -323,7 +327,7 @@ function _startRound() {
     ];
     _cycles = Array.from({ length: _n }, (_, i) => ({ ...STARTS[i](), alive: true }));
     _cycles.forEach((c, i) => _set(c.cx, c.cy, i + 1));
-    _flash = 0.9; _flashMsg = `ROUND ${_round}`;
+    _flash = 0.9; _flashMsg = next.label;
     sfx('go');
     const neu = document.getElementById('mg-neutral');
     if (neu) neu.textContent = `ROUND ${_round}   ${_wins.join(' · ')}`;
@@ -407,7 +411,8 @@ function _step(dt) {
 function _endRound(winnerId, why) {
     if (_between || _done) return;
     _between = true;
-    if (winnerId >= 0) _wins[winnerId]++;
+    const res = _match.end(winnerId);
+    _wins = res.wins;
     _flash = 1.4;
     // Both dying on the same tick isn't always a head-on — most often it's two
     // simultaneous wall crashes — so the wording covers either.
@@ -417,8 +422,7 @@ function _endRound(winnerId, why) {
     const neu = document.getElementById('mg-neutral');
     if (neu) neu.textContent = `${_wins.join(' · ')}   —   BEST OF ${MAX_ROUNDS}`;
 
-    if (winnerId >= 0 && _wins[winnerId] >= WIN_ROUNDS) { _after(() => _finish(winnerId), GAP); return; }
-    if (_round >= MAX_ROUNDS) { _after(_finishOnScore, GAP); return; }
+    if (res.over) { _after(() => _finish(res.winner), GAP); return; }
     _after(_startRound, GAP);
 }
 
@@ -619,14 +623,6 @@ function _draw() {
 }
 
 // ── End (R6) ────────────────────────────────────────────────────────────────
-function _finishOnScore() { _finish(_leader()); }
-
-/** The outright most rounds won, or -1 if the top is shared. */
-function _leader() {
-    const best = Math.max(..._wins);
-    const top = _wins.reduce((a, v, i) => (v === best ? a.concat(i) : a), []);
-    return top.length === 1 ? top[0] : -1;
-}
 
 function _nameOf(pid) {
     const p = state.players[seatFor(pid)];
