@@ -10,6 +10,7 @@
 // is what the ball hits. Scenery (props, the garden round the course) is drawn
 // from the hole's `props` and the theme's `scenery`, and never touches the ball.
 // ============================================================
+import { bake } from './Bake.js';
 import { tileHeight, moverWalls, windmillAngle, HAZARD, CUP_R, R } from './Physics.js';
 import * as Toy from './Toys.js';
 import * as Moving from './Moving.js';
@@ -339,6 +340,21 @@ export function buildHole(stage, c, theme, holeNo = 1) {
         world.children.slice().forEach(o => { if (!o.isPoints && o.position.y > -5 && Math.hypot(o.position.x - sx, o.position.z - sz) < 3.2 && !o.geometry?.parameters?.width && !o.geometry?.parameters?.radius && !o.geometry?.parameters?.innerRadius) world.remove(o); });
         root.add(world);
     }
+
+    // Everything the hole updates stays as it is; the rest is merged (golf/Bake.js).
+    moving.group.name = 'moving';
+    const keep = new Set([moving.group]);
+    const reach = (v, d) => {
+        if (!v || d > 3) return;
+        if (v.isObject3D) { keep.add(v); return; }
+        if (Array.isArray(v)) v.forEach(x => reach(x, d + 1));
+        else if (typeof v === 'object' && !v.isMaterial) Object.values(v).forEach(x => reach(x, d + 1));
+    };
+    reach(live, 0);
+    cannons.forEach(k => keep.add(k.o));
+    hoses.forEach(h => { keep.add(h.mesh); if (h.ball) keep.add(h.ball); });
+    const baked = bake(root, keep);
+    root.userData.baked = baked;
 
     stage.add(root);
 

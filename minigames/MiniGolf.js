@@ -456,6 +456,8 @@ function _loadHole(i) {
     if (_stage?.gl) {
         _faded.clear(); _seeT = 0;
         _built?.dispose(); _built = buildHole(_stage, _c, _theme, i + 1);
+        // Compile every shader the hole needs now, during the fly-down, not on its first frame of play.
+        try { _stage.renderer?.compile(_stage.scene, _stage.camera); } catch (e) {}
         _gfx?.dispose(); _gfx = null;
         const B = _c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
         if (_lights) {
@@ -1035,8 +1037,19 @@ function _play(dt, pdt = dt) {
             if (b.state !== 'aim' || b.done) return;
             b.clock += dt;
             if (_isBot(b.slot)) {
-                b.bot.wait -= dt;
-                if (b.bot.wait <= 0) { const pl = plan(_c, b.p, _pt, _botSkill); _shoot(b.slot, pl.dx, pl.dz, pl.power); b.bot.wait = BOT_DELAY; }
+                // Think while it waits, a few milliseconds a frame (a whole plan at once is a
+                // visible hitch on a phone), for the moment it will strike.
+                const B = b.bot;
+                B.wait -= dt;
+                if (!B.it && B.wait < BOT_DELAY - 0.6) { B.it = planSteps(_c, b.p, _pt + Math.max(0, B.wait - 0.4), _botSkill); B.pl = null; B.at = { x: b.p.x, z: b.p.z }; }
+                if (B.it && !B.pl) { const st = B.it.next(); if (st.done) B.pl = st.value; }
+                if (B.wait <= 0) {
+                    // Knocked since it planned, or not done thinking: plan now.
+                    let pl = B.pl;
+                    if (!pl || !B.at || Math.hypot(b.p.x - B.at.x, b.p.z - B.at.z) > 0.05) pl = plan(_c, b.p, _pt, _botSkill);
+                    _shoot(b.slot, pl.dx, pl.dz, pl.power);
+                    b.bot = { wait: BOT_DELAY };
+                }
                 return;
             }
             const d = [..._drag.values()].find(x => x.slot === b.slot);
@@ -1271,6 +1284,7 @@ function _fadeRoot(o) {
     const root = _built.root;
     let pick = o;
     for (let a = o.parent; a && a !== root; a = a.parent) {
+        if (a.userData.fadeRoot) return a;   // a baked prop (golf/Bake.js): fade it whole
         let n = 0; a.traverse(q => { if (q.isMesh) n++; });
         if (n > 40) break;
         pick = a;
@@ -1291,7 +1305,7 @@ function _seeThrough(dt) {
             _seeRay.far = d - P.R * 2.5;
             for (const h of _seeRay.intersectObject(_built.root, true)) {
                 const o = h.object;
-                if (!o.isMesh || !o.visible || o.material?.transparent && o.material.opacity < 0.5) continue;
+                if (!o.isMesh || !o.visible || o.userData.noFade || o.material?.transparent && o.material.opacity < 0.5) continue;
                 // Not the floor (nor its skirts), unless it's a deck overhead.
                 let fl = false; for (let a = o; a && a !== _built.root; a = a.parent) if (a.userData.floor) { fl = true; break; }
                 if (fl && h.point.y < to.y + 0.3) continue;
@@ -1569,6 +1583,13 @@ export function _debugScene() {
     _built.root.updateMatrixWorld(true);
     _built.root.traverse(o => { if (o.isMesh && o.visible && !o.matrixWorld.elements.every(Number.isFinite)) bad.push(o.parent?.type + '>' + (o.geometry?.type || '?')); });
     return { bad, faded: _faded.size };
+}
+/** What the bake left as separate meshes, by the top-level group they're under (perf QA). */
+export function _debugBake() {
+    if (!_built) return null;
+    const by = {};
+    _built.root.children.forEach(ch => { let n = 0, fl = new Set(); ch.traverse(q => { if (q.isMesh) n++; Object.keys(q.userData).forEach(k => fl.add(k)); }); if (n) { const k = (ch.type + (ch.name ? '(' + ch.name + ')' : '') + ':' + (ch.geometry?.type || ch.children.length) + ':' + [...fl].join('/')).slice(0, 60); by[k] = (by[k] || 0) + n; } });
+    return { baked: _built.root.userData.baked, top: Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 15) };
 }
 export function _debugState() {
     return {
