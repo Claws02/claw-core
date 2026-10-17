@@ -105,7 +105,7 @@ export function lint(hole) {
     for (const w of staticWalls) if (segDist(cx, cz, w.x1, w.z1, w.x2, w.z2) < CUP_R + R * 2) { err('the cup is hard against a wall', cx, cz); break; }
     for (const p of posts) if (Math.hypot(p.x - cx, p.z - cz) < p.r + CUP_R + R) err('a post crowds the cup', p.x, p.z);
     const left = pathLeft(c, tx, tz);
-    if (left >= Math.hypot(tx - cx, tz - cz) + 30 - 1e-6) err('the cup cannot be reached from the tee (path field)', tx, tz);
+    if (left >= Math.hypot(tx - cx, tz - cz) + 30 * (c.S || 1) - 1e-6) err('the cup cannot be reached from the tee (path field)', tx, tz);
 
     // ── blocks and posts against walls ──
     blocks.forEach(([x0, z0, x1, z1], i) => {

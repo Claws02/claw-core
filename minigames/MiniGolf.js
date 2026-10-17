@@ -749,7 +749,7 @@ function _shoot(slot, dx, dz, power) {
         sfx('boom'); _shake = Math.max(_shake, 0.5);
         if (_stage?.gl && mz) { _fx.puff(mz, 0xd1d5db, 12, 0.7, 1.2); _fx.burst(mz, 0xffa53f, 0.4, 0.2); }
     }
-    P.strike(b.p, dx, dz, power);
+    P.strike(b.p, dx, dz, power, _c);
     b.state = 'roll'; b.rollT = 0; if (b.trailPts) b.trailPts = [];
     _strokes[slot][_hole]++;
     _shooter = slot;
@@ -1068,7 +1068,7 @@ function _play(dt, pdt = dt) {
             b.rollT += dt;
             if (b.state !== 'roll') { b.state = 'roll'; b.rollT = 0; }
         }
-        if (b.rollT > (_c.hole.rollMax || ROLL_MAX) && !b.p.rest && !b.p.pipe && !b.p.loop) { b.p.vx = b.p.vz = b.p.vy = 0; b.p.rest = true; b.p.air = false; b.p.y = _floorY(b.p.x, b.p.z); }
+        if (b.rollT > (_c.hole.rollMax || ROLL_MAX) * (_c.Q || 1) && !b.p.rest && !b.p.pipe && !b.p.loop) { b.p.vx = b.p.vz = b.p.vy = 0; b.p.rest = true; b.p.air = false; b.p.y = _floorY(b.p.x, b.p.z); }
         b.clackT -= dt;
         for (const e of ev) _event(b, e);
         // Stopped.
@@ -1252,6 +1252,9 @@ function _camera(dt) {
     if (_shake > 0) cam.position.add(new THREE.Vector3((Math.random() - 0.5) * _shake * 0.4, (Math.random() - 0.5) * _shake * 0.3, (Math.random() - 0.5) * _shake * 0.4));
     cam.lookAt(_cam.look);
     cam.userData.look = _cam.look.toArray();
+    // The haze starts past what you're looking at: pulled out over a big hole it mustn't swallow it.
+    const fog = _stage.scene.fog;
+    if (fog) { const d = cam.position.distanceTo(_cam.look); fog.near = Math.max(38, d * 0.9 + 12); fog.far = Math.max(90, d * 1.7 + 40); }
 }
 
 /** The ball being chased is riding a cannon (spinning in it, or flying out of it). */
