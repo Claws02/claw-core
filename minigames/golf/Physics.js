@@ -928,8 +928,9 @@ export function noRest(c, x, z, y) {
     const f = floorAt(c, x, z, y + 0.05, 0.1);
     if (!f) return false;
     const t = f.tile;
-    // A current with an open (rail-less) side runs out into something; a walled-in belt just pins it.
-    return !!(t.norest || HAZARD[f.kind] || (t.flow && (t.kind === 'creek' || (t.open && t.open.length))));
+    // A moving floor (a creek, a belt) is never somewhere to stop: a belt that's carried the ball
+    // into a rail would pin it there, flickering between stopped and moving, unplayable.
+    return !!(t.norest || HAZARD[f.kind] || t.flow);
 }
 
 export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
