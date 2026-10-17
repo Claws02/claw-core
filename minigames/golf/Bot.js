@@ -97,7 +97,7 @@ export function* planSteps(c, b, t, skill = 0.55, rand = Math.random) {
         if (err < 0.1) return false;
         let bad = 0;
         for (const [da, dp] of [[-0.12, 0], [0.12, 0], [0, -0.12], [0, 0.12]]) {
-            const r = simulate(c, cand.at || from, Math.cos(cand.a + da * err), Math.sin(cand.a + da * err), Math.max(0.05, Math.min(1, cand.p * (1 + dp * err * 2))), tShot + (cand.wait || 0), { maxT: 7 * c.Q, dt: 1 / 45 });
+            const r = simulate(c, cand.at || from, Math.cos(cand.a + da * err), Math.sin(cand.a + da * err), Math.max(0.05, Math.min(1, cand.p * (1 + dp * err * 2))), tShot + (cand.wait || 0), { maxT: 12 * c.Q, dt: 1 / 45 });
             if (r.result === 'water' || r.result === 'out') bad++;
         }
         return bad >= 2;
