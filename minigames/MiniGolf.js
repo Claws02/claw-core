@@ -65,10 +65,11 @@ const TEE_SPREAD = 0.42;
 // `round`: the next game is the Mini Golf mode's own round, played in its saved
 // mode. Anything else — a party, Quick Play, HundredBlockDash — is CHAOS, so
 // golf takes about as long as the games around it.
-const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns', round: false };
+const DEFAULTS = { course: null, holes: 'sampler', mode: 'turns', round: false, table: false };
 let _cfg = { ...DEFAULTS };
 /**
- * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos', round }.
+ * { course: key | null (random), holes: 'sampler' | 9 | 18, mode: 'turns' | 'chaos', round,
+ *   table: turns with the phone flat between two ends, the picture turning to whoever's up }.
  * The mode sticks until changed (it's a setting) but only applies with `round`
  * (the Mini Golf mode's own round). The course, the number of holes and `round`
  * are for the NEXT game only: a party after a full course is a chaos sampler again.
@@ -76,7 +77,7 @@ let _cfg = { ...DEFAULTS };
 export function configure(o = {}) {
     _cfg = { ..._cfg, ...o };
     // Turns is passed round; chaos is everyone at once round the one phone. Both upright.
-    if (_cfg.round && _cfg.mode !== 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = 'putt'; else delete MG_ORIENTATION_OVERRIDE.minigolf;   // 'puttall' otherwise
+    if (_cfg.round && _cfg.mode !== 'chaos') MG_ORIENTATION_OVERRIDE.minigolf = _cfg.table ? 'tabletop' : 'putt'; else delete MG_ORIENTATION_OVERRIDE.minigolf;   // 'puttall' otherwise
     return { ..._cfg };
 }
 export function configured() { return { ..._cfg }; }
@@ -593,9 +594,13 @@ function _nextTurn() {
     _yaw = Math.atan2(fw[1], fw[0]);
     _view = 'follow';
     const s = seat(next);
-    // Hand the phone over when a different person has to play.
+    // Hand the phone over when a different person has to play. On the table there's
+    // nothing to hand over: the picture turns round to face their end (seats take
+    // the two ends in turn, P1 the near one). A bot's shot is watched from where it is.
     const humans = _seats().filter(k => !_isBot(k)).length;
-    if (!_isBot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
+    const table = _cfg.table && _mode === 'turns' && !_chal;
+    if (table && !_isBot(next)) { _stage?.flip(next % 2 === 1, 450); _holder = next; }
+    if (!table && !_isBot(next) && next !== _holder && humans > 1) { _turnState = 'pass'; _showPass(next); }
     else _hud.say(s.name, _isBot(next) ? 'IS UP' : `YOUR SHOT · STROKE ${_strokes[next][_hole] + 1}`, 1000, _t, s.css);
     if (!_isBot(next) && humans <= 1) _holder = next;
     _seats().forEach(k => _hud.lit(k, k === next, k === next ? s.css + '66' : undefined));

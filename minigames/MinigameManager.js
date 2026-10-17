@@ -683,6 +683,14 @@ function _renderOrientationDiagram(mgTypeKey) {
             `</div><div class="ph-home"></div>`;
         return;
     }
+    // Flat between two: P2's end at the top (upside down to P1), P1's at the bottom.
+    if (orient.table) {
+        const end = (who, col, flip) => `<span style="font:12px 'Bebas Neue';letter-spacing:1px;color:rgba(${col},.95);${flip ? 'transform:rotate(180deg);' : ''}">${who}</span>`;
+        diag.innerHTML = `<div class="ph-body"></div><div class="ph-camera"></div><div class="ph-screen" style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:10px 0 8px;">` +
+            `${end('P2 · THIS END', '59,142,255', true)}<span style="font-size:24px;color:rgba(255,255,255,.8);">↻</span>${end('P1 · THIS END', '255,59,59', false)}` +
+            `</div><div class="ph-home"></div>`;
+        return;
+    }
     // Upright: one phone, held normally, with the slider and DROP at the bottom.
     if (orient.upright) {
         diag.innerHTML = `<div class="ph-body"></div><div class="ph-camera"></div><div class="ph-screen" style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:10px 0 8px;">` +

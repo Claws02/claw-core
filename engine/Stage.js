@@ -19,6 +19,9 @@
 //     at a time (a tower, a climb). It is never turned.
 //   · `toLocal()`, which maps a touch into the stage's own frame whichever way
 //     it is turned. Games never see screen coordinates.
+//   · `flip(on, ms)`: the whole frame turned 180° (and back), for a phone lying
+//     flat between two players: the picture faces whoever's up. A spin of `ms`
+//     milliseconds, so both see it go round; toLocal follows it.
 //   · a HUD layer inside the turned frame, for text that must read the same
 //     way up as the scene
 //   · riggable characters for each seat, from the figures players picked
@@ -63,7 +66,7 @@ export function createStage(host, opts = {}) {
     const stage = {
         hold, frame, hud,
         gl: false, renderer: null, scene: null, camera: null,
-        width: 0, height: 0, turned: false,
+        width: 0, height: 0, turned: false, flipped: false,
         _loop: null, _af: null, _last: 0, _elapsed: 0,
         _resize: [], _owned: [], _rigs: [], _disposed: false,
     };
@@ -80,7 +83,7 @@ export function createStage(host, opts = {}) {
         frame.style.height = h + 'px';
         frame.style.left = '50%';
         frame.style.top = '50%';
-        frame.style.transform = `translate(-50%, -50%)${stage.turned ? ' rotate(90deg)' : ''}`;
+        frame.style.transform = `translate(-50%, -50%) rotate(${(stage.turned ? 90 : 0) + (stage.flipped ? 180 : 0)}deg)`;
         if (stage.renderer) {
             stage.renderer.setSize(w, h, false);
             const cs = stage.renderer.domElement.style;
@@ -150,9 +153,21 @@ export function createStage(host, opts = {}) {
         const cx = clientX - (rect.left + rect.width / 2);
         const cy = clientY - (rect.top + rect.height / 2);
         // Turned 90° clockwise: screen (sx, sy) came from local (sy, -sx).
+        // Flipped as well: a half turn more, about the middle.
+        const k = stage.flipped ? -1 : 1;
         return stage.turned
-            ? { x: cy + stage.width / 2, y: -cx + stage.height / 2 }
-            : { x: cx + stage.width / 2, y: cy + stage.height / 2 };
+            ? { x: k * cy + stage.width / 2, y: -k * cx + stage.height / 2 }
+            : { x: k * cx + stage.width / 2, y: k * cy + stage.height / 2 };
+    };
+
+    /** Turn the whole frame to face the far end of the phone (on) or the near one. */
+    stage.flip = (on, ms = 400) => {
+        on = !!on;
+        if (on === stage.flipped) return;
+        stage.flipped = on;
+        frame.style.transition = ms > 0 ? `transform ${ms}ms ease-in-out` : '';
+        layout();
+        if (ms > 0) setTimeout(() => { if (!stage._disposed) frame.style.transition = ''; }, ms + 50);
     };
 
     stage.onResize = fn => { stage._resize.push(fn); fn(stage.width, stage.height); };

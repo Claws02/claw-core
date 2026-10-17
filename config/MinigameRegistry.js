@@ -163,6 +163,19 @@ export const MG_ORIENTATIONS = {
         instructions: 'Hold the phone <b>upright</b> and <b>pass it round</b>: one ball at a time, like real golf.<br><br>On your shot, <b>drag back</b> anywhere and <b>let go</b> — the further you pull, the harder. When it says <b>PASS TO…</b>, hand it on.',
         thumbAnim: 'pulse',
     },
+    // Flat on the table between two players, one at each end (Mini Golf
+    // tabletop): one ball at a time, and the whole picture turns round to face
+    // whoever's up. Nobody passes anything.
+    tabletop: {
+        name: 'TABLETOP',
+        subtitle: 'Lay it flat between you — it turns to whoever\'s up',
+        huddle: false,
+        upright: true,
+        table: true,
+        icon: '⛳', drag: true,
+        instructions: 'Lay the phone <b>flat on the table</b> between you: <b style="color:#ff3b3b">P1</b> at the <b>bottom</b> end, <b style="color:#3b8eff">P2</b> at the <b>top</b>.<br><br>One ball at a time, like real golf. When it\'s your shot the screen <b>turns round to face you</b>: <b>drag back</b> and <b>let go</b> to putt.',
+        thumbAnim: 'pulse',
+    },
     // Portrait, everyone round the one phone at once (Mini Golf chaos): one
     // picture of the hole, the screen split across the middle into a band
     // each to drag in — P1 the bottom.
