@@ -51,7 +51,9 @@ const MIN_PULL = 0.05;
 const BALL_HIT = 56;                   // px: a press this close to your ball takes it (else it's a look)
 const LOOK_YAW = 0.0065, LOOK_TILT = 0.004;   // swipe to orbit / tilt, per px
 const TILT_MIN = 0.55, TILT_MAX = 2.3;                 // less than this and the drag is cancelled
-const CLOCK_TURNS = 30, CLOCK_CHAOS = 12;
+// No shot clock on a person: take as long as you like. A bot takes BOT_DELAY
+// seconds over every shot, so a table can watch it line up.
+const BOT_DELAY = 5;
 const ROLL_MAX = 14;                   // s a ball may roll before it's called stopped
 const FLY_DUR = 3.2;
 const CARD_DUR = 4.6, CARD_MIN = 1.0;
@@ -543,7 +545,7 @@ function _chaosLineUp() {
 
 function _startPlay() {
     _sub = 'play'; _subT = 0;
-    if (_mode === 'chaos') _balls.forEach(b => { b.state = 'aim'; b.clock = 0; b.bot = { wait: 1.2 + Math.random() * 0.8 }; });
+    if (_mode === 'chaos') _balls.forEach(b => { b.state = 'aim'; b.clock = 0; b.bot = { wait: BOT_DELAY }; });
     else _nextTurn();
 }
 
@@ -1026,14 +1028,6 @@ function _play(dt, pdt = dt) {
                 const d = [..._drag.values()].find(x => x.slot === _active);
                 _showBtns(!d);
                 if (d) { const a = _aimOf(d); if (a.pull >= MIN_PULL * 2) _drawKit(_active, a); else { _hideKit(_active); _hidePower(); } }
-                if (_turnT >= CLOCK_TURNS) {
-                    // Out of time: a fair, unspectacular putt toward the cup —
-                    // the stroke is the penalty, not a hole that never ends.
-                    const pl = plan(_c, b.p, _pt, 0.35);
-                    _say2Show('TIME! A PUTT FOR YOU', '#fca5a5');
-                    _drag.clear(); _hideKit(_active);
-                    _shoot(_active, pl.dx, pl.dz, pl.power * 0.85);
-                }
             }
         }
     } else {
@@ -1042,18 +1036,11 @@ function _play(dt, pdt = dt) {
             b.clock += dt;
             if (_isBot(b.slot)) {
                 b.bot.wait -= dt;
-                if (b.bot.wait <= 0) { const pl = plan(_c, b.p, _pt, _botSkill); _shoot(b.slot, pl.dx, pl.dz, pl.power); b.bot.wait = 0.9 + Math.random() * 0.8 + (1 - _botSkill); }
+                if (b.bot.wait <= 0) { const pl = plan(_c, b.p, _pt, _botSkill); _shoot(b.slot, pl.dx, pl.dz, pl.power); b.bot.wait = BOT_DELAY; }
                 return;
             }
             const d = [..._drag.values()].find(x => x.slot === b.slot);
             if (d) { const a = _aimOf(d); if (a.pull >= MIN_PULL * 2) _drawKit(b.slot, a); else _hideKit(b.slot); }
-            if (b.clock >= CLOCK_CHAOS) {
-                // Out of time: the same fair putt as in turns — a stroke, not a hole that never ends.
-                const pl = plan(_c, b.p, _pt, 0.35);
-                [..._drag.entries()].forEach(([id, x]) => { if (x.slot === b.slot) _drag.delete(id); });
-                _shoot(b.slot, pl.dx, pl.dz, pl.power * 0.85);
-                _say2Show(`TIME! · ${seat(b.slot).name}`, '#fca5a5');
-            }
         });
     }
 
@@ -1095,7 +1082,11 @@ function _play(dt, pdt = dt) {
 function _botTurn(dt, b) {
     // Think (spread over a few frames), line it up where you can see it, then
     // putt — at the moment it planned for, on a hole that moves.
-    if (!_botThink && _turnT > 0.6) _botThink = { it: planSteps(_c, b.p, _pt + 1.2, _botSkill), pl: null, t: 0, at: _pt + 1.6 };
+    if (!_botThink && _turnT > 0.6) {
+        // It plans for the moment it will strike, BOT_DELAY into its turn (on a hole that moves, that matters).
+        const at = _pt + Math.max(0.5, BOT_DELAY - _turnT);
+        _botThink = { it: planSteps(_c, b.p, at - 0.4, _botSkill), pl: null, t: 0, at };
+    }
     if (!_botThink) return;
     if (!_botThink.pl) {
         const st = _botThink.it.next();
@@ -1451,10 +1442,10 @@ function _renderHud() {
         if (seat(s).bot) { _hud.hint(s, `${now} · ${_fmt(_toPar(s))}`); return; }
         if (_mode === 'turns') {
             _hud.hint(s, s === _active && _turnState === 'aim'
-                ? (_hole === 0 && now === 0 ? 'PULL BACK FROM THE BALL · SWIPE TO LOOK' : `YOUR SHOT · ${Math.max(0, Math.ceil(CLOCK_TURNS - _turnT))}s`)
+                ? (_hole === 0 && now === 0 ? 'PULL BACK FROM THE BALL · SWIPE TO LOOK' : 'YOUR SHOT')
                 : `${now} · ${_fmt(_toPar(s))}`);
         } else if (![..._drag.values()].some(d => d.slot === s)) {
-            _hud.hint(s, b.state === 'aim' ? (_hole === 0 && now === 0 ? 'DRAG BACK ON YOUR STRIP' : `STROKE ${now + 1} · ${Math.max(0, Math.ceil(CLOCK_CHAOS - b.clock))}s`) : `ROLLING · ${now}`);
+            _hud.hint(s, b.state === 'aim' ? (_hole === 0 && now === 0 ? 'DRAG BACK ON YOUR STRIP' : `STROKE ${now + 1}`) : `ROLLING · ${now}`);
         }
     });
     const el = document.getElementById('mg-neutral');
