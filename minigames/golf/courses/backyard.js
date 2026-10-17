@@ -124,12 +124,18 @@ export const COURSE = {
             // Or round the back and up the slide onto the turret the safe way.
             tiles: [{ r: [-1.5, -4.5, 8, 4.5] },
                     { r: [8, -6.5, 27, 6.5], kind: 'bouncy', railMat: 'inflatable' },
-                    { r: [15.6, -1.3, 17.6, 1.3], y: 0.03, kind: 'jelly', norest: true },
+                    // A rubber mat runs from the door to the trampoline: on it the
+                    // ball rolls true, so the jump is down to the weight of the shot.
+                    { r: [8, -1.3, 15.6, 1.3], y: 0.02, kind: 'carpet' },
+                    { r: [15.6, -1.3, 17.6, 1.3], y: 0.03, kind: 'jelly', norest: true, hills: [[16.6, 0, 1.3, 0.08]] },
                     { r: [17.6, -2.5, 18.5, 2.5], y: 0.02, kind: 'bouncy', norest: true },
-                    { r: [18.5, -2.5, 22.5, 2.5], y: 0.7, kind: 'bouncy', railMat: 'inflatable', hills: [[21, -1.2, 1.0, -0.06]] },
-                    { r: [22.5, -2.5, 25.5, 2.5], y: 0.35, slope: [-0.2333, 0], kind: 'bouncy' }],
+                    { r: [18.5, -2.5, 22.5, 2.5], y: 0.5, kind: 'bouncy', railMat: 'inflatable', hills: [[21, -1.2, 1.0, -0.06]] },
+                    { r: [22.5, -2.5, 25.5, 2.5], y: 0.25, slope: [-0.1667, 0], kind: 'bouncy' }],
             bumpers: [[11, -3.6, 0.5, 0.35, 0.95], [11, 3.6, 0.5, 0.35, 0.95], [20.5, -4.8, 0.5, 0.35, 0.95], [20.5, 4.8, 0.5, 0.35, 0.95], [24.8, -3.6, 0.5, 0.35, 0.95], [24.8, 3.6, 0.5, 0.35, 0.95]],
             links: [[17.6, 0, 18.6, 0]],
+            // The castle's back wall stands tall: a trampoline shot that clears
+            // the turret comes back off it instead of flying out of the garden.
+            walls: [[26.9, -6.5, 26.9, 6.5, 1.8, 'inflatable']],
             path: [[12, 5], [26, 5], [26, 0]],
             props: [{ type: 'flowers', at: [4, 5.4] }, { type: 'tree', at: [4, -6.2] }, { type: 'shed', at: [30, -3] }, { type: 'flowers', at: [16, 7.6] }] },
 
