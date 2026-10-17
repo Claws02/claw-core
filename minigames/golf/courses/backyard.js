@@ -3,7 +3,7 @@ import { kick } from './kit.js';
 
 // ── BACKYARD — someone's garden on a summer afternoon ───────────────────────
 export const COURSE = {
-    key: 'backyard', name: 'BACKYARD', blurb: 'A summer garden: the flower-bed jump, the hedge maze, the paddling pool, the bouncy castle and the playground.',
+    key: 'backyard', name: 'BACKYARD', scale: 1.5, blurb: 'A summer garden: the flower-bed jump, the hedge maze, the paddling pool, the bouncy castle and the playground.',
     theme: {
         sky: 0x8ccbf0, ground: 0x45903a, turf: [0x3aa346, 0x31933d], edge: 0x8a5a2b, rail: 0xf3e9d2,
         sand: 0xead39b, water: 0x4fb4ec, wood: 0xb7814a, block: 0x2f7d3a, accent: 0xff7a59, fog: 0x8ccbf0,
@@ -124,12 +124,12 @@ export const COURSE = {
             // Or round the back and up the slide onto the turret the safe way.
             tiles: [{ r: [-1.5, -4.5, 8, 4.5] },
                     { r: [8, -6.5, 27, 6.5], kind: 'bouncy', railMat: 'inflatable' },
-                    { r: [14.6, -1.3, 16.8, 1.3], y: 0.03, kind: 'jelly' },
-                    { r: [16.8, -2.5, 18.5, 2.5], y: 0.02, kind: 'bouncy', norest: true },
-                    { r: [18.5, -2.5, 22.5, 2.5], y: 0.8, kind: 'bouncy', railMat: 'inflatable', hills: [[21, -1.2, 1.0, -0.06]] },
-                    { r: [22.5, -1, 25.5, 1], y: 0.4, slope: [-0.2667, 0], kind: 'bouncy' }],
+                    { r: [15.6, -1.3, 17.6, 1.3], y: 0.03, kind: 'jelly', norest: true },
+                    { r: [17.6, -2.5, 18.5, 2.5], y: 0.02, kind: 'bouncy', norest: true },
+                    { r: [18.5, -2.5, 22.5, 2.5], y: 0.7, kind: 'bouncy', railMat: 'inflatable', hills: [[21, -1.2, 1.0, -0.06]] },
+                    { r: [22.5, -2.5, 25.5, 2.5], y: 0.35, slope: [-0.2333, 0], kind: 'bouncy' }],
             bumpers: [[11, -3.6, 0.5, 0.35, 0.95], [11, 3.6, 0.5, 0.35, 0.95], [20.5, -4.8, 0.5, 0.35, 0.95], [20.5, 4.8, 0.5, 0.35, 0.95], [24.8, -3.6, 0.5, 0.35, 0.95], [24.8, 3.6, 0.5, 0.35, 0.95]],
-            links: [[16.8, 0, 18.6, 0]],
+            links: [[17.6, 0, 18.6, 0]],
             path: [[12, 5], [26, 5], [26, 0]],
             props: [{ type: 'flowers', at: [4, 5.4] }, { type: 'tree', at: [4, -6.2] }, { type: 'shed', at: [30, -3] }, { type: 'flowers', at: [16, 7.6] }] },
 

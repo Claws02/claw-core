@@ -90,7 +90,60 @@ function _opening(h, course) {
     return { ...h, tee: [teeX, 0], tiles: [...add, ...tiles], links, props, ...(movers ? { movers } : {}), opening: style };
 }
 
-export const COURSES = [BY.COURSE, PI.COURSE, CA.COURSE, SP.COURSE].map(c => ({ ...c, holes: c.holes.map(h => _opening(h, c.key)) }));
+// ── Scale: a course can be built bigger (course.scale, e.g. 1.5) ─────────────
+// Everything grows by s in all three directions and every speed by √s, every
+// time by √s (gravity and friction stay put): then a roll, a bank or a jump
+// follows the same path, just s times the size — so a hole designed small plays
+// the same, with more room round it. The ball and the cup keep their size.
+// (Below-floor pits stay above the ground plane.)
+const _sc = (v, s) => v == null ? v : v * s;
+const _xz = (p, s) => p && [p[0] * s, p[1] * s];
+const _rect = (r, s) => r.map(v => v * s);
+function _scaleHole(h, s) {
+    if (!s || s === 1) return h;
+    const q = Math.sqrt(s);
+    const time = (o, keys) => { keys.forEach(k => { if (o[k] != null) o[k] *= q; }); return o; };
+    const freq = (o, keys) => { keys.forEach(k => { if (o[k] != null) o[k] /= q; }); return o; };
+    const tiles = h.tiles.map(t => {
+        const n = { ...t, r: _rect(t.r, s) };
+        if (t.y != null) n.y = t.y < 0 ? Math.max(-0.65, t.y * s) : t.y * s;
+        if (t.hills) n.hills = t.hills.map(([x, z, r, hh]) => [x * s, z * s, r * s, hh * s]);
+        if (t.ridges) n.ridges = t.ridges.map(rr => rr.map(v => v * s));
+        if (t.trough) n.trough = { ...t.trough, h: _sc(t.trough.h, s) };
+        if (t.flow) n.flow = t.flow.map(v => v * q);
+        if (t.spin) n.spin = t.spin / q;
+        if (t.move) n.move = freq({ ...t.move, amp: _sc(t.move.amp, s) }, ['speed']);
+        if (t.lift) n.lift = time({ ...t.lift }, ['period', 'down', 'phase']);
+        if (t.tilt) n.tilt = freq({ ...t.tilt }, ['speed']);
+        if (t.elev) n.elev = time({ ...t.elev, amp: _sc(t.elev.amp, s) }, ['period', 'phase']);
+        return n;
+    });
+    const mover = m => {
+        const n = { ...m, x: _sc(m.x, s), z: _sc(m.z, s) };
+        ['w', 'len', 'r0', 'rim', 'amp', 'r', 'h'].forEach(k => { if (m[k] != null) n[k] = m[k] * s; });
+        return time(freq(n, ['speed']), ['period']);
+    };
+    return {
+        ...h, scale: s,
+        tee: _xz(h.tee, s), cup: _xz(h.cup, s), tiles,
+        walls: h.walls && h.walls.map(([x1, z1, x2, z2, hh, mat]) => [x1 * s, z1 * s, x2 * s, z2 * s, hh == null ? hh : hh * s, mat]),
+        blocks: h.blocks && h.blocks.map(([x0, z0, x1, z1, hh]) => [x0 * s, z0 * s, x1 * s, z1 * s, hh == null ? hh : hh * s]),
+        bumpers: h.bumpers && h.bumpers.map(([x, z, r, kick, e, jit]) => [x * s, z * s, r * s, kick == null ? kick : kick * q, e, jit]),
+        movers: h.movers && h.movers.map(mover),
+        fans: h.fans && h.fans.map(f => ({ ...f, r: _rect(f.r, s) })),
+        magnets: h.magnets && h.magnets.map(m => ({ ...m, x: m.x * s, z: m.z * s, r: m.r * s })),
+        pipes: h.pipes && h.pipes.map(p => time({ ...p, a: _xz(p.a, s), b: _xz(p.b, s), r: _sc(p.r, s), out: _sc(p.out, q), muzzle: _sc(p.muzzle, s),
+            scatter: p.scatter && p.scatter.map(v => _xz(v, s)) }, ['delay'])),
+        loops: h.loops && h.loops.map(l => time({ ...l, a: _xz(l.a, s), b: _xz(l.b, s), len: _sc(l.len, s), w: _sc(l.w, s), rad: _sc(l.rad, s),
+            minV: _sc(l.minV, q), outV: _sc(l.outV, q) }, ['dur'])),
+        mines: h.mines && h.mines.map(([x, z, r, pw]) => [x * s, z * s, r == null ? r : r * s, pw]),
+        links: h.links && h.links.map(l => l.map(v => v * s)),
+        path: h.path && h.path.map(v => _xz(v, s)),
+        props: h.props && h.props.map(p => ({ ...p, at: _xz(p.at, s), ...(p.to ? { to: _xz(p.to, s) } : {}) })),
+    };
+}
+
+export const COURSES = [BY.COURSE, PI.COURSE, CA.COURSE, SP.COURSE].map(c => ({ ...c, holes: c.holes.map(h => _scaleHole(_opening(h, c.key), c.scale)) }));
 
 /**
  * Trick shots: one ball from a set spot, three goes. In if it stops in the box
@@ -99,7 +152,10 @@ export const COURSES = [BY.COURSE, PI.COURSE, CA.COURSE, SP.COURSE].map(c => ({ 
  * every angle and power from the spot): roughly 1–6% of all directions and
  * strengths land it, far more if you aim the right way.
  */
-export const CHALLENGES = [BY.CHALLENGES, PI.CHALLENGES, CA.CHALLENGES, SP.CHALLENGES].flat();
+export const CHALLENGES = [BY, PI, CA, SP].flatMap(m => m.CHALLENGES.map(ch => {
+    const s = m.COURSE.scale || 1;
+    return s === 1 ? ch : { ...ch, from: _xz(ch.from, s), zone: _rect(ch.zone, s) };
+}));
 export const COURSE_KEYS = COURSES.map(c => c.key);
 export const courseByKey = k => COURSES.find(c => c.key === k) || COURSES[0];
 /** Every hole of every course, as [courseKey, hole]. */

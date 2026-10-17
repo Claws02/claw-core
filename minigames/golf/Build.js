@@ -629,7 +629,8 @@ const SCENERY = {
         const g = new THREE.Group();
         const B = c.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
         const W = B.x1 - B.x0 + 30, D = B.z1 - B.z0 + 30;
-        const lawn = new THREE.Mesh(new THREE.PlaneGeometry(W, D), _mat(theme.ground, { roughness: 1 }));
+        // The lawn runs on well past the fence: a camera pulled out over a big hole sees grass, not sky.
+        const lawn = new THREE.Mesh(new THREE.PlaneGeometry(W + 160, D + 160), _mat(theme.ground, { roughness: 1 }));
         lawn.rotation.x = -Math.PI / 2; lawn.position.set(cx, SKIRT_TO, cz); lawn.receiveShadow = true; g.add(lawn);
         // A picket fence round the garden.
         const pick = _mat(0xfdfbf5, { roughness: 0.7 });
@@ -655,7 +656,11 @@ const SCENERY = {
             win.position.set(-4.5 + i * 3, 3.6, 2.01); house.add(win);
         }
         const door = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.4), _mat(0x3a6ea5)); door.position.set(0, 1.2, 2.01); house.add(door);
-        house.position.set(cx, SKIRT_TO, fz0 - 4); g.add(house);
+        // Beyond the cup, facing back down the hole (never behind the tee, where the cameras sit).
+        const hx = c.cup.x - c.tee.x, hz = c.cup.z - c.tee.z;
+        if (Math.abs(hx) > Math.abs(hz)) { house.position.set(hx > 0 ? fx1 + 4 : fx0 - 4, SKIRT_TO, cz); house.rotation.y = hx > 0 ? -Math.PI / 2 : Math.PI / 2; }
+        else { house.position.set(cx, SKIRT_TO, hz > 0 ? fz1 + 4 : fz0 - 4); house.rotation.y = hz > 0 ? Math.PI : 0; }
+        g.add(house);
         // Trees round the edge.
         [[fx0 + 1.5, fz0 + 1.5, 1.4], [fx1 - 1.5, fz0 + 2, 1.2], [fx0 + 1.2, fz1 - 1.5, 1.1], [fx1 - 2, fz1 - 1.2, 1.5], [cx + 4, fz1 - 1, 1.0]]
             .forEach(([x, z, s]) => { const t = _tree(s); t.position.set(x, SKIRT_TO, z); g.add(t); });
@@ -663,7 +668,7 @@ const SCENERY = {
         const para = new THREE.Group();
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 6), _mat(0xffffff)); pole.position.y = 1.3; para.add(pole);
         const top = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 8), _mat(0xff5d5d)); top.position.y = 2.6; para.add(top);
-        para.position.set(fx1 - 3.5, SKIRT_TO, cz); g.add(para);
+        para.position.set(fx1 - 3.5, SKIRT_TO, fz0 + 3.5); g.add(para);   // in a corner: out of the overview camera's way
         return g;
     },
 };

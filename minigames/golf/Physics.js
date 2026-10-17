@@ -141,6 +141,7 @@ export function compile(hole, opts = {}) {
     });
     const g = hole.gravity || 1;
     const c = {
+        S: hole.scale || 1, Q: Math.sqrt(hole.scale || 1),
         hole, tiles, walls: [], bumpers: [], pipes: [], loops: [], movers: hole.movers || [],
         fans: hole.fans || [], magnets: hole.magnets || [],
         mines: (hole.mines || []).map(([x, z, r, p]) => ({ x, z, r: r || 0.32, p: p ?? 1 })),
@@ -167,7 +168,7 @@ export function compile(hole, opts = {}) {
             const flush = (u1) => {
                 if (run === null) return;
                 const p = [ax + (bx - ax) * run, az + (bz - az) * run], q = [ax + (bx - ax) * u1, az + (bz - az) * u1];
-                const wl = _wall(c, p[0], p[1], q[0], q[1], t.railMat ? 0.45 : RAIL_H, t, t.railMat || railMat);
+                const wl = _wall(c, p[0], p[1], q[0], q[1], (t.railMat ? 0.45 : RAIL_H) * c.S, t, t.railMat || railMat);
                 // A see-saw's or a lift's rail has to cover the whole swing.
                 const sw = _swing(t);
                 if (sw) { wl.b1 -= sw.down; wl.b2 -= sw.down; wl.h += sw.down + sw.up; wl.moving = true; wl.tile = t.i; }
@@ -184,7 +185,7 @@ export function compile(hole, opts = {}) {
                     const hs = [_tileH(o, ox, oz) - here];
                     if (o.elev) hs.push(_tileH(o, ox, oz) + (o.elev.amp || 1) - here);
                     if (t.elev) hs.push(_tileH(o, ox, oz) - here - (t.elev.amp || 1));
-                    return hs.some(dh => Math.abs(dh) <= STEP_UP);
+                    return hs.some(dh => Math.abs(dh) <= STEP_UP * c.S);
                 };
                 const next = still.find(o => o !== t && _inTile(o, ox, oz) && meets(o));
                 const needs = !next;
@@ -194,13 +195,13 @@ export function compile(hole, opts = {}) {
             flush(1);
         }
     });
-    (hole.walls || []).forEach(([x1, z1, x2, z2, h, mat]) => c.walls.push(_wall(c, x1, z1, x2, z2, h ?? RAIL_H, null, mat || railMat)));
+    (hole.walls || []).forEach(([x1, z1, x2, z2, h, mat]) => c.walls.push(_wall(c, x1, z1, x2, z2, h ?? RAIL_H * c.S, null, mat || railMat)));
     const bm = hole.blockMat || 'stone';
     (hole.blocks || []).forEach(([x0, z0, x1, z1, h]) => {
-        const hh = h ?? 0.5;
+        const hh = h ?? 0.5 * c.S;
         [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]].forEach(([a, b, p, q]) => c.walls.push({ ..._wall(c, a, b, p, q, hh, null, bm), block: true }));
     });
-    (hole.bumpers || []).forEach(([x, z, r, kick, e, jit]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK, e: e ?? BUMP_E, jit: jit || 0, y: floorAt(c, x, z, 99)?.h ?? 0 }));
+    (hole.bumpers || []).forEach(([x, z, r, kick, e, jit]) => c.bumpers.push({ x, z, r, kick: kick ?? BUMP_KICK * c.Q, e: e ?? BUMP_E, jit: jit || 0, y: floorAt(c, x, z, 99)?.h ?? 0 }));
     // A cannon's ball lands still going the way it was fired.
     (hole.pipes || []).forEach(p => c.pipes.push({ ...p, r: p.r || 0.32, dir: p.style === 'cannon' && !p.scatter && !p.aim ? [p.b[0] - p.a[0], p.b[1] - p.a[1]] : p.dir }));
     // Shuffled teleporters: the pipes marked `shuffle` swap exits each round, by the round's seed.
@@ -315,7 +316,7 @@ function _tileGrad(t, x, z, time = 0) {
  * current time: the highest tile whose floor there is no higher than
  * y + reach. Null over a gap. Over the cup, there is no floor.
  */
-export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
+export function floorAt(c, x, z, y, reach = STEP_UP * (c.S || 1), time = c._t) {
     let best = null, bh = -Infinity, off = null;
     for (const t of c.tiles) {
         if (!_inTileAt(t, x, z, time)) continue;
@@ -356,7 +357,7 @@ export function floorAt(c, x, z, y, reach = STEP_UP, time = c._t) {
 export function moverWalls(c, t) {
     const out = [];
     for (const m of c.movers) {
-        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP, 0)?.h ?? 0);
+        let base = m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP * c.S, 0)?.h ?? 0);
         if (m.type === 'windmill' || m.type === 'gate' || m.type === 'liftgate') {
             const shut = m.type === 'windmill' ? windmillShut(m, t) : m.type === 'gate' ? gateShut(m, t) : liftGateShut(c, m, t);
             if (shut) {
@@ -408,7 +409,7 @@ export function hammerHeads(c, t) {
         const A = m.amp || 1.5, s = m.speed || 1.6, ph = m.phase || 0;
         const o = A * Math.sin(t * s + ph), v = A * s * Math.cos(t * s + ph);
         const ax = (m.axis || 'z') === 'x' ? 1 : 0, az = 1 - ax;
-        out.push({ x: m.x + ax * o, z: m.z + az * o, r: m.r || 0.35, vx: ax * v, vz: az * v, y: m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP, 0)?.h ?? 0), m });
+        out.push({ x: m.x + ax * o, z: m.z + az * o, r: m.r || 0.35, vx: ax * v, vz: az * v, y: m._base ?? (m._base = floorAt(c, m.x, m.z, 99, STEP_UP * c.S, 0)?.h ?? 0), m });
     }
     return out;
 }
@@ -443,12 +444,14 @@ export function newBall(x, z, y = 0) {
 }
 
 /** Hit it: a direction on the floor and a power 0..1. */
-export function strike(b, dx, dz, power) {
-    const n = Math.hypot(dx, dz) || 1, v = Math.max(0, Math.min(1, power)) * MAXV;
+export function strike(b, dx, dz, power, c) {
+    // On a course built bigger (c.Q = √scale) only the top end hits harder: putts feel the same.
+    const p = Math.max(0, Math.min(1, power)), k = c?.Q ?? 1;
+    const n = Math.hypot(dx, dz) || 1, v = p * MAXV * (1 + (k - 1) * p * p);
     if (b.loaded) {
         // Fired from the cannon: a lob at 45°, out of the muzzle.
         const L = b.loaded, k = (L.aimV ?? 0.85) * v * Math.SQRT1_2;
-        Object.assign(b, { vx: dx / n * k, vz: dz / n * k, vy: k + 1.5, y: b.y + (L.muzzle ?? 0.9), air: true, rest: false, loaded: null, ride: null, tps: 0 });
+        Object.assign(b, { vx: dx / n * k, vz: dz / n * k, vy: k + 1.5 * (c?.Q ?? 1), y: b.y + (L.muzzle ?? 0.9 * (c?.S ?? 1)), air: true, rest: false, loaded: null, ride: null, tps: 0 });
         b.x += dx / n * 0.5; b.z += dz / n * 0.5; b.wx = b.vx; b.wz = b.vz;
         return;
     }
@@ -574,7 +577,7 @@ function _sub(c, b, d, t, movers, others, ev) {
                 _land(c, b, f, ev);
             }
         }
-        if (b.y < FLOOR_OUT) { ev.push({ type: 'out' }); return; }
+        if (b.y < FLOOR_OUT * c.S) { ev.push({ type: 'out' }); return; }
     } else if (!b.rest || c.dynamic) {
         if (cupD < CUP_R) {
             // Off the edge of the cup: the floor isn't there.
@@ -591,7 +594,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             }
             // Jelly: the pad throws the ball up.
             if (f.kind === 'jelly' && !b.jelly && Math.hypot(b.vx, b.vz) > 0.8) {
-                b.jelly = true; b.air = true; b.rest = false; b.vy = JELLY_V + Math.hypot(b.vx, b.vz) * 0.15;
+                b.jelly = true; b.air = true; b.rest = false; b.vy = JELLY_V * c.Q + Math.hypot(b.vx, b.vz) * 0.15;
                 ev.push({ type: 'jelly' });
                 return;
             }
@@ -649,7 +652,7 @@ function _sub(c, b, d, t, movers, others, ev) {
             }
             const vyOld = b.vx * f.gx + b.vz * f.gz;
             // Rolling into the side of a deck, a catwalk or a ramp's end overhead: off the face.
-            if (_face(c, b, b.x, b.z, b.x + b.vx * d, b.z + b.vz * d, STEP_UP + 0.05, ev)) { _collide(c, b, movers, others, ev); return; }
+            if (_face(c, b, b.x, b.z, b.x + b.vx * d, b.z + b.vz * d, STEP_UP * c.S + 0.05, ev)) { _collide(c, b, movers, others, ev); return; }
             const nx = b.x + b.vx * d, nz = b.z + b.vz * d;
             const yPred = b.y + vyOld * d;
             const nd = Math.hypot(nx - c.cup.x, nz - c.cup.z);
@@ -684,7 +687,7 @@ function _sub(c, b, d, t, movers, others, ev) {
         if (dd >= m.r) continue;
         const sp = Math.hypot(b.vx, b.vz);
         const ux = dd > 0.02 ? dx / dd : (sp > 0.01 ? b.vx / sp : 1), uz = dd > 0.02 ? dz / dd : (sp > 0.01 ? b.vz / sp : 0);
-        const P = MINE_V * m.p;
+        const P = MINE_V * c.Q * m.p;
         b.vx = b.vx * 0.3 + ux * P * 0.55; b.vz = b.vz * 0.3 + uz * P * 0.55; b.vy = P * 0.8;
         b.wx = b.vx * 0.2; b.wz = b.vz * 0.2;
         b.air = true; b.rest = false;
@@ -755,7 +758,7 @@ function _land(c, b, f, ev) {
     const vn = b.vx * nx + b.vy * ny + b.vz * nz;
     b.y = f.h;
     const e = f.kind === 'jelly' ? 0.88 : S.bounce;
-    if (-vn > 2.2 && e > 0.05) {
+    if (-vn > 2.2 * c.Q && e > 0.05) {
         b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; b.vz -= (1 + e) * vn * nz;
         b.vx *= 0.92; b.vz *= 0.92;
         ev.push({ type: 'land', v: -vn, kind: f.kind });
@@ -766,7 +769,7 @@ function _land(c, b, f, ev) {
         if (S.grab) { b.vx *= 0.45; b.vz *= 0.45; ev.push({ type: 'spray' }); }
         if (S.splash) { b.vx *= 0.6; b.vz *= 0.6; ev.push({ type: 'splash', kind: f.kind }); }
         b.air = false; b.vy = 0; b.kind = f.kind;
-        if (-vn > 1) ev.push({ type: 'land', v: -vn, kind: f.kind });
+        if (-vn > c.Q) ev.push({ type: 'land', v: -vn, kind: f.kind });
     }
 }
 
@@ -933,8 +936,8 @@ export function simulate(c, from, dx, dz, power, t0 = 0, opts = {}) {
     const b = { ...newBall(from.x, from.z, from.y), sunk: false };
     // Sitting in an aim cannon: the shot is a firing.
     if (power > 0) for (const p of c.pipes) if (p.aim && Math.hypot(from.x - p.a[0], from.z - p.a[1]) < 0.05) b.loaded = p;
-    if (power > 0) strike(b, dx, dz, power);
-    const dt = opts.dt || 1 / 60, maxT = opts.maxT ?? 8, every = opts.every ?? 0;
+    if (power > 0) strike(b, dx, dz, power, c);
+    const dt = opts.dt || 1 / 60, maxT = opts.maxT ?? 8 * c.Q, every = opts.every ?? 0;
     const pts = every ? [[b.x, b.y, b.z]] : null;
     let t = 0, travelled = 0, bounces = 0, result = 'time', since = 0, px = b.x, pz = b.z;
     const ev = [];
@@ -996,8 +999,8 @@ const _segX = (ax, az, bx, bz, cx, cz, dx, dz) => {
 
 function _buildField(c) {
     // The grid sits off the round numbers walls are drawn on, so no cell lies on a wall.
-    const s = 0.3, B = c.bounds;
-    const x0 = B.x0 + 0.137, z0 = B.z0 + 0.113, w = Math.ceil((B.x1 - B.x0) / s) + 1, h = Math.ceil((B.z1 - B.z0) / s) + 1;
+    const s = 0.3 * c.S, B = c.bounds;
+    const x0 = B.x0 + 0.137 * c.S, z0 = B.z0 + 0.113 * c.S, w = Math.ceil((B.x1 - B.x0) / s) + 1, h = Math.ceil((B.z1 - B.z0) / s) + 1;
     const N = w * h, floor = new Array(N), d = new Float64Array(N).fill(Infinity);
     // Floors at their resting places: rafts where they start, drawbridges down.
     const saved = c._t; c._t = 0;
@@ -1011,7 +1014,7 @@ function _buildField(c) {
             const ex = wl.x2 - wl.x1, ez = wl.z2 - wl.z1, L = Math.hypot(ex, ez) || 1, k = 0.12 / L;
             if (_segX(ax, az, bx, bz, wl.x1 - ex * k, wl.z1 - ez * k, wl.x2 + ex * k, wl.z2 + ez * k)) return true;
         }
-        for (const p of c.bumpers) if (p.r > 0.25 && Math.hypot((ax + bx) / 2 - p.x, (az + bz) / 2 - p.z) < p.r) return true;
+        for (const p of c.bumpers) if (p.r > 0.25 * c.S && Math.hypot((ax + bx) / 2 - p.x, (az + bz) / 2 - p.z) < p.r) return true;
         return false;
     };
     const links = [];
@@ -1038,7 +1041,7 @@ function _buildField(c) {
             // Searching backwards (from the cup): the ball goes g → f. It can drop
             // any distance but climb only a little — unless one is a hazard, or a jelly pad.
             const haz = HAZARD[g.kind] || HAZARD[f.kind] || g.kind === 'jelly';
-            if (!haz && f.h - g.h > STEP_UP + Math.hypot(f.gx, f.gz) * s * 1.5) continue;
+            if (!haz && f.h - g.h > STEP_UP * c.S + Math.hypot(f.gx, f.gz) * s * 1.5) continue;
             const bx = x0 + ni * s, bz = z0 + nj * s;
             if (blocked(ax, az, bx, bz)) continue;
             const cost = Math.hypot(di, dj) * s * (HAZARD[g.kind] ? 6 : g.kind === 'sand' ? 1.6 : g.kind === 'puddle' ? 1.4 : 1);
