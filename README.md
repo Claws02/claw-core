@@ -76,6 +76,10 @@ MinigameManager.triggerStandalone(type, isBot, seats, {
 say which games can run at which seat count. `MG_NET[type] === 'parallel'`
 games can be played one phone each through `SoloArena.play(type, seed, onScore)`.
 
+A game only one app should have stays in that app: it adds its rows to the
+registry tables at startup and hands `MinigameManager.registerMinigame(type, loader)`
+its file. CLAWGames' Yatzy is the reference (`CLAWGames/src/games/`).
+
 ## Rules for changes here
 
 - A change lands here once and reaches both apps. Run both apps' QA before
