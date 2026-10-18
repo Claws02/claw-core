@@ -71,6 +71,11 @@ export function loadMinigame(type) {
     return loader();
 }
 
+// A game one app keeps to itself (CLAWGames' Yatzy): the file lives in the app,
+// the app adds its rows to the registry tables, and hands its loader here.
+// HundredBlockDash never calls this, so nothing it registers reaches the board.
+export function registerMinigame(type, loader) { MG_MODULES[type] = loader; }
+
 // ============================================================
 // THE ROSTER — which seats are playing this minigame
 // ============================================================
