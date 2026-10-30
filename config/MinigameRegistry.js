@@ -262,7 +262,7 @@ export const MG_NET = {
     oddoneout:   'parallel',
     steadyhand:  'parallel',
     sortrush:    'local',
-    speedboat:   'local',      // one river, boats that touch — a shared simulation
+    speedboat:   'parallel',   // across phones: a time trial down the same (wider) river, the others as ghosts
     lootcatch:   'parallel',
     clearout:    'local',
     puck:        'local',
@@ -281,11 +281,11 @@ export const MG_NET = {
     lilypad:     'local',
     rooftop:     'local',
     blockparty:  'local',
-    riftdive:    'local',
+    riftdive:    'parallel',   // across phones: a time trial down the same (wider) shaft, the others as ghosts
     balloonpump: 'parallel',  // across phones: the same five hidden limits on each, one pump each
     musicalchairs: 'local',
     bumpercars: 'local',
-    kartgp: 'local',
+    kartgp: 'parallel',       // across phones: a time trial on the same (bigger) circuit, the others as ghosts
     redlight: 'local',
     tag: 'local',
     balloontoss: 'local',
@@ -314,7 +314,7 @@ export const MG_NET = {
 // SoloArena's deadline and the hosts' round cap and grace read it: the grace is
 // how long the rest get once somebody has finished, which for golf has to be
 // most of a round, not a few seconds.
-export const MG_SOLO_MS = { minigolf: 240000, shellgame: 180000 };   // shellgame: a streak can run to 25 shuffles
+export const MG_SOLO_MS = { minigolf: 240000, shellgame: 180000, kartgp: 180000 };   // shellgame: a streak can run to 25 shuffles; kartgp: a 150 s bell
 export const soloRoundMs = (type, fallback) => Math.max(fallback, MG_SOLO_MS[type] || 0);
 export const soloGraceMs = (type, fallback) => Math.max(fallback, (MG_SOLO_MS[type] || 0) * 0.6);
 
@@ -335,6 +335,9 @@ export const MG_PAYOUT = {
 // thing on theirs, all of that is wrong — and it is wrong in the specific way
 // that makes somebody look for a second player who is not there.
 export const MG_NET_INFO = {
+    kartgp:      'A TIME TRIAL: two laps of a circuit picked for the round, the same on every phone, and everyone else racing it with you as see-through ghosts (they can\'t touch you). DRAG ⬅➡ to steer, steer hard at speed to drift for a turbo, and TAP to fire the mushroom from an item box. Fastest time wins; your place in the pack is on screen as you go.',
+    speedboat:   'A TIME TRIAL down the same river on every phone, with everyone else as see-through ghosts. DRAG ⬅➡ to steer for the gate between the flags in every line of rocks, and TAP to change gear: SLOW, CRUISE, FLAT OUT. Hit a rock and you stall, worse the faster you were going. Fastest to the flag wins.',
+    riftdive:    'A TIME TRIAL straight down the Void, the same shaft on every phone, with everyone else falling beside you as ghosts. DRAG to steer: fly through rings for speed, and dodge the red shards or you tumble. Fastest to the core wins.',
     balloonpump: 'HOLD to pump your balloon, let go to stop. When the whistle blows a balloon in one piece scores its size, but pump past the hidden limit and it POPS for nothing that round. Near the limit it wobbles and squeaks. Every phone gets the same five limits; the last round counts double. Most points wins.',
     pancakes:    'A pancake slides back and forth over your plate — TAP to drop it. The ring goes green when you\'re lined up. Real physics: drop one off-centre and the stack leans, miss and it\'s on the floor. Each one that lands makes the next one faster. Tallest stack after 40 seconds wins.',
     shellgame:   'A cup lifts to show the pea, then the cups shuffle — and every shuffle is longer and faster than the last. Tap LEFT, MIDDLE or RIGHT where the pea is. Keep going until you miss: 10 points a cup, plus a bonus for picking fast. Same shuffles on every phone. Last one standing wins.',

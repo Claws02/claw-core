@@ -19,7 +19,9 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot as _botSlot } from './MinigameManager.js';
+import * as Solo from './SoloArena.js';
+import { createGhosts } from '../engine/Ghosts.js';
 import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
@@ -27,7 +29,13 @@ import { seat, faceoffHud, touch, effects } from '../engine/StageKit.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const DEPTH      = 420;
-const RADIUS     = 7, ROAM = 5.9;            // shaft wall; how far out a diver can go
+const RADIUS0    = 7, ROAM0 = 5.9;           // shaft wall; how far out a diver can go
+const WANDER0    = 4.2, SCATTER0 = 5;        // how far out rings wander, and loose shards lie
+// Played alone on every phone (SoloArena) it's a time trial against everyone
+// else's ghost, down a shaft SOLO_WIDE times wider so a dozen divers fit.
+// Rings, shards and divers stay the same size; the course comes from the seed.
+const SOLO_WIDE  = 1.5;
+let RADIUS = RADIUS0, ROAM = ROAM0, WANDER = WANDER0, SCATTER = SCATTER0;
 const FALL       = 17, BOOST = 9, BOOST_DECAY = 1.1, MAX_FALL = 32;
 const STEER      = 8.5, ACCEL = 22;
 const RING_EVERY = 11, RING_R = 1.45;
@@ -45,12 +53,18 @@ let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in =
 let _divers = [], _bot = [], _rings = [], _shards = [], _cams = [];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0;
 let _dirOwns = false, _winner = -1;
+let _solo = false, _ghosts = null;
+const _slots = () => (_solo ? [0] : [0, 1]);
+const isBotSlot = slot => !_solo && _botSlot(slot);
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -1;
-    _bot = [0, 1].map(() => ({ plan: 0, tx: 0, tz: 0 }));
+    _solo = Solo.isSolo(); _ghosts = null;
+    const k = _solo ? SOLO_WIDE : 1;
+    RADIUS = RADIUS0 * k; ROAM = RADIUS - (RADIUS0 - ROAM0); WANDER = WANDER0 * k; SCATTER = SCATTER0 * k;
+    _bot = _slots().map(() => ({ plan: 0, tx: 0, tz: 0 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -66,19 +80,20 @@ export function start(isBot, onWin, botSkill = 0.55) {
         _set = STAGE_SETS.void(_stage, { depth: DEPTH, radius: RADIUS });
         // One camera per half. P1's "up" is -z, P2's is +z: each looks at the
         // shaft from their own side of the phone.
-        _cams = [0, 1].map(slot => {
+        _cams = _slots().map(slot => {
             const c = new THREE.PerspectiveCamera(62, 1, 0.1, 160);
             c.up.set(0, 0, slot === 0 ? -1 : 1);
             return c;
         });
     }
     _layCourse();
-    _divers = [0, 1].map(_buildDiver);
-    [0, 1].forEach(slot => { _hud.hint(slot, seat(slot).bot ? '' : 'DRAG TO STEER · RINGS = SPEED'); });
+    _divers = _slots().map(_buildDiver);
+    _slots().forEach(slot => { _hud.hint(slot, isBotSlot(slot) ? '' : 'DRAG TO STEER · RINGS = SPEED'); });
+    if (_solo && _stage.gl) _ghosts = createGhosts(_stage, { build: _ghostDiver, y: 1.4 });
 
     _dir.open({
         place: 'THE VOID · THE EDGE OF EVERYTHING', title: 'RIFT DIVE',
-        sub: 'FIRST TO THE CORE',
+        sub: _solo ? 'TIME TRIAL · DOWN TO THE CORE' : 'FIRST TO THE CORE',
         from: { pos: [10, 9, 12], look: [0, -2, 0] },
         to: { pos: [0, 11, 7], look: [0, -14, 0] },
         onDone: () => { if (!_done) _enter('ready'); },
@@ -88,6 +103,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
 
 function _destroy() {
     _done = true;
+    _ghosts?.dispose(); _ghosts = null;
     if (_stage) { _stage.views = null; _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _divers = []; _rings = []; _shards = []; _cams = []; _set = null; _dir = null; _hud = null; _in = null; _fx = null;
@@ -100,11 +116,13 @@ function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
 // sometimes right on the line from one ring to the next.
 function _layCourse() {
     _rings = []; _shards = [];
+    // Alone, every phone lays the same course from the round's seed.
+    const rnd = _solo ? (() => { let i = 0; return () => Solo.draw(i++); })() : Math.random;
     let px = 0, pz = 0, id = 0;
     for (let y = -16; y > -DEPTH + 8; y -= RING_EVERY) {
-        const a = Math.random() * Math.PI * 2, step = 1.5 + Math.random() * 2.5;
+        const a = rnd() * Math.PI * 2, step = 1.5 + rnd() * 2.5;
         let x = px + Math.cos(a) * step, z = pz + Math.sin(a) * step;
-        const r = Math.hypot(x, z); if (r > 4.2) { x *= 4.2 / r; z *= 4.2 / r; }
+        const r = Math.hypot(x, z); if (r > WANDER) { x *= WANDER / r; z *= WANDER / r; }
         const ring = { id: id++, x, y, z, taken: [false, false] };
         if (_stage.gl) {
             const m = new THREE.Mesh(new THREE.TorusGeometry(RING_R, 0.13, 8, 30),
@@ -115,14 +133,14 @@ function _layCourse() {
         _rings.push(ring);
         // Shards between this ring and the next.
         // Sparse: most gaps have none, the deeper half a few more.
-        const n = Math.random() < (y < -DEPTH / 2 ? SHARD_CHANCE[1] : SHARD_CHANCE[0]) ? 1 : 0;
+        const n = rnd() < (y < -DEPTH / 2 ? SHARD_CHANCE[1] : SHARD_CHANCE[0]) ? 1 : 0;
         for (let k = 0; k < n; k++) {
-            const sy = y - RING_EVERY * (0.3 + Math.random() * 0.45);
+            const sy = y - RING_EVERY * (0.3 + rnd() * 0.45);
             let sx, sz;
-            if (Math.random() < 0.35) {       // on the line, a little off it
-                sx = x + (Math.random() - 0.5) * 1.6; sz = z + (Math.random() - 0.5) * 1.6;
+            if (rnd() < 0.35) {       // on the line, a little off it
+                sx = x + (rnd() - 0.5) * 1.6; sz = z + (rnd() - 0.5) * 1.6;
             } else {
-                const b = Math.random() * Math.PI * 2, rr = Math.random() * 5;
+                const b = rnd() * Math.PI * 2, rr = rnd() * SCATTER;
                 sx = Math.cos(b) * rr; sz = Math.sin(b) * rr;
             }
             const sh = { x: sx, y: sy, z: sz, hit: [false, false] };
@@ -140,7 +158,7 @@ function _layCourse() {
 
 // ── Divers ───────────────────────────────────────────────────────────────────
 function _buildDiver(slot) {
-    const d = { slot, x: 0, z: slot === 0 ? 1.2 : -1.2, y: 0, vx: 0, vz: 0, vy: 0,
+    const d = { slot, x: 0, z: _solo ? 0 : slot === 0 ? 1.2 : -1.2, y: 0, vx: 0, vz: 0, vy: 0,
                 boost: 0, stun: 0, rings: 0, done: false, doneT: 0 };
     if (_stage.gl) {
         const c = _stage.character(slot);
@@ -168,7 +186,8 @@ function _pose(d, diving) {
 function _enter(phase) {
     _phase = phase; _phaseT = 0;
     if (phase === 'ready') {
-        if (_stage?.gl) _stage.views = [0, 1].map(slot => ({ camera: _cams[slot], rect: slot === 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 0.5] }));
+        if (_stage?.gl) _stage.views = _solo ? [{ camera: _cams[0], rect: [0, 0, 1, 1] }]
+            : [0, 1].map(slot => ({ camera: _cams[slot], rect: slot === 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 0.5] }));
         _hud.say('READY…', 'THE CORE IS 420 METRES DOWN', READY_TIME * 1000, _t, '#9ad8ff');
     } else if (phase === 'dive') {
         _hud.say('DIVE!', '', 700, _t, '#ffd12d');
@@ -181,6 +200,15 @@ function _enter(phase) {
 function _end() {
     _phase = 'over';
     _hud.say('');
+    if (_solo) {
+        // A time trial reports a score, not a winner.
+        const d = _divers[0], banked = soloScore();
+        _hud.say(d.done ? `${d.doneT.toFixed(1)}s` : 'OUT OF TIME', d.done ? 'YOUR TIME TO THE CORE' : `${_pct(d)}% OF THE WAY DOWN`, 0, _t, '#ffd12d');
+        const el = document.getElementById('mg-neutral');
+        if (el) el.textContent = d.done ? `THE CORE IN ${d.doneT.toFixed(1)}s` : 'DID NOT REACH THE CORE';
+        setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1600);
+        return;
+    }
     const w = _winner;
     // Everyone on the core floor for the verdict, standing, the full-frame camera back.
     if (_stage) _stage.views = null;
@@ -295,6 +323,12 @@ function _frame(dt) {
             });
             if (d.y <= -DEPTH) { d.done = true; d.doneT = _clock; }
         });
+        if (_solo) {
+            const d = _divers[0];
+            Solo.ghostSend({ x: +d.x.toFixed(2), y: +d.y.toFixed(2), z: +d.z.toFixed(2), h: 0, p: +(Math.min(1, -d.y / DEPTH)).toFixed(4), done: d.done ? +d.doneT.toFixed(2) : 0 });
+            if (d.done) { sfx('coin_gain'); _end(); }
+            else if (_clock > CAP_T) _end();
+        } else {
         // Divers bump.
         const [a, b] = _divers;
         const dx = a.x - b.x, dz = a.z - b.z, dist = Math.hypot(dx, dz);
@@ -314,6 +348,7 @@ function _frame(dt) {
         } else if (_clock > CAP_T) {
             _winner = Math.abs(a.y - b.y) < 0.5 ? -1 : (a.y < b.y ? 0 : 1);
             _end();
+        }
         }
     }
 
@@ -341,6 +376,7 @@ function _frame(dt) {
         if (rg.flash > 0) { rg.flash -= dt; rg.mesh.scale.setScalar(1 + rg.flash); }
     });
     _set?.update(dt, _t);
+    _ghosts?.update(dt);
     _fx?.update(dt);
     _dirOwns = !!_dir && _dir.update(dt);
     if (_done) return;
@@ -348,9 +384,11 @@ function _frame(dt) {
 }
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
+const _pct = d => Math.round(Math.min(1, Math.max(0, -d.y / DEPTH)) * 100);
 function _renderHud() {
     if (!_hud || !_divers.length) return;
-    const pct = d => Math.round(Math.min(1, Math.max(0, -d.y / DEPTH)) * 100);
+    if (_solo) return _renderSoloHud();
+    const pct = _pct;
     [0, 1].forEach(slot => {
         const d = _divers[slot], o = _divers[1 - slot];
         const gap = Math.round(o.y - d.y);
@@ -359,6 +397,34 @@ function _renderHud() {
     });
     const el = document.getElementById('mg-neutral');
     if (el && _phase === 'dive') el.textContent = `${seat(0).name} ${pct(_divers[0])}% · ${pct(_divers[1])}% ${seat(1).name}`;
+}
+
+// ── Time trial (SoloArena) ──────────────────────────────────────────────────
+/** At the core: 1000 plus a point a tenth under the cap. Still falling: how far down (0–1000). */
+export function soloScore() {
+    const d = _divers[0];
+    if (!d) return 0;
+    return d.done ? Math.round(1000 + (CAP_T - d.doneT) * 10) : Math.round(Math.min(1, Math.max(0, -d.y / DEPTH)) * 1000);
+}
+
+function _renderSoloHud() {
+    const d = _divers[0];
+    const mine = d.done ? 2 + (CAP_T - d.doneT) / 1000 : -d.y / DEPTH;
+    const others = Solo.ghosts().map(g => (g.state?.done ? 2 + (CAP_T - g.state.done) / 1000 : g.state?.p || 0));
+    const where = others.length && _phase === 'dive' ? ` · ${1 + others.filter(v => v > mine).length} OF ${others.length + 1}` : '';
+    _hud.line(0, `▼ ${_pct(d)}% · 💠 ${d.rings} · ${_clock.toFixed(1)}s${where}`);
+    const el = document.getElementById('mg-neutral');
+    if (el && _phase === 'dive') el.textContent = `TIME TRIAL · ${_pct(d)}%`;
+}
+
+// A ghost: a see-through diver, belly down, arms out, in its seat colour.
+function _ghostDiver(color) {
+    const g = new THREE.Group(), m = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.3, 1.3, 10), m);
+    body.rotation.x = Math.PI / 2; g.add(body);
+    const arms = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.16, 0.25), m); arms.position.set(0, 0, -0.35); g.add(arms);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), m); head.position.set(0, 0, -0.85); g.add(head);
+    return g;
 }
 
 // For probes.
@@ -370,6 +436,7 @@ export function _debugState() {
         rings: _divers.map(d => d.rings), stun: _divers.map(d => d.stun > 0), boost: _divers.map(d => +d.boost.toFixed(2)),
         done: _divers.map(d => d.done), views: _stage?.views ? _stage.views.length : 0,
         gl: !!_stage?.gl, turned: !!_stage?.turned,
+        solo: _solo, radius: RADIUS, ghosts: _ghosts ? _ghosts.count() : 0,
     };
 }
 /** Probes: put a diver somewhere in the shaft, still. */

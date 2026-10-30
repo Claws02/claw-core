@@ -288,6 +288,38 @@ export function reset() {
     _rng = Math.random;
 }
 
+// ── Ghosts: the others on the same course, live ─────────────────────────────
+//
+// A race played alone on every phone is still a race if you can see everyone
+// else. The host app (CLAWGames' rooms) plugs its network in here; a game
+// sends where its racer is and draws whoever else is out there, see-through
+// and untouchable (engine/Ghosts.js). With no link, as in HundredBlockDash,
+// there is nobody to draw and nothing is sent.
+//
+//   link.send(state)   this phone's racer, a small plain object
+//   link.others()      [{ id, name, color, state, at }] — everyone else's latest
+
+let _link = null, _sentAt = 0;
+const SEND_MS = 110;                      // about nine updates a second
+
+/** The host app's network for ghosts, or null to switch them off. */
+export function setGhostLink(link) { _link = link || null; }
+
+/** A game reports where its racer is; throttled, and only in solo play. */
+export function ghostSend(s) {
+    if (!_solo || !_link) return;
+    const now = performance.now();
+    if (now - _sentAt < SEND_MS) return;
+    _sentAt = now;
+    try { _link.send(s); } catch (e) { /* the race goes on without ghosts */ }
+}
+
+/** Everyone else racing this round, as the link last heard them. */
+export function ghosts() {
+    if (!_solo || !_link) return [];
+    try { return _link.others() || []; } catch (e) { return []; }
+}
+
 /** The label a parallel game shows above its score. */
 export function scoreLabel(type) {
     return (MG_INFO[type] && MG_INFO[type].title) || 'SCORE';
