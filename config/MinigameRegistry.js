@@ -100,7 +100,7 @@ export const MG_INFO = {
     sackrace: { icon: '🥔', title: 'SACK RACE', desc: 'A lane each across the hay meadow. TAP to hop — and it is a RHYTHM: a ring over your head closes in as you land, and a tap as it turns green chains the next hop, longer and higher. Tap late and you shuffle from scratch; tap twice in the air and you faceplant. Only a chain of two or more clears a hay bale. FIRST TO THE FLAG!' },
     snowball: { icon: '☃️', title: 'SNOWBALL FIGHT', desc: 'A half of the winter yard each, with two snow walls. DRAG to run, FLICK to throw — flick further to throw further — and STAND STILL to crouch and pack snow (three snowballs at most). Crouched behind a wall you\'re safe from a straight throw — to get somebody hiding, come round the side. Three hits and you\'re out!' },
     pancakes: { icon: '🥞', title: 'PANCAKE STACK', desc: 'Turn the phone sideways: a plate each, on its own little diner table. A pancake slides back and forth over your plate — TAP to drop it. The ring under it goes green when you\'re lined up. They\'re real pancakes: drop one off-centre and the stack leans; miss the plate and it\'s on the floor. Each one that lands makes the next slide faster. TALLEST STACK, plate to top, after 40 seconds wins!' },
-    shellgame: { icon: '🥤', title: 'SHELL GAME', desc: 'Three brass cups, one pea. A cup lifts to show you the pea, then Madame Fortuna shuffles. When she stops, tap LEFT, MIDDLE or RIGHT on your half — as YOU see the table from your end. Picks stay secret until you\'ve both locked in. Five rounds, each shuffle longer and faster. Most right picks wins!' },
+    shellgame: { icon: '🥤', title: 'SHELL GAME', desc: 'Three brass cups, one pea. A cup lifts to show you the pea, then Madame Fortuna shuffles. When she stops, tap LEFT, MIDDLE or RIGHT on your half — as YOU see the table from your end. Picks stay secret until you\'ve all locked in. Every shuffle is longer and faster than the last — miss the pea and you\'re OUT (unless nobody found it). Last one in wins!' },
     brainrot: { icon: '🗼', title: 'BRAINROT TOWER', desc: 'One claw machine, one tower, everybody takes turns: hold the phone upright and pass it on. Slide to aim, then press DROP. Twenty-four silly plush critters, every one a different shape, all piling up together. There is no clock on the match: it goes until somebody knocks ANYTHING off the plinth, and that player loses. Dither on your turn and the claw drops it wherever it is.' },
 };
 
@@ -214,7 +214,7 @@ export const MG_WATCHDOG_MS = {
     lightcycles: 240000,   // best of 3, each round ends on a crash
     penalty:     240000,   // no shot clock — the taker shoots when ready
     minigolf:    420000,   // three holes in turns: ~3–5 min; the game pushes it on at every hole (extendWatchdog)
-    shellgame:   150000,   // five shuffles and a pick clock each, plus sudden death
+    shellgame:   180000,   // a knockout: up to fifteen shuffles and a pick clock each
     kartgp:      210000,   // three laps of one of five circuits, with a 150 s bell of its own
     bowling:     300000,   // no shot clock, two frames each and up to three tie-break frames
     barrage:     120000,   // a 60 s clock to clear a pedestal, plus the opening and verdict
@@ -282,7 +282,7 @@ export const MG_NET = {
     rooftop:     'local',
     blockparty:  'local',
     riftdive:    'local',
-    balloonpump: 'local',
+    balloonpump: 'parallel',  // across phones: the same five hidden limits on each, one pump each
     musicalchairs: 'local',
     bumpercars: 'local',
     kartgp: 'local',
@@ -293,8 +293,8 @@ export const MG_NET = {
     bowling: 'local',
     sackrace: 'local',
     snowball: 'local',
-    pancakes: 'local',
-    shellgame: 'local',
+    pancakes: 'parallel',     // across phones: a plate each, the same 40 s, the stack's height in mm
+    shellgame: 'parallel',    // across phones: the same shuffles on each, until your first miss
     brainrot: 'local',
 };
 
@@ -314,7 +314,7 @@ export const MG_NET = {
 // SoloArena's deadline and the hosts' round cap and grace read it: the grace is
 // how long the rest get once somebody has finished, which for golf has to be
 // most of a round, not a few seconds.
-export const MG_SOLO_MS = { minigolf: 240000 };
+export const MG_SOLO_MS = { minigolf: 240000, shellgame: 180000 };   // shellgame: a streak can run to 25 shuffles
 export const soloRoundMs = (type, fallback) => Math.max(fallback, MG_SOLO_MS[type] || 0);
 export const soloGraceMs = (type, fallback) => Math.max(fallback, (MG_SOLO_MS[type] || 0) * 0.6);
 
@@ -335,6 +335,9 @@ export const MG_PAYOUT = {
 // thing on theirs, all of that is wrong — and it is wrong in the specific way
 // that makes somebody look for a second player who is not there.
 export const MG_NET_INFO = {
+    balloonpump: 'HOLD to pump your balloon, let go to stop. When the whistle blows a balloon in one piece scores its size, but pump past the hidden limit and it POPS for nothing that round. Near the limit it wobbles and squeaks. Every phone gets the same five limits; the last round counts double. Most points wins.',
+    pancakes:    'A pancake slides back and forth over your plate — TAP to drop it. The ring goes green when you\'re lined up. Real physics: drop one off-centre and the stack leans, miss and it\'s on the floor. Each one that lands makes the next one faster. Tallest stack after 40 seconds wins.',
+    shellgame:   'A cup lifts to show the pea, then the cups shuffle — and every shuffle is longer and faster than the last. Tap LEFT, MIDDLE or RIGHT where the pea is. Keep going until you miss: 10 points a cup, plus a bonus for picking fast. Same shuffles on every phone. Last one standing wins.',
     lootcatch:   '💰 PAYDAY — every coin you catch is REAL money and you keep it whatever happens. Loot falls in waves down four lanes, mostly 💣 with a 🪙 coin or 💎 gem (worth 3) among them. Slide to the lane the loot is in and be there before it lands — the basket has a top speed, so crossing the screen costs you. The same waves fall on every phone. Biggest haul takes the round, and nobody leaves empty-handed.',
     steadyhand:  'A target drifts around your screen — keep your finger on it to bank time. It speeds up as the round goes on. The same target, on the same path, on every phone: whoever holds it longest wins.',
     oddoneout:   'Every tile on your grid is the same shade except one. Tap the odd tile and a fresh, harder grid appears — more tiles, subtler difference. A wrong tap locks you out briefly and deals a new grid, so you are never stuck staring at one you cannot see. Most found in 30 seconds wins.',
