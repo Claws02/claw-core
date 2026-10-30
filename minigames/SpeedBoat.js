@@ -19,25 +19,40 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot as _botSlot } from './MinigameManager.js';
+import * as Solo from './SoloArena.js';
+import { createGhosts } from '../engine/Ghosts.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, faceoffHud, touch, effects } from '../engine/StageKit.js';
 
 // ── Tuning. The sim runs in RIVER WIDTHS (u across 0–1, d along), as the 2D
 // game did; RW turns a width into world units for drawing. ──────────────────
-const RW = 9;
-const COURSE = 30;                      // widths from the line to the flag
-const GEARS = [0.90, 1.40, 2.00];       // widths per second
+const RW0 = 9;
+const COURSE0 = 30;                     // widths from the line to the flag
+const GEARS0 = [0.90, 1.40, 2.00];      // widths per second
 const GEAR_NAME = ['SLOW', 'CRUISE', 'FLAT OUT'];
-const STEER = 0.80;                     // widths/s across at full deflection
+const STEER0 = 0.80;                    // widths/s across at full deflection
 const BOT_STEER = 0.55;                 // ...and a bot's, which is always full
-const ROW_GAP = 1.15;                   // widths between lines of rocks
-const GAP_W = 0.30;                     // a gate: wide enough for two, level
-const GAP_MIN = 0.14, GAP_MAX = 0.86;
+const ROW_GAP0 = 1.15;                  // widths between lines of rocks
+const GAP_W0 = 0.30;                    // a gate: wide enough for two, level
+const GAP_SPREAD = 0.36;                // gates sit within ±this of the middle
 const HIT_BASE = 0.70, HIT_SPEED = 1.30;
 const BUMP_PUSH = 0.55, BUMP_COST = 0.35;
-const BOAT_W = 0.13, ROCK_R = 0.075;
+const BOAT_W0 = 0.13, ROCK_R0 = 0.075;
+// Played alone on every phone (SoloArena) it's a time trial against everyone
+// else's ghost, and the river is WIDE times wider so a dozen boats fit. Every
+// length in widths shrinks to match, so a boat, a rock, a gate, the speeds and
+// the spacing are all the same size in the world as on a shared screen; the
+// gates stay in the old channel down the middle.
+const SOLO_WIDE = 1.5;
+let RW, COURSE, GEARS, STEER, ROW_GAP, GAP_W, GAP_MIN, GAP_MAX, BOAT_W, ROCK_R;
+function _tune(k) {
+    RW = RW0 * k; COURSE = COURSE0 / k; GEARS = GEARS0.map(g => g / k); STEER = STEER0 / k;
+    ROW_GAP = ROW_GAP0 / k; GAP_W = GAP_W0 / k; BOAT_W = BOAT_W0 / k; ROCK_R = ROCK_R0 / k;
+    GAP_MIN = 0.5 - GAP_SPREAD / k; GAP_MAX = 0.5 + GAP_SPREAD / k;
+}
+_tune(1);
 const MATCH_TIME = 52;
 const READY_TIME = 3.2;
 const FIG_SCALE = 0.5;
@@ -47,6 +62,9 @@ let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _boats = [], _rows = [], _cams = [], _botAim = [0.5, 0.5];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _winner = -1, _count = 0, _endAt = 0;
+let _solo = false, _ghosts = null;
+const _slots = () => (_solo ? [0] : [0, 1]);
+const isBotSlot = slot => !_solo && _botSlot(slot);
 
 const X = u => (0.5 - u) * RW;          // P1 looks up +z, so their right is −x
 const Z = d => d * RW;
@@ -56,6 +74,8 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -1; _count = 0; _endAt = 0;
     _botAim = [0.5, 0.5];
+    _solo = Solo.isSolo(); _ghosts = null;
+    _tune(_solo ? SOLO_WIDE : 1);
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -70,18 +90,19 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _buildRiver();
     if (_stage.gl) {
         _buildScene();
-        _cams = [0, 1].map(slot => {
+        _cams = _slots().map(slot => {
             const c = new THREE.PerspectiveCamera(58, 1, 0.1, 160);
             c.up.set(0, slot === 0 ? 1 : -1, 0);  // the far half reads from its own end
             return c;
         });
     }
-    _boats = [0, 1].map(_buildBoat);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG ⬅➡ TO STEER · TAP TO CHANGE GEAR'));
+    _boats = _slots().map(_buildBoat);
+    _slots().forEach(slot => _hud.hint(slot, isBotSlot(slot) ? '' : 'DRAG ⬅➡ TO STEER · TAP TO CHANGE GEAR'));
+    if (_solo && _stage.gl) _ghosts = createGhosts(_stage, { build: _ghostBoat, y: 1.9 });
 
     _dir.open({
         place: 'THE RIVER · WHITEWATER RUN', title: 'SPEED BOAT',
-        sub: 'SHOOT THE GATES · FIRST TO THE FLAG',
+        sub: _solo ? 'TIME TRIAL · SHOOT THE GATES' : 'SHOOT THE GATES · FIRST TO THE FLAG',
         from: { pos: [14, 22, -10], look: [0, 0, 30] },
         to: { pos: [0, 4.2, -7.5], look: [0, 0.5, 10] },
         onDone: () => { if (!_done) _enter('ready'); },
@@ -91,6 +112,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
 
 function _destroy() {
     _done = true;
+    _ghosts?.dispose(); _ghosts = null;
     if (_stage) { _stage.views = null; _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _boats = []; _rows = []; _cams = []; _dir = null; _hud = null; _in = null; _fx = null;
@@ -100,7 +122,9 @@ function _finish(w) { if (_done) return; _destroy(); _onWin?.(w); }
 // ── The river: lines of rocks with one gate in each, and the gate moves. ──────
 function _buildRiver() {
     _rows = [];
-    for (let d = 2.4; d < COURSE - 1.2; d += ROW_GAP) _rows.push({ d, gap: GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN) });
+    // Alone, every phone lays the same gates from the round's seed.
+    const start = 2.4 / (_solo ? SOLO_WIDE : 1), end = COURSE - 1.2 / (_solo ? SOLO_WIDE : 1);
+    for (let d = start, i = 0; d < end; d += ROW_GAP, i++) _rows.push({ d, gap: GAP_MIN + (_solo ? Solo.draw(i) : Math.random()) * (GAP_MAX - GAP_MIN) });
 }
 /** The whole HULL has to fit through the gate. */
 const _blocked = (r, u) => Math.abs(u - r.gap) > GAP_W / 2 - BOAT_W / 2;
@@ -186,7 +210,7 @@ function _buildScene() {
 
 // ── Boats ────────────────────────────────────────────────────────────────────
 function _buildBoat(slot) {
-    const b = { slot, u: slot === 0 ? 0.36 : 0.64, d: 0, gear: 1, stall: 0, bumpAt: 0, wall: null,
+    const b = { slot, u: _solo ? 0.5 : slot === 0 ? 0.36 : 0.64, d: 0, gear: 1, stall: 0, bumpAt: 0, wall: null,
                 finished: 0, hits: 0, wakeT: 0, yaw: 0 };
     if (!_stage.gl) return b;
     const g = new THREE.Group();
@@ -229,7 +253,8 @@ function _shift(slot) {
 function _enter(phase) {
     _phase = phase; _phaseT = 0;
     if (phase === 'ready') {
-        if (_stage?.gl) _stage.views = [0, 1].map(slot => ({ camera: _cams[slot], rect: slot === 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 0.5] }));
+        if (_stage?.gl) _stage.views = _solo ? [{ camera: _cams[0], rect: [0, 0, 1, 1] }]
+            : [0, 1].map(slot => ({ camera: _cams[slot], rect: slot === 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 0.5] }));
         _count = 3;
         _hud.say('3', '', 900, _t, '#ff4f4f'); sfx('countdown');
     } else if (phase === 'race') { _hud.say('GO!', '', 700, _t, '#4ade80'); sfx('go'); haptic([40]); }
@@ -257,13 +282,19 @@ function _frame(dt) {
             _run(b, dt);
         });
         _bumps(dt);
-        if (_endAt && _clock >= _endAt) _end();
+        if (_solo) {
+            const b = _boats[0];
+            Solo.ghostSend({ x: +X(b.u).toFixed(2), z: +Z(b.d).toFixed(2), h: +b.yaw.toFixed(2), p: +(b.d / COURSE).toFixed(4), done: b.finished ? +b.finished.toFixed(2) : 0 });
+            if ((_endAt && _clock >= _endAt) || _clock >= MATCH_TIME) _end();
+        }
+        else if (_endAt && _clock >= _endAt) _end();
         else if (_boats.every(b => b.finished) || (_clock >= MATCH_TIME && _winner < 0)) {
             if (_winner < 0) _winner = _boats[0].d > _boats[1].d ? 0 : _boats[1].d > _boats[0].d ? 1 : -1;
             _end();
         }
     }
     _boats.forEach(b => _draw(b, dt));
+    _ghosts?.update(dt);
     _fx?.update(dt);
     const dirOwns = !!_dir && _dir.update(dt);
     if (_done) return;
@@ -299,7 +330,8 @@ function _run(b, dt) {
     if (b.d >= COURSE) {
         b.d = COURSE;
         b.finished = _clock;
-        if (_winner < 0) {
+        if (_solo) { _endAt = _clock + 1.6; sfx('mg_win'); _hud.say('FINISH!', _fmtT(b.finished), 1500, _t, '#4ade80'); }
+        else if (_winner < 0) {
             _winner = b.slot; _endAt = _clock + 1.6;
             sfx('mg_win'); _hud.say('FINISH!', seat(b.slot).name, 1500, _t, seat(b.slot).css);
         }
@@ -391,6 +423,7 @@ function _draw(b, dt) {
 
 function _renderHud() {
     if (!_hud) return;
+    if (_solo) return _renderSoloHud();
     const lead = _boats[0].d === _boats[1].d ? -1 : _boats[0].d > _boats[1].d ? 0 : 1;
     [0, 1].forEach(slot => {
         const b = _boats[slot];
@@ -409,6 +442,15 @@ function _end() {
     if (_phase === 'over') return;
     _phase = 'over';
     _hud.say('');
+    if (_solo) {
+        // A time trial reports a score, not a winner.
+        const b = _boats[0], banked = soloScore();
+        _hud.say(b.finished ? _fmtT(b.finished) : 'OUT OF TIME', b.finished ? 'YOUR TIME' : `${Math.round(b.d / COURSE * 100)}% OF THE RIVER`, 0, _t, '#ffd23f');
+        const el = document.getElementById('mg-neutral');
+        if (el) el.textContent = b.finished ? `FINISHED IN ${_fmtT(b.finished)}` : 'DID NOT FINISH';
+        setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1600);
+        return;
+    }
     const w = _winner;
     if (_stage) _stage.views = null;               // the director's shots are full-frame
     _dir.close({
@@ -421,6 +463,41 @@ function _end() {
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
 }
 
+// ── Time trial (SoloArena) ──────────────────────────────────────────────────
+const _fmtT = t => `${t.toFixed(1)}s`;
+
+/** A finish is 1000 plus a point a tenth under the bell; still on the river, its share of the course. */
+export function soloScore() {
+    const b = _boats[0];
+    if (!b) return 0;
+    return b.finished ? Math.round(1000 + (MATCH_TIME - b.finished) * 10) : Math.round(Math.min(1, b.d / COURSE) * 1000);
+}
+
+function _renderSoloHud() {
+    const b = _boats[0];
+    if (!b) return;
+    const mine = b.finished ? 2 + (MATCH_TIME - b.finished) / 1000 : b.d / COURSE;
+    const others = Solo.ghosts().map(g => (g.state?.done ? 2 + (MATCH_TIME - g.state.done) / 1000 : g.state?.p || 0));
+    const place = 1 + others.filter(v => v > mine).length, where = others.length ? ` · ${place} OF ${others.length + 1}` : '';
+    const gearTxt = b.stall > 0 || b.wall ? '💥 ON THE ROCKS' : `⚙ ${GEAR_NAME[b.gear]}`;
+    _hud.line(0, b.finished ? `🏁 ${_fmtT(b.finished)}${where}` : `🚤 ${gearTxt} · ${_fmtT(_clock)}${where}`);
+    if (_clock > 7) _hud.hint(0, b.wall ? 'STEER FOR THE FLAGS!' : '');
+    const el = document.getElementById('mg-neutral');
+    if (el && _phase === 'race') el.textContent = `TIME TRIAL · ${Math.round(b.d / COURSE * 100)}%`;
+}
+
+// A ghost: the hull and the windscreen in its seat colour.
+function _ghostBoat(color) {
+    const g = new THREE.Group(), W = BOAT_W * RW;
+    const hullM = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 0.4, 1.7), hullM); hull.position.set(0, 0.2, -0.2); g.add(hull);
+    const bowShape = new THREE.Shape([new THREE.Vector2(-W / 2, 0), new THREE.Vector2(W / 2, 0), new THREE.Vector2(0, 0.9)]);
+    const bow = new THREE.Mesh(new THREE.ExtrudeGeometry(bowShape, { depth: 0.4, bevelEnabled: false }), hullM);
+    bow.rotation.x = Math.PI / 2; bow.position.set(0, 0.4, 0.65); g.add(bow);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(W * 0.6, 0.5, 0.5), hullM); cab.position.set(0, 0.6, -0.4); g.add(cab);
+    return g;
+}
+
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
     return { phase: _phase, clock: +_clock.toFixed(2), winner: _winner, rows: _rows.length,
@@ -429,7 +506,8 @@ export function _debugState() {
                  return { u: +b.u.toFixed(3), d: +b.d.toFixed(2), gear: b.gear, stall: +b.stall.toFixed(2), pinned: !!b.wall,
                           hits: b.hits, finished: b.finished, next: next ? { d: +next.d.toFixed(2), gap: +next.gap.toFixed(3) } : null };
              }),
-             views: _stage?.views ? _stage.views.length : 0, gl: !!_stage?.gl, turned: !!_stage?.turned };
+             views: _stage?.views ? _stage.views.length : 0, gl: !!_stage?.gl, turned: !!_stage?.turned,
+             solo: _solo, rw: RW, ghosts: _ghosts ? _ghosts.count() : 0 };
 }
 /** Probes: put a boat at (u, d), clear of any rocks it was pinned on. */
 export function _debugPlace(slot, u, d) { const b = _boats[slot]; if (b) Object.assign(b, { u, d, wall: null, stall: 0 }); }

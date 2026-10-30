@@ -26,7 +26,9 @@
 
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { registerMinigameCleanup, isBotSlot } from './MinigameManager.js';
+import { registerMinigameCleanup, isBotSlot as _botSlot } from './MinigameManager.js';
+import * as Solo from './SoloArena.js';
+import { createGhosts } from '../engine/Ghosts.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, faceoffHud, touch, effects } from '../engine/StageKit.js';
@@ -38,8 +40,11 @@ import { seat, faceoffHud, touch, effects } from '../engine/StageKit.js';
 // unit into a table: s = 0 is the start line, and everything else — laps,
 // walls, the racing line, item boxes — reads the table. A shortcut is a
 // straight, narrow path between two points on the circuit.
-const TRACK_W = 8;
-const LAPS = 3;
+// Played alone on every phone (SoloArena) it's a time trial against everyone
+// else's ghost: the circuit is drawn SOLO_SCALE bigger all round, so a dozen
+// see-through karts have room, and it's SOLO_LAPS laps of it.
+const TRACK_W0 = 8, LAPS0 = 3, SOLO_SCALE = 1.35, SOLO_LAPS = 2;
+let TRACK_W = TRACK_W0, LAPS = LAPS0;
 const MAX_TIME = 150;                          // s: a safety bell, then by position
 const CP_WIN = 5;
 const REVERSE = 0.7, REVERSE_V = 3.5;          // backing off a wall
@@ -156,6 +161,16 @@ let _overlay = null, _stage = null, _dir = null, _hud = null, _in = null, _fx = 
 let _karts = [], _cams = [], _boxes = [], _bananas = [], _bot = [], _line = [], _trees = [], _lines = [];
 let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _winner = -1, _count = 0, _endAt = 0;
 let _forceTrack = null;
+let _solo = false, _ghosts = null;
+const _slots = () => (_solo ? [0] : [0, 1]);
+const isBotSlot = slot => !_solo && _botSlot(slot);
+// A circuit drawn k times bigger: every corner, radius, line and shortcut.
+const _scaled = (tr, k) => (k === 1 ? tr : {
+    ...tr,
+    corners: tr.corners.map(([x, z, rr]) => [x * k, z * k, rr * k]),
+    start: tr.start.map(v => v * k),
+    cut: tr.cut ? { ...tr.cut, a: tr.cut.a.map(v => v * k), b: tr.cut.b.map(v => v * k), w: (tr.cut.w ?? 3.2) * k } : undefined,
+});
 
 // ── Geometry of the circuit ─────────────────────────────────────────────────
 function _at(s) {
@@ -188,8 +203,13 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _winner = -1; _count = 0; _endAt = 0;
     _bananas = []; _boxes = []; _lines = [];
-    _useTrack(_forceTrack ? TRACKS.find(t => t.key === _forceTrack) : TRACKS[Math.floor(Math.random() * TRACKS.length)]);
-    _bot = [0, 1].map(() => ({ cut: false, wait: 0 }));
+    _solo = Solo.isSolo(); _ghosts = null;
+    TRACK_W = _solo ? TRACK_W0 * SOLO_SCALE : TRACK_W0;
+    LAPS = _solo ? SOLO_LAPS : LAPS0;
+    // Alone, the circuit comes from the round's seed: every phone races the same one.
+    const pick = _forceTrack ? TRACKS.find(t => t.key === _forceTrack) : TRACKS[Math.floor((_solo ? Solo.draw(1) : Math.random()) * TRACKS.length)];
+    _useTrack(_scaled(pick, _solo ? SOLO_SCALE : 1));
+    _bot = _slots().map(() => ({ cut: false, wait: 0 }));
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -203,7 +223,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _dir = createDirector(_stage);
     if (_stage.gl) {
         _buildCircuit();
-        _cams = [0, 1].map(slot => {
+        _cams = _slots().map(slot => {
             const c = new THREE.PerspectiveCamera(FOV, 1, 0.1, 220);
             // The far half is upside down on the phone: roll its camera 180°.
             c.up.set(0, slot === 0 ? 1 : -1, 0);
@@ -211,14 +231,15 @@ export function start(isBot, onWin, botSkill = 0.55) {
         });
     }
     _placeBoxes();
-    _karts = [0, 1].map(_buildKart);
-    [0, 1].forEach(slot => _hud.hint(slot, seat(slot).bot ? '' : 'DRAG ⬅➡ TO STEER · TAP FOR YOUR ITEM'));
+    _karts = _slots().map(_buildKart);
+    _slots().forEach(slot => _hud.hint(slot, isBotSlot(slot) ? '' : 'DRAG ⬅➡ TO STEER · TAP FOR YOUR ITEM'));
     if (_stage.gl) _buildSpeedLines();
+    if (_solo && _stage.gl) _ghosts = createGhosts(_stage, { build: _ghostKart, y: 2.2 });
 
     const p0 = _at(0);
     _dir.open({
         place: T.place, title: 'GO-KART GRAND PRIX',
-        sub: `${LAPS} LAPS · ${T.sub}`,
+        sub: _solo ? `TIME TRIAL · ${LAPS} LAPS · ${T.sub}` : `${LAPS} LAPS · ${T.sub}`,
         from: { pos: [_CAM_CX + 26, 34, _CAM_CZ - 34], look: [_CAM_CX, 0, _CAM_CZ] },
         to: { pos: [p0.x + p0.hz * 7 - p0.hx * 9, 5, p0.z - p0.hx * 7 - p0.hz * 9], look: [p0.x + p0.hx * 2, 0.5, p0.z + p0.hz * 2] },
         onDone: () => { if (!_done) _enter('ready'); },
@@ -228,6 +249,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
 
 function _destroy() {
     _done = true;
+    _ghosts?.dispose(); _ghosts = null;
     if (_stage) { _stage.views = null; _stage.dispose(); _stage = null; }
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _karts = []; _cams = []; _boxes = []; _bananas = []; _trees = []; _lines = []; _dir = null; _hud = null; _in = null; _fx = null;
@@ -648,7 +670,8 @@ const _progress = k => k.lap * L + k.s;
 function _enter(phase) {
     _phase = phase; _phaseT = 0;
     if (phase === 'ready') {
-        if (_stage?.gl) _stage.views = [0, 1].map(slot => ({ camera: _cams[slot], rect: slot === 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 0.5] }));
+        if (_stage?.gl) _stage.views = _solo ? [{ camera: _cams[0], rect: [0, 0, 1, 1] }]
+            : [0, 1].map(slot => ({ camera: _cams[slot], rect: slot === 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 0.5] }));
         _count = 3;
         _hud.say('3', '', 900, _t, '#ff4f4f'); sfx('countdown');
     } else if (phase === 'race') { _hud.say('GO!', '', 700, _t, '#4ade80'); sfx('go'); haptic([40]); }
@@ -666,9 +689,9 @@ function _frame(dt) {
     if (_phase === 'race') {
         _clock += dt;
         _karts.forEach(k => _drive(k, dt));
-        // Kart on kart.
-        const [a, b] = _karts, dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
-        if (d < R * 2 && d > 1e-4) {
+        // Kart on kart (alone, the others are ghosts and pass straight through).
+        const [a, b] = _karts, dx = b ? b.x - a.x : 0, dz = b ? b.z - a.z : 0, d = b ? Math.hypot(dx, dz) : Infinity;
+        if (b && d < R * 2 && d > 1e-4) {
             // Karts bounce off each other: a shove apart that scales with how
             // hard they met, and hardly any lost speed.
             const nx = dx / d, nz = dz / d, over = R * 2 - d;
@@ -680,7 +703,12 @@ function _frame(dt) {
             if (a.bx * nx + a.bz * nz > -j * 0.5) { a.bx -= nx * j; a.bz -= nz * j; b.bx += nx * j; b.bz += nz * j; sfx('slam'); }
             a.v *= 0.98; b.v *= 0.98;
         }
-        if (_endAt && _clock >= _endAt) _end();
+        if (_solo) {
+            const k = _karts[0];
+            Solo.ghostSend({ x: +k.x.toFixed(2), z: +k.z.toFixed(2), h: +k.h.toFixed(2), p: +(_progress(k) / (LAPS * L)).toFixed(4), done: k.done ? +k.finishT.toFixed(2) : 0 });
+            if ((_endAt && _clock >= _endAt) || _clock >= MAX_TIME) _end();
+        }
+        else if (_endAt && _clock >= _endAt) _end();
         else if (_clock >= MAX_TIME && _winner < 0) { _winner = _progress(a) >= _progress(b) ? 0 : 1; _end(); }
     }
 
@@ -735,6 +763,7 @@ function _frame(dt) {
         b.mesh.position.y = 1 + Math.sin(_t * 2 + b.x) * 0.15;
     });
     _fadeTrees(dt);
+    _ghosts?.update(dt);
     _fx?.update(dt);
     const dirOwns = !!_dir && _dir.update(dt);
     if (_done) return;
@@ -744,9 +773,9 @@ function _frame(dt) {
 // Speed lines for the mushroom: streaks radiating in from the edges of each
 // player's half (a radial pattern, so it reads the same from either end).
 function _buildSpeedLines() {
-    _lines = [0, 1].map(slot => {
+    _lines = _slots().map(slot => {
         const el = document.createElement('div');
-        el.style.cssText = `position:absolute;left:-10%;right:-10%;${slot === 0 ? 'top:50%;' : 'top:0;'}height:50%;pointer-events:none;opacity:0;` +
+        el.style.cssText = `position:absolute;left:-10%;right:-10%;${_solo ? 'top:0;' : slot === 0 ? 'top:50%;' : 'top:0;'}height:${_solo ? 100 : 50}%;pointer-events:none;opacity:0;` +
             'background:repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0deg 5deg, rgba(255,255,255,.75) 5deg 5.8deg, rgba(255,255,255,0) 5.8deg 11deg);' +
             '-webkit-mask-image:radial-gradient(ellipse at 50% 50%, transparent 38%, #000 78%);mask-image:radial-gradient(ellipse at 50% 50%, transparent 38%, #000 78%);';
         _stage.hud.appendChild(el);
@@ -834,7 +863,8 @@ function _drive(k, dt) {
     _boxes.forEach(b => {
         if (b.t > 0 || Math.hypot(b.x - k.x, b.z - k.z) > 1.2) return;
         b.t = 3;
-        if (!k.item) { k.item = Math.random() < 0.6 ? 'shroom' : 'banana'; sfx('shop_open'); }
+        // Alone there is nobody to drop a banana on: every box is a mushroom.
+        if (!k.item) { k.item = _solo || Math.random() < 0.6 ? 'shroom' : 'banana'; sfx('shop_open'); }
         if (_stage?.gl) _fx.burst(new THREE.Vector3(b.x, 1, b.z), 0xffd23f, 0.4, 0.2);
     });
     // Bananas.
@@ -860,7 +890,8 @@ function _laps(k) {
         k.lap++; k.cp = 0;
         if (k.lap >= LAPS) {
             k.done = true; k.finishT = _clock;
-            if (_winner < 0) { _winner = k.slot; _endAt = _clock + 1.6; sfx('mg_win'); _hud.say('FINISH!', seat(k.slot).name, 1500, _t, seat(k.slot).css); }
+            if (_solo) { _endAt = _clock + 1.6; sfx('mg_win'); _hud.say('FINISH!', _fmtT(k.finishT), 1500, _t, '#4ade80'); }
+            else if (_winner < 0) { _winner = k.slot; _endAt = _clock + 1.6; sfx('mg_win'); _hud.say('FINISH!', seat(k.slot).name, 1500, _t, seat(k.slot).css); }
         } else {
             sfx('land_good');
             if (k.lap === LAPS - 1 && !isBotSlot(k.slot)) _hud.say('FINAL LAP!', seat(k.slot).name, 900, _t, '#facc15');
@@ -892,6 +923,7 @@ function _move(k, dt) {
 
 function _renderHud() {
     if (!_hud) return;
+    if (_solo) return _renderSoloHud();
     const rank = _progress(_karts[0]) >= _progress(_karts[1]) ? [1, 2] : [2, 1];
     [0, 1].forEach(slot => {
         const k = _karts[slot];
@@ -909,6 +941,15 @@ function _end() {
     if (_phase === 'over') return;
     _phase = 'over';
     _hud.say('');
+    if (_solo) {
+        // A time trial reports a score, not a winner.
+        const k = _karts[0], banked = soloScore();
+        _hud.say(k.done ? _fmtT(k.finishT) : 'OUT OF TIME', k.done ? 'YOUR TIME' : `${Math.round(_progress(k) / (LAPS * L) * 100)}% OF THE COURSE`, 0, _t, '#ffd23f');
+        const el = document.getElementById('mg-neutral');
+        if (el) el.textContent = k.done ? `FINISHED IN ${_fmtT(k.finishT)}` : 'DID NOT FINISH';
+        setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1600);
+        return;
+    }
     const w = _winner;
     if (_stage) _stage.views = null;               // the director's shots are full-frame
     _dir.close({
@@ -921,6 +962,55 @@ function _end() {
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
 }
 
+// ── Time trial (SoloArena) ──────────────────────────────────────────────────
+const _fmtT = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+
+/**
+ * Higher is better: a finish is 1000 plus a point for every tenth of a second
+ * under the bell, so it always beats a kart still on the course, which scores
+ * its share of the distance (0–1000).
+ */
+export function soloScore() {
+    const k = _karts[0];
+    if (!k) return 0;
+    return k.done ? Math.round(1000 + (MAX_TIME - k.finishT) * 10) : Math.round(Math.min(1, _progress(k) / (LAPS * L)) * 1000);
+}
+
+// Where you are among everyone racing: by distance, finishers by their time.
+function _place() {
+    const k = _karts[0], me = k.done ? 2 + (MAX_TIME - k.finishT) / 1000 : _progress(k) / (LAPS * L);
+    const others = Solo.ghosts().map(g => (g.state?.done ? 2 + (MAX_TIME - g.state.done) / 1000 : g.state?.p || 0));
+    return { place: 1 + others.filter(v => v > me).length, of: others.length + 1 };
+}
+const _nth = n => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'ST' : n % 10 === 2 && n % 100 !== 12 ? 'ND' : n % 10 === 3 && n % 100 !== 13 ? 'RD' : 'TH'}`;
+
+function _renderSoloHud() {
+    const k = _karts[0];
+    if (!k) return;
+    const { place, of } = _place();
+    const where = of > 1 ? ` · ${_nth(place)} OF ${of}` : '';
+    const item = k.item === 'shroom' ? ' · 🍄 TAP!' : '';
+    _hud.line(0, k.done ? `FINISHED · ${_fmtT(k.finishT)}${where}` : `LAP ${Math.min(LAPS, k.lap + 1)}/${LAPS} · ${_fmtT(_clock)}${where}${item}`);
+    if (_clock > 8 && k.msgT <= 0) _hud.hint(0, '');
+    const el = document.getElementById('mg-neutral');
+    if (el && _phase === 'race') el.textContent = `TIME TRIAL · LAP ${Math.min(LAPS, k.lap + 1)}/${LAPS}`;
+}
+
+// A ghost: the kart's body and wheels in its seat colour, no driver.
+function _ghostKart(color) {
+    const g = new THREE.Group();
+    const bodyM = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1f2328, roughness: 0.8 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.35, 2.1), bodyM); body.position.y = 0.42; g.add(body);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.25, 0.6), bodyM); nose.position.set(0, 0.38, 1.25); g.add(nose);
+    const seatBox = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.6), bodyM); seatBox.position.set(0, 0.85, -0.3); g.add(seatBox);
+    [[-0.72, 0.7], [0.72, 0.7], [-0.72, -0.75], [0.72, -0.75]].forEach(([x, z]) => {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.32, 12), dark);
+        w.rotation.z = Math.PI / 2; w.position.set(x, 0.34, z); g.add(w);
+    });
+    return g;
+}
+
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
     return { phase: _phase, clock: +_clock.toFixed(2), winner: _winner, L: +L.toFixed(1), track: T.key, cps: CHECKPOINTS.map(c => +c.toFixed(1)),
@@ -930,7 +1020,8 @@ export function _debugState() {
                                         lap: k.lap, cp: k.cp, rev: +k.rev.toFixed(2), item: k.item, drift: +k.drift.toFixed(2), boost: +k.boost.toFixed(2), spin: +k.spin.toFixed(2),
                                         shroom: +k.shroom.toFixed(2), vmul: +(k.boost > 0 ? k.boostMul : 1).toFixed(2), vh: +(k.vh ?? k.h).toFixed(2), flames: !!k.flames?.[0]?.visible,
                                         surf: _surface(k.x, k.z), done: k.done })),
-             views: _stage?.views ? _stage.views.length : 0, gl: !!_stage?.gl, turned: !!_stage?.turned };
+             views: _stage?.views ? _stage.views.length : 0, gl: !!_stage?.gl, turned: !!_stage?.turned,
+             solo: _solo, laps: LAPS, trackW: TRACK_W, ghosts: _ghosts ? _ghosts.count() : 0 };
 }
 /** Probes: put a kart somewhere, facing h, at speed v. */
 export function _debugPlace(slot, x, z, h = 0, v = 0) { const k = _karts[slot]; if (k) Object.assign(k, { x, z, h, vh: h, v, spin: 0, rev: 0 }); }
