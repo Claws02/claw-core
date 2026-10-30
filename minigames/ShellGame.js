@@ -8,12 +8,17 @@
 //   PICK: tap LEFT, MIDDLE or RIGHT on your half — as YOU see the table from
 //   your end. Your pick is secret until you have both locked in.
 //
-// Five rounds, each shuffle longer and quicker than the last. A right pick
-// scores a point; most points wins, and a tie goes to a sudden-death shuffle.
+// KNOCKOUT. Every shuffle is longer and quicker than the last, and it starts
+// brisk. Miss the pea and you're out — unless nobody found it, when everyone
+// goes again. Last one in wins (after MAX_ROUNDS, the leaders share it).
 //
 // LIVE (MG_PROFILE.live): two, three or four round the table. Each player's
 // buttons sit in their own zone and read the cups from their own end; every
 // pick is secret until all of them are in.
+//
+// PARALLEL (SoloArena): alone on each phone, the same shuffles from the shared
+// seed, until your first miss. Score: 10 a cup found, plus up to 9 for how
+// quickly you picked on average, so a tied streak still has a winner.
 // ============================================================
 
 import { state } from '../../AppHost.js';
@@ -23,13 +28,16 @@ import { seatRing, zonesFor } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, seatEdge, faceoffHud, effects, overheadCam } from '../engine/StageKit.js';
+import * as Solo from './SoloArena.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const CUP_X = [-1.7, 0, 1.7];            // the three positions, P1's left to right
-const ROUNDS = 5, SUDDEN_MAX = 2;
-// Per round: swaps, and seconds per swap.
-const PLAN = r => ({ swaps: 5 + r * 2, dur: Math.max(0.14, 0.34 - r * 0.045) });
-const SHOW = 1.4, PICK_TIME = 5, REVEAL = 1.7;
+const MAX_ROUNDS = 15, SOLO_ROUNDS = 25;
+// Per round (r from 0): swaps, and seconds per swap. Starts where the old fifth
+// round was, and only gets quicker.
+const PLAN = r => ({ swaps: 7 + r * 2, dur: Math.max(0.1, 0.26 - r * 0.025) });
+const DUR_MIN = 0.1, DUR_MAX = 0.26;
+const SHOW = 1.0, PICK_TIME = 4, REVEAL = 1.2;
 const FIG_SCALE = 1.05;
 
 // ── Module state ─────────────────────────────────────────────────────────────
@@ -38,12 +46,15 @@ let _overlay = null, _stage = null, _dir = null, _hud = null, _fx = null;
 let _cups = [], _pea = null, _figs = [], _pads = [], _rings = [];
 let _n = 2, _score = [0, 0], _round = 0, _phase = 'intro', _sub = '', _subT = 0, _t = 0;
 let _under = 0, _swaps = [], _swapI = 0, _plan = null, _picks = [null, null], _bot = [null, null], _frozen = false;
+let _out = [], _lasted = [], _solo = false, _pickT = [], _bonus = 0;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _n = Math.max(2, Math.min(4, slotCount()));
+    _solo = Solo.isSolo();
+    _n = _solo ? 1 : Math.max(2, Math.min(4, slotCount()));
     _score = new Array(_n).fill(0); _round = 0; _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _picks = new Array(_n).fill(null); _frozen = false;
+    _out = new Array(_n).fill(false); _lasted = new Array(_n).fill(0); _pickT = new Array(_n).fill(0); _bonus = 0;
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -81,6 +92,12 @@ function _destroy() {
 }
 function _finish(w, rank) { if (_done) return; _destroy(); _onWin?.(w, null, rank); }
 const _seats = () => Array.from({ length: _n }, (_, i) => i);
+const _alive = () => _seats().filter(s => !_out[s]);
+// Shared across phones in parallel play (the same shuffles everywhere), local otherwise.
+const _rnd = k => (_solo ? Solo.draw(_round * 100 + k) : Math.random());
+
+/** Parallel play: what this phone has banked so far. */
+export function soloScore() { return _score[0] * 10 + (_score[0] ? Math.min(9, Math.round(_bonus / _score[0])) : 0); }
 
 // ── The booth ────────────────────────────────────────────────────────────────
 function _buildBooth() {
@@ -165,7 +182,7 @@ function _buildPads() {
             b.style.cssText = `pointer-events:auto;width:${bw}px;height:62px;border-radius:14px;border:3px solid ${seat(slot).css};` +
                 `background:rgba(40,14,50,.85);color:#fff8ee;font-size:${_n > 2 ? 12 : 15}px;letter-spacing:${_n > 2 ? 1 : 1.5}px;opacity:.4;transition:opacity .15s, transform .15s;touch-action:none;`;
             b.innerHTML = `🥤<br>${label}`;
-            b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (!isBotSlot(slot)) _pick(slot, k); });
+            b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (!_isBot(slot)) _pick(slot, k); });
             row.appendChild(b);
             return b;
         });
@@ -181,55 +198,66 @@ const _posFor = (slot, k) => (seatEdge(slot) === 'bottom' ? k : 2 - k);
 // ── Rounds ───────────────────────────────────────────────────────────────────
 function _nextRound() {
     _round++;
-    _plan = PLAN(Math.min(_round - 1, ROUNDS + 1));
-    _picks = new Array(_n).fill(null); _bot = new Array(_n).fill(null);
+    _plan = PLAN(_round - 1);
+    // Whoever is out sits this one out: their pick is already "in".
+    _picks = _seats().map(s => (_out[s] ? -2 : null)); _bot = new Array(_n).fill(null);
     _rings.forEach(r => { if (r) r.visible = false; });
     // Cups back in a row; the pea under a random one.
-    const order = [0, 1, 2].sort(() => Math.random() - 0.5);
+    const order = [0, 1, 2].map((k, i) => [k, _rnd(i)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
     _cups.forEach((c, i) => { c.x = CUP_X[order[i]]; c.z = 0; c.lift = 0; });
-    _under = (Math.random() * 3) | 0;
+    _under = (_rnd(3) * 3) | 0;
     // The shuffle, planned now: pairs of CUP indices to swap.
-    _swaps = Array.from({ length: _plan.swaps }, () => { const a = (Math.random() * 3) | 0; return [a, (a + 1 + ((Math.random() * 2) | 0)) % 3]; });
+    _swaps = Array.from({ length: _plan.swaps }, (_, i) => { const a = (_rnd(10 + i * 2) * 3) | 0; return [a, (a + 1 + ((_rnd(11 + i * 2) * 2) | 0)) % 3]; });
     _swapI = 0;
     _sub = 'show'; _subT = 0;
-    const label = _round > ROUNDS ? 'SUDDEN DEATH' : `ROUND ${_round} OF ${ROUNDS}`;
-    _hud.say(label, 'WATCH THE PEA', SHOW * 1000, _t, '#ffd166');
-    _pads.forEach(p => p.forEach(b => { b.style.opacity = '.4'; b.style.transform = ''; }));
+    _hud.say(`ROUND ${_round}`, _solo || _round === 1 ? 'WATCH THE PEA' : `${_alive().length} STILL IN`, SHOW * 1000, _t, '#ffd166');
+    _pads.forEach((p, slot) => p.forEach(b => { b.style.opacity = '.4'; b.style.transform = ''; b.style.visibility = _out[slot] ? 'hidden' : ''; }));
     sfx('countdown');
 }
 
 function _pick(slot, k) {
     if (_phase !== 'play' || _sub !== 'pick' || _picks[slot] != null) return;
     _picks[slot] = _posFor(slot, k);
+    _pickT[slot] = _subT;
     // Your own button lights; the others only learn that you have locked in.
     _pads[slot].forEach((b, i) => { b.style.opacity = i === k ? '1' : '.25'; b.style.transform = i === k ? 'scale(1.08)' : ''; });
-    const inCount = _picks.filter(p => p != null).length;
-    _seats().forEach(o => {
+    const alive = _alive(), inCount = alive.filter(s => _picks[s] != null).length;
+    alive.forEach(o => {
         if (o === slot || seat(o).bot) return;
-        _hud.hint(o, _n === 2 ? `${seat(slot).name} HAS PICKED` : `${inCount} OF ${_n} PICKED`);
+        _hud.hint(o, alive.length === 2 ? `${seat(slot).name} HAS PICKED` : `${inCount} OF ${alive.length} PICKED`);
     });
     sfx('tick');
-    if (!isBotSlot(slot)) haptic([12]);
+    if (!_isBot(slot)) haptic([12]);
     if (_picks.every(p => p != null)) _reveal();
 }
 
 function _reveal() {
     _sub = 'reveal'; _subT = 0;
     const at = _posIndex(_under);
-    _seats().forEach(slot => {
+    const alive = _alive();
+    const rights = alive.filter(s => _picks[s] === at);
+    alive.forEach(slot => {
         const right = _picks[slot] === at;
-        if (right) _score[slot]++;
+        if (right) { _score[slot]++; _bonus += Math.max(0, 9 - Math.floor(_pickT[slot] / 0.35)); }
+        // A miss knocks you out, unless nobody found it (then everyone goes again).
+        // Alone, the first miss is the end.
+        if (!right && (rights.length || _solo)) { _out[slot] = true; _lasted[slot] = _round; }
         const ring = _rings[slot];
         // Rings nest, a size each, so two picks on one cup both show.
         if (ring && _picks[slot] != null && _picks[slot] >= 0) { ring.visible = true; ring.position.set(CUP_X[_picks[slot]], 0.87 + slot * 0.005, 0); ring.scale.setScalar(1 + slot * 0.2); }
         _figs[slot].anim?.play(right ? 'raise' : 'hit', { restart: true });
     });
-    const rights = _seats().filter(s => _picks[s] === at);
     sfx(rights.length ? 'land_good' : 'land_bad');
-    const txt = !rights.length ? 'NOBODY FOUND IT'
-        : rights.length === 1 ? `${seat(rights[0]).name} FOUND IT`
-        : rights.length === _n ? (_n === 2 ? 'BOTH RIGHT!' : 'ALL RIGHT!') : `${rights.length} FOUND IT`;
-    _hud.say(txt, _n === 2 ? `${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}` : _score.join(' – '), REVEAL * 1000, _t, '#9be15d');
+    const left = _alive().length;
+    let txt, sub;
+    if (_solo) { txt = rights.length ? 'FOUND IT!' : 'MISSED IT!'; sub = `${_score[0]} FOUND · ${soloScore()} PTS`; }
+    else if (!rights.length) { txt = 'NOBODY FOUND IT'; sub = 'EVERYONE GOES AGAIN'; }
+    else if (rights.length === alive.length) { txt = alive.length === 2 ? 'BOTH RIGHT!' : 'ALL RIGHT!'; sub = `${left} STILL IN`; }
+    else {
+        txt = rights.length === 1 ? `${seat(rights[0]).name} FOUND IT` : `${rights.length} FOUND IT`;
+        sub = left === 1 ? `${seat(_alive()[0]).name} IS THE LAST ONE IN` : `${alive.length - rights.length} OUT · ${left} STILL IN`;
+    }
+    _hud.say(txt, sub, REVEAL * 1000, _t, rights.length ? '#9be15d' : '#ff6b6b');
 }
 
 /** Which table position (0 = P1's left) the cup with index i stands at. */
@@ -242,7 +270,7 @@ function _posIndex(i) {
 
 // ── Bot (§5): follows the pea, and loses it more often the faster it goes ───
 function _botPlan(slot) {
-    const speed = 1 - (_plan.dur - 0.14) / 0.2;           // 0 slow → 1 fastest
+    const speed = 1 - (_plan.dur - DUR_MIN) / (DUR_MAX - DUR_MIN);   // 0 slow → 1 fastest
     const p = Math.max(0.3, Math.min(0.97, 0.55 + _botSkill * 0.45 - speed * (1 - _botSkill) * 0.6 - _plan.swaps * 0.01));
     const at = _posIndex(_under);
     const guess = Math.random() < p ? at : [0, 1, 2].filter(k => k !== at)[(Math.random() * 2) | 0];
@@ -275,14 +303,14 @@ function _frame(dt) {
                 if (_swapI >= _swaps.length) {
                     _sub = 'pick';
                     _hud.say('PICK!', 'LEFT · MIDDLE · RIGHT — AS YOU SEE IT', 900, _t, '#ffd166');
-                    _seats().forEach(slot => { _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'TAP THE PEA’S CUP' : 'TAP THE CUP THE PEA IS UNDER'); if (isBotSlot(slot)) _botPlan(slot); });
-                    _pads.forEach((p, slot) => p.forEach(b => { b.style.opacity = isBotSlot(slot) ? '.4' : '1'; }));
+                    _alive().forEach(slot => { _hud.hint(slot, seat(slot).bot && !_solo ? '' : _n > 2 ? 'TAP THE PEA’S CUP' : 'TAP THE CUP THE PEA IS UNDER'); if (_isBot(slot)) _botPlan(slot); });
+                    _pads.forEach((p, slot) => p.forEach(b => { b.style.opacity = _isBot(slot) ? '.4' : '1'; }));
                 } else _startSwap();
             }
         } else if (_sub === 'pick') {
-            _seats().forEach(slot => { const b = _bot[slot]; if (b && _picks[slot] == null && _subT >= b.at) _pick(slot, b.k); });
+            _alive().forEach(slot => { const b = _bot[slot]; if (b && _picks[slot] == null && _subT >= b.at) _pick(slot, b.k); });
             if (_subT >= PICK_TIME && _sub === 'pick') {
-                _seats().forEach(slot => { if (_picks[slot] == null) _picks[slot] = -1; });
+                _alive().forEach(slot => { if (_picks[slot] == null) _picks[slot] = -1; });
                 _reveal();
             }
         } else if (_sub === 'reveal') {
@@ -290,9 +318,8 @@ function _frame(dt) {
             _cups.forEach(c => { c.lift = u < 0.2 ? u / 0.2 : u < 0.8 ? 1 : Math.max(0, 1 - (u - 0.8) / 0.2); });
             if (_subT >= REVEAL) {
                 _cups.forEach(c => { c.lift = 0; });
-                // Done after the last round with one player on top; level at the
-                // top plays sudden death, up to SUDDEN_MAX more shuffles.
-                const done = _round >= ROUNDS && (_leaders().length === 1 || _round >= ROUNDS + SUDDEN_MAX);
+                // Over when one is left in (alone: at the first miss), or at the cap.
+                const done = _solo ? (_out[0] || _round >= SOLO_ROUNDS) : (_alive().length <= 1 || _round >= MAX_ROUNDS);
                 if (done) _end(); else _nextRound();
             }
         }
@@ -304,7 +331,15 @@ function _frame(dt) {
     _renderHud();
 }
 
-function _leaders() { const top = Math.max(..._score); return _seats().filter(s => _score[s] === top); }
+// Who's on top: everyone still in (the knockout's survivors), else the most found.
+function _leaders() {
+    const alive = _alive();
+    if (alive.length) return alive;
+    const top = Math.max(..._score); return _seats().filter(s => _score[s] === top);
+}
+// How long each player lasted, for the standings: the round they went out, or past the last one.
+const _standing = () => _seats().map(s => (_out[s] ? _lasted[s] : _round + 1) * 100 + _score[s]);
+const _isBot = slot => !_solo && isBotSlot(slot);
 
 function _startSwap() {
     const [a, b] = _swaps[_swapI];
@@ -324,15 +359,12 @@ function _draw() {
 
 function _renderHud() {
     if (!_hud) return;
-    const rnd = _round > ROUNDS ? 'SUDDEN DEATH' : `ROUND ${Math.max(1, _round)}/${ROUNDS}`;
-    _seats().forEach(slot => _hud.line(slot, (_n > 2 ? `🥤 ${_score[slot]} PTS · ${rnd}` : `🥤 ${rnd} · ${_score[slot]}–${_score[1 - slot]}`) +
+    const rnd = `ROUND ${Math.max(1, _round)}`;
+    _seats().forEach(slot => _hud.line(slot, (_out[slot] ? `🥤 OUT IN ROUND ${_lasted[slot]} · ${_score[slot]} FOUND`
+        : _solo ? `🥤 ${rnd} · ${_score[0]} FOUND · ${soloScore()} PTS` : `🥤 ${rnd} · ${_score[slot]} FOUND`) +
         (_sub === 'pick' && _picks[slot] == null ? ` · ${Math.max(0, Math.ceil(PICK_TIME - _subT))}s` : '')));
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') {
-        const lead = _leaders();
-        el.textContent = _n > 2 ? `${rnd} · ${lead.length === 1 ? `${seat(lead[0]).name} LEADS` : 'LEVEL AT THE TOP'}`
-                                : `${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
-    }
+    if (el && _phase === 'play') el.textContent = _solo ? `${rnd} · ${_score[0]} FOUND` : `${rnd} · ${_alive().length} OF ${_n} STILL IN`;
 }
 
 function _end() {
@@ -340,12 +372,18 @@ function _end() {
     _phase = 'over';
     _hud.say('');
     _pads.forEach(p => p.forEach(b => { b.style.display = 'none'; }));
+    if (_solo) {
+        // Parallel play reports a score, not a winner.
+        const banked = soloScore();
+        _hud.say(`${_score[0]} FOUND`, `${banked} POINTS`, 0, _t, '#ffd166');
+        setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1400);
+        return;
+    }
     const lead = _leaders(), w = lead.length === 1 ? lead[0] : -1;
-    const top = Math.max(..._score), next = w < 0 ? top : Math.max(..._score.filter((_, i) => i !== w));
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? `${top} EACH` : `${_score[w]} TO ${next}`,
-        onDone: () => _finish(w, [..._score]),
+        sub: w < 0 ? `${lead.length} STILL IN AFTER ${_round} ROUNDS` : `LAST ONE IN · ${_score[w]} FOUND`,
+        onDone: () => _finish(w, _standing()),
     });
     const el = document.getElementById('mg-neutral');
     if (el) el.textContent = w < 0 ? 'DRAW!' : `${seat(w).name} WINS!`;
@@ -353,7 +391,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, n: _n, sub: _sub, round: _round, score: [..._score], picks: [..._picks],
+    return { phase: _phase, n: _n, sub: _sub, round: _round, score: [..._score], picks: [..._picks], out: [..._out], solo: _solo,
              answer: _cups.length ? _posIndex(_under) : -1, swaps: _plan ? _plan.swaps : 0, dur: _plan ? +_plan.dur.toFixed(2) : 0,
              swapI: _swapI, gl: !!_stage?.gl, turned: !!_stage?.turned };
 }

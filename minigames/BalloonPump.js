@@ -21,6 +21,9 @@
 // pump each, slot 0 on the right as at two. Every balloon shares the round's
 // limit, and a pop still ends the round for everybody (the popper scores
 // nothing) — so nobody learns the limit from a pop and pumps to just under it.
+//
+// PARALLEL (SoloArena): one pump on each phone and the same five hidden limits
+// on every phone; a pop scores that round nothing. The total is the score.
 // ============================================================
 
 import { state } from '../../AppHost.js';
@@ -30,6 +33,7 @@ import { createStage } from '../engine/Stage.js';
 import { STAGE_SETS } from '../engine/StageSets.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
+import * as Solo from './SoloArena.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const ROUNDS = 5;
@@ -47,13 +51,18 @@ const R0 = 0.16, R1 = 1.12;        // balloon radius at size 0 and 100
 // ── Module state ─────────────────────────────────────────────────────────────
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _set = null, _dir = null, _hud = null, _in = null, _fx = null;
-let _n = 2, _figs = [], _score = [0, 0], _bot = [];
+let _n = 2, _figs = [], _score = [0, 0], _bot = [], _solo = false;
+const _isBot = slot => !_solo && isBotSlot(slot);
+
+/** Parallel play: the points banked so far. */
+export function soloScore() { return _score[0] || 0; }
 let _phase = 'intro', _sub = '', _subT = 0, _t = 0, _round = 0, _limit = 70, _squeakT = [0, 0], _roundWin = -1;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _n = Math.max(2, Math.min(4, slotCount()));
+    _solo = Solo.isSolo();
+    _n = _solo ? 1 : Math.max(2, Math.min(4, slotCount()));
     _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _round = 0; _score = new Array(_n).fill(0); _roundWin = -1;
     _squeakT = new Array(_n).fill(0);
     _bot = Array.from({ length: _n }, () => ({ target: 60 }));
@@ -70,7 +79,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _dir = createDirector(_stage);
     if (_stage.gl) _set = STAGE_SETS.shop(_stage);
     _figs = Array.from({ length: _n }, (_, slot) => _buildStation(slot));
-    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'HOLD TO PUMP' : 'HOLD TO PUMP · DON’T POP IT');
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, _isBot(slot) ? '' : _n > 2 ? 'HOLD TO PUMP' : 'HOLD TO PUMP · DON’T POP IT');
 
     _dir.open({
         place: 'SHOPPING PROMENADE · THE BALLOON STALL', title: 'BALLOON PUMP',
@@ -178,7 +187,7 @@ function _nextRound() {
     _round++;
     if (_round > ROUNDS) { _end(); return; }
     // One hidden limit for every balloon: nobody gets a luckier balloon.
-    _limit = LIMIT_MIN + Math.random() * (LIMIT_MAX - LIMIT_MIN);
+    _limit = LIMIT_MIN + (_solo ? Solo.draw(_round) : Math.random()) * (LIMIT_MAX - LIMIT_MIN);
     _figs.forEach(f => {
         Object.assign(f, { size: 0, popped: false, banked: false, bankT: 0, pumping: false });
         f.anim?.play('ready');
@@ -223,7 +232,10 @@ function _tally(popper = null) {
     const top = Math.max(...pts), best = pts.reduce((acc, p, i) => (p === top ? acc.concat(i) : acc), []);
     const w = best.length === 1 ? best[0] : -1;
     let msg, sub;
-    if (popper) {
+    if (_solo) {
+        msg = popper ? '💥 POPPED!' : `+${pts[0]} BANKED`;
+        sub = `${popper ? 'NO POINTS · ' : ''}LIMIT WAS ${Math.round(_limit)}`;
+    } else if (popper) {
         // A pop ends the round: the survivor takes it.
         msg = `💥 ${seat(popper.slot).name} POPPED!`;
         sub = w < 0 ? `ROUND DRAWN · LIMIT WAS ${Math.round(_limit)}` : `${seat(w).name} WINS THE ROUND +${pts[w]}`;
@@ -248,7 +260,7 @@ function _frame(dt) {
             let popper = null;
             _figs.forEach(f => {
                 if (f.popped || popper) return;
-                const want = isBotSlot(f.slot) ? _botWants(f) : !!_in.seat(f.slot).down;
+                const want = _isBot(f.slot) ? _botWants(f) : !!_in.seat(f.slot).down;
                 f.pumping = want;
                 if (want) {
                     f.size += RATE * dt;
@@ -298,7 +310,8 @@ function _renderHud() {
     // Left to right as they sit: P2 on the left, P1 on the right (and at three
     // or four, the highest slot on the left).
     const clock = `<span>🎈 ${r}/${ROUNDS}${left !== '' ? ' · ' + left + 's' : ''}</span>`;
-    if (_n > 2) _hud.bar(Array.from({ length: _n }, (_, k) => _n - 1 - k)
+    if (_solo) _hud.bar(`<span style="color:${seat(0).css}">${_score[0]} PTS</span>` + clock);
+    else if (_n > 2) _hud.bar(Array.from({ length: _n }, (_, k) => _n - 1 - k)
         .map(s => `<span style="color:${seat(s).css}">${_score[s]}</span>`).join('') + clock);
     else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} ${_score[1]}</span>` + clock +
         `<span style="color:${seat(0).css}">${_score[0]} ${seat(0).name}</span>`);
@@ -308,13 +321,20 @@ function _renderHud() {
         if (_round > 1) _hud.hint(slot, f?.popped ? 'POP!' : '');
     }
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = _n > 2 ? `ROUND ${r}/${ROUNDS}`
+    if (el && _phase === 'play') el.textContent = _n > 2 || _solo ? `ROUND ${r}/${ROUNDS}`
         : `ROUND ${r}/${ROUNDS} · ${seat(0).name} ${_score[0]} – ${_score[1]} ${seat(1).name}`;
 }
 
 function _end() {
     _phase = 'over';
     _hud.say('');
+    if (_solo) {
+        // Parallel play reports a score, not a winner.
+        const banked = soloScore();
+        _hud.say(`${banked} POINTS`, 'OF HOT AIR', 0, _t, '#ffd12d');
+        setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1400);
+        return;
+    }
     const top = Math.max(..._score), lead = _score.reduce((a, v, i) => (v === top ? a.concat(i) : a), []);
     const w = lead.length === 1 ? lead[0] : -1;
     _dir.close({

@@ -15,6 +15,9 @@
 //
 // LIVE (MG_PROFILE.live): two, three or four side by side along one edge, a
 // plate each along the counter, slot 0 on the right as at two.
+//
+// PARALLEL (SoloArena): one plate on each phone, the same 40 s, and the stack's
+// height in millimetres is the score.
 // ============================================================
 
 import { state } from '../../AppHost.js';
@@ -23,6 +26,7 @@ import { registerMinigameCleanup, isBotSlot, slotCount } from './MinigameManager
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, sideHud, touch, effects } from '../engine/StageKit.js';
+import * as Solo from './SoloArena.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const PLATE_X = [2.3, -2.3];             // P1 on the right, P2 on the left (at two)
@@ -41,12 +45,14 @@ const FIG_SCALE = 1.0;
 let _done = false, _onWin = null, _botSkill = 0.55;
 let _overlay = null, _stage = null, _dir = null, _hud = null, _in = null, _fx = null;
 let _world = null, _cakeMat = null, _geo = null, _mats = null;
+let _solo = false;
 let _n = 2, _look = null, _p = [], _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _frozen = false;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _n = Math.max(2, Math.min(4, slotCount()));
+    _solo = Solo.isSolo();
+    _n = _solo ? 1 : Math.max(2, Math.min(4, slotCount()));
     _phase = 'intro'; _phaseT = 0; _t = 0; _clock = 0; _frozen = false; _look = null;
     registerMinigameCleanup(_destroy);           // R3
 
@@ -62,7 +68,7 @@ export function start(isBot, onWin, botSkill = 0.55) {
     _world = typeof CANNON !== 'undefined' ? _buildWorld() : null;
     if (_stage.gl) _buildDiner();
     _p = Array.from({ length: _n }, (_, slot) => _buildPlayer(slot));
-    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, seat(slot).bot ? '' : _n > 2 ? 'TAP TO DROP' : 'TAP TO DROP IT ON THE STACK');
+    for (let slot = 0; slot < _n; slot++) _hud.hint(slot, _isBot(slot) ? '' : _n > 2 ? 'TAP TO DROP' : 'TAP TO DROP IT ON THE STACK');
 
     _dir.open({
         place: 'PERDITION · THE ALL-NIGHT DINER', title: 'PANCAKE STACK',
@@ -173,7 +179,7 @@ function _cakeMesh() {
 
 // ── Players ──────────────────────────────────────────────────────────────────
 function _buildPlayer(slot) {
-    const p = { slot, cakes: [], held: null, reload: 0.4, phase: Math.random() * Math.PI * 2, drops: 0, bot: { wait: 0 } };
+    const p = { slot, cakes: [], held: null, reload: 0.4, phase: (_solo ? Solo.draw(slot) : Math.random()) * Math.PI * 2, drops: 0, bot: { wait: 0 } };
     if (_stage.gl) {
         // The cook behind each plate, watching the stack.
         const c = _stage.character(slot);
@@ -211,6 +217,10 @@ const _count = p => _onPlate(p).length;
 /** The score: height of the stack, plate to top, in world units. */
 const _height = p => Math.max(0, _topY(p) - PLATE_TOP);
 const _cm = h => `${(h * 10).toFixed(1)} cm`;       // one pancake ≈ 1.3 cm
+const _isBot = slot => !_solo && isBotSlot(slot);
+
+/** Parallel play: the stack so far, in millimetres. */
+export function soloScore() { return _p[0] ? Math.round(_height(_p[0]) * 100) : 0; }
 const _period = p => Math.max(PERIOD_MIN, PERIOD_0 - _count(p) * 0.09);
 const _heldX = p => _plateX(p.slot) + Math.sin(p.phase) * SWING;
 
@@ -235,7 +245,7 @@ function _drop(slot) {
     p.drops++;
     p.reload = RELOAD;
     sfx('seq_lit');
-    if (!isBotSlot(slot)) haptic([10]);
+    if (!_isBot(slot)) haptic([10]);
 }
 
 // ── Bot (§5): drop when the pancake is over the top of its stack, give or
@@ -270,7 +280,7 @@ function _frame(dt) {
             if (!_frozen) p.phase += dt * Math.PI * 2 / _period(p);
             if (!p.held && p.reload <= 0 && _stage?.gl) p.held = _cakeMesh();
             if (!p.held && p.reload <= 0 && !_stage?.gl) p.held = true;
-            if (isBotSlot(p.slot)) _botStep(p, dt);
+            if (_isBot(p.slot)) _botStep(p, dt);
         });
         if (_clock >= MATCH_TIME) _end();
     }
@@ -335,7 +345,7 @@ function _draw() {
             p.held.visible = _phase === 'play' || _phase === 'ready';
         }
         if (p.aim) {
-            p.aim.visible = !!(p.held && p.held.isObject3D) && _phase === 'play' && !isBotSlot(p.slot);
+            p.aim.visible = !!(p.held && p.held.isObject3D) && _phase === 'play' && !_isBot(p.slot);
             p.aim.position.set(_heldX(p), top + 0.01, 0);
             const off = Math.abs(_heldX(p) - _plateX(p.slot));
             p.aim.material.color.setHex(off < 0.15 ? 0x4ade80 : off < 0.4 ? 0xfacc15 : 0xef4444);
@@ -348,12 +358,13 @@ function _renderHud() {
     const h = _p.map(_height);
     const clock = `<span>⏱ ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s</span>`;
     // Left to right as they sit, the highest slot on the left.
-    if (_n > 2) _hud.bar(Array.from({ length: _n }, (_, k) => _n - 1 - k).map(s => `<span style="color:${seat(s).css}">${_cm(h[s])}</span>`).join('') + clock);
+    if (_solo) _hud.bar(`<span style="color:${seat(0).css}">📏 ${_cm(h[0])}</span>` + clock);
+    else if (_n > 2) _hud.bar(Array.from({ length: _n }, (_, k) => _n - 1 - k).map(s => `<span style="color:${seat(s).css}">${_cm(h[s])}</span>`).join('') + clock);
     else _hud.bar(`<span style="color:${seat(1).css}">${seat(1).name} 📏 ${_cm(h[1])}</span>` + clock +
         `<span style="color:${seat(0).css}">${_cm(h[0])} 📏 ${seat(0).name}</span>`);
     if (_clock > 6) for (let slot = 0; slot < _n; slot++) _hud.hint(slot, '');
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = _n > 2 ? `TALLEST STACK · ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s`
+    if (el && _phase === 'play') el.textContent = _n > 2 || _solo ? `TALLEST STACK · ${Math.max(0, Math.ceil(MATCH_TIME - _clock))}s`
         : `${seat(0).name} ${_cm(h[0])} – ${_cm(h[1])} ${seat(1).name}`;
 }
 
@@ -362,6 +373,13 @@ function _end() {
     _phase = 'over';
     _hud.say('');
     _p.forEach(p => { if (p.held && p.held.isObject3D) p.held.visible = false; if (p.aim) p.aim.visible = false; });
+    if (_solo) {
+        // Parallel play reports a score, not a winner.
+        const banked = soloScore();
+        _hud.say(_cm(_height(_p[0])), `${_count(_p[0])} PANCAKES`, 0, _t, '#f2c27a');
+        setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1400);
+        return;
+    }
     // Tallest stack, plate to top. Two within half a pancake of the tallest is
     // a dead heat.
     const h = _p.map(_height);

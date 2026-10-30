@@ -26,6 +26,7 @@
 import { state } from '../../AppHost.js';
 import { isBotSlot, seatFor, slotCount } from '../minigames/MinigameManager.js';
 import { zonesFor, seatRing } from '../config/MinigameLayout.js';
+import * as Solo from '../minigames/SoloArena.js';
 
 // How many seats the round has: 2 unless the manager has seated more. At two,
 // everything below is the face-off exactly as it shipped; at three and four the
@@ -59,13 +60,15 @@ function _pop(el, on) {
 
 /** A strip at each player's end and a message drawn for both. */
 export function faceoffHud(stage, { bg = 'rgba(12,10,20,.72)' } = {}) {
-    if (_seatN() > 2) return _ringHud(stage, bg);
+    // Played alone for a score, one strip and one message across the whole screen.
+    const solo = Solo.isSolo();
+    if (!solo && _seatN() > 2) return _ringHud(stage, bg);
     const root = stage.hud;
     root.classList.add('bfont');
-    const halves = [0, 1].map(slot => {
+    const halves = (solo ? [0] : [0, 1]).map(slot => {
         const s = seat(slot);
         const half = document.createElement('div');
-        half.style.cssText = 'position:absolute;left:0;right:0;height:50%;pointer-events:none;' +
+        half.style.cssText = `position:absolute;left:0;right:0;height:${solo ? 100 : 50}%;pointer-events:none;` +
             (slot === 0 ? 'bottom:0;' : 'top:0;transform:rotate(180deg);');
         // Inset past the manager's status pill at the outer edge (R1b).
         const strip = document.createElement('div');
@@ -86,8 +89,8 @@ export function faceoffHud(stage, { bg = 'rgba(12,10,20,.72)' } = {}) {
     });
     let clearAt = 0;
     return {
-        line(slot, text) { halves[slot].line.textContent = text; },
-        hint(slot, text) { halves[slot].hint.textContent = text; halves[slot].hint.style.display = text ? '' : 'none'; },
+        line(slot, text) { if (halves[slot]) halves[slot].line.textContent = text; },
+        hint(slot, text) { if (!halves[slot]) return; halves[slot].hint.textContent = text; halves[slot].hint.style.display = text ? '' : 'none'; },
         say(msg, sub = '', ms = 0, now = 0, color = '') {
             halves.forEach(h => {
                 h.big.textContent = msg; h.sub.textContent = sub; h.big.style.color = color;
@@ -169,7 +172,7 @@ function _ringHud(stage, bg) {
  * their own strip of the screen, slot 0 on the right as at two.
  */
 export function sideHud(stage, { padWidth = 260 } = {}) {
-    const n = _seatN();
+    const n = Solo.isSolo() ? 1 : _seatN();
     const root = stage.hud;
     root.classList.add('bfont');
     const el = (css, parent = root) => { const e = document.createElement('div'); e.style.cssText = css; parent.appendChild(e); return e; };
@@ -194,6 +197,7 @@ export function sideHud(stage, { padWidth = 260 } = {}) {
             pads.forEach((p, slot) => { p.pad.style.width = pw + 'px'; p.pad.style.left = (W * (n - 1 - slot + 0.5) / n - pw / 2) + 'px'; });
             return;
         }
+        if (n === 1) { pads[0].pad.style.left = (W * 0.5 - padWidth / 2) + 'px'; return; }
         pads[0].pad.style.left = (W * 0.75 - padWidth / 2) + 'px';
         pads[1].pad.style.left = (W * 0.25 - padWidth / 2) + 'px';
     };
@@ -201,8 +205,8 @@ export function sideHud(stage, { padWidth = 260 } = {}) {
     let clearAt = 0;
     return {
         bar(html) { bar.innerHTML = html; },
-        hint(slot, text) { pads[slot].hint.textContent = text; pads[slot].hint.style.display = text ? '' : 'none'; },
-        lit(slot, on, color = 'rgba(250,204,21,.35)') { pads[slot].pad.style.background = on ? color : 'rgba(20,12,24,.55)'; },
+        hint(slot, text) { if (!pads[slot]) return; pads[slot].hint.textContent = text; pads[slot].hint.style.display = text ? '' : 'none'; },
+        lit(slot, on, color = 'rgba(250,204,21,.35)') { if (pads[slot]) pads[slot].pad.style.background = on ? color : 'rgba(20,12,24,.55)'; },
         say(msg, subText = '', ms = 0, now = 0, color = '') {
             big.textContent = msg; sub.textContent = subText; big.style.color = color;
             box.style.opacity = msg ? '1' : '0';
@@ -271,14 +275,15 @@ export function touch(stage, { split = 'y', stick = 55, tapPx = 12, tapMs = 220,
         return best;
     };
     const stripSlot = p => Math.max(0, Math.min(n - 1, n - 1 - Math.floor(p.x / (stage.width / n))));
-    const slotAt = p => (n > 2 ? (split === 'y' ? ringSlot(p) : stripSlot(p))
+    // Played alone for a score (SoloArena), the whole screen is slot 0's.
+    const slotAt = p => (Solo.isSolo() ? 0 : n > 2 ? (split === 'y' ? ringSlot(p) : stripSlot(p))
         : split === 'y' ? (p.y >= stage.height / 2 ? 0 : 1) : (p.x >= stage.width / 2 ? 0 : 1));
     stage.listen('pointerdown', e => {
         e.preventDefault();
         const p = stage.toLocal(e.clientX, e.clientY);
         const slot = slotAt(p);
         const s = seats[slot];
-        if (isBotSlot(slot) || s.pid !== null) return;
+        if ((!Solo.isSolo() && isBotSlot(slot)) || s.pid !== null) return;
         Object.assign(s, { pid: e.pointerId, ax: p.x, ay: p.y, t0: performance.now(), dx: 0, dy: 0, moved: false, down: true });
         onDown?.(slot);
     });
