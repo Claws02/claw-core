@@ -76,6 +76,48 @@ MinigameManager.triggerStandalone(type, isBot, seats, {
 say which games can run at which seat count. `MG_NET[type] === 'parallel'`
 games can be played one phone each through `SoloArena.play(type, seed, onScore)`.
 
+## Playing across phones (parallel games)
+
+Online play in both apps works one way: **every phone plays the same seeded
+challenge, alone, at the same moment, and the scores are compared.** Nothing is
+synchronised while a game runs, so a room of twelve costs no more than a room of
+two. A game opts in with `MG_NET[type] = 'parallel'`; `MG_PARALLEL` lists them.
+
+Parallel today (12): Snap Strike, Odd One Out, Steady Hand, Loot Catch, Tree
+Climb, Mini Golf, Balloon Pump, Pancake Stack, Shell Game, and the time trials
+Kart GP, Speed Boat, Rift Dive. (CLAWGames adds Stop the Clock, Higher or
+Lower and Trivia of its own.)
+
+What a parallel game does, all in `minigames/SoloArena.js`:
+
+| Call | What it's for |
+|---|---|
+| `Solo.isSolo()` | true while the game is being played alone for a score: one slot, full screen, no bot |
+| `Solo.draw(i)` | the i-th number of the round's seed, the same on every phone **whenever it is asked for**. Use it for everything a score depends on (targets, courses, decks); keep `Math.random` for cosmetics |
+| `Solo.rand()` | the seed as a stream; only safe when every phone draws the same count in the same order |
+| `soloScore()` (export it) | what the player has banked so far: a force-end or the watchdog reports it. Higher is always better (negate a time, or score 1000 + time under the bell) |
+| `Solo.soloFinish(score)` | the game is over: report one number, then tear down |
+| `Solo.ghostSend(state)` / `Solo.ghosts()` | time trials: send your racer `{x, y, z, h, p, done}` (throttled to ~9/s) and read everyone else's |
+| `Solo.setGhostLink(link)` | for the **app**: plug its network in (`{ send(state), others() }`); with none, as in HundredBlockDash, ghosts are off |
+
+`engine/Ghosts.js` draws `Solo.ghosts()` as see-through racers with name tags
+(`createGhosts(stage, { build })`, then `update(dt)` each frame). In solo,
+`StageKit.touch()` gives every touch to slot 0, and `faceoffHud` / `sideHud`
+draw a single player's strip.
+
+Registry rows a parallel game needs: `MG_NET` (`'parallel'`), `MG_NET_INFO`
+(the rules as a phone player reads them, with no "your half" or second player)
+and, if a round runs past 90 s, `MG_SOLO_MS`.
+
+**Converting a game** (the pattern Balloon Pump, Pancake Stack, Shell Game and
+the three time trials follow): `_n = Solo.isSolo() ? 1 : …`; replace every
+`[0, 1]` with the slots in play; full-screen camera/view in solo; seed the
+challenge with `Solo.draw`; wrap `isBotSlot` so solo never has a bot; give the
+HUD a one-player line; export `soloScore()`; end with `Solo.soloFinish`
+instead of the director's winner shot. Test it two ways: two pages with one
+seed see the same challenge, and the shared-screen game still plays exactly as
+before.
+
 A game only one app should have stays in that app: it adds its rows to the
 registry tables at startup and hands `MinigameManager.registerMinigame(type, loader)`
 its file. CLAWGames' Yatzy is the reference (`CLAWGames/src/games/`).
