@@ -21,12 +21,24 @@ const EASE = 10;                 // 1/s toward the latest report
 export function createGhosts(stage, { build, y = 1.5, opacity = 0.42, label = true } = {}) {
     const live = new Map();      // id → { obj, tag, x, y, z, h, seen }
 
-    const _fade = (obj) => obj.traverse(o => {
-        if (!o.material) return;
-        o.material = o.material.clone();
-        o.material.transparent = true; o.material.opacity = opacity; o.material.depthWrite = false;
-        o.castShadow = false;
-    });
+    // See-through copies of the racer's materials. They're this ghost's own, so
+    // it gives them back when it goes (geometry and textures may be shared with
+    // the player's racer, so those are left alone).
+    const _fade = (obj) => {
+        const mats = [];
+        obj.traverse(o => {
+            if (!o.material) return;
+            const fade = m => {
+                const c = m.clone();
+                c.transparent = true; c.opacity = opacity; c.depthWrite = false;
+                mats.push(c);
+                return c;
+            };
+            o.material = Array.isArray(o.material) ? o.material.map(fade) : fade(o.material);
+            o.castShadow = false;
+        });
+        return mats;
+    };
 
     function _tag(name, css) {
         const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
@@ -43,18 +55,22 @@ export function createGhosts(stage, { build, y = 1.5, opacity = 0.42, label = tr
         const color = typeof o.color === 'number' ? o.color : parseInt(String(o.color || '#ffffff').replace('#', ''), 16);
         const css = '#' + color.toString(16).padStart(6, '0');
         const obj = build(color);
-        _fade(obj);
+        const mats = _fade(obj);
         stage.add(obj);
         const tag = label ? _tag(String(o.name || '').toUpperCase().slice(0, 12), css) : null;
         if (tag) stage.add(tag);
         const s = o.state || {};
-        return { obj, tag, x: s.x || 0, y: s.y || 0, z: s.z || 0, h: s.h || 0, seen: 0 };
+        return { obj, tag, mats, x: s.x || 0, y: s.y || 0, z: s.z || 0, h: s.h || 0, seen: 0 };
     }
 
     function _drop(id) {
         const g = live.get(id);
         if (!g) return;
         stage.scene?.remove(g.obj); if (g.tag) stage.scene?.remove(g.tag);
+        // A racer that goes quiet for a moment and comes back is rebuilt, so
+        // anything not given back here piles up over a night of time trials.
+        g.mats.forEach(m => m.dispose());
+        if (g.tag) { g.tag.material.map?.dispose(); g.tag.material.dispose(); }
         live.delete(id);
     }
 
