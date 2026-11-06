@@ -8,17 +8,24 @@
 //   PICK: tap LEFT, MIDDLE or RIGHT on your half — as YOU see the table from
 //   your end. Your pick is secret until you have both locked in.
 //
-// KNOCKOUT. Every shuffle is longer and quicker than the last, and it starts
-// brisk. Miss the pea and you're out — unless nobody found it, when everyone
-// goes again. Last one in wins (after MAX_ROUNDS, the leaders share it).
+// A RACE. Every shuffle is longer and quicker than the last, and it starts
+// brisk. When the cups stop, the FIRST RIGHT ANSWER wins the round. A wrong
+// pick locks you out of that round (the others can still find it); if nobody
+// finds it, nobody scores. First to RACE_TO rounds wins; there's no round cap,
+// so it goes on until somebody gets there.
 //
 // LIVE (MG_PROFILE.live): two, three or four round the table. Each player's
-// buttons sit in their own zone and read the cups from their own end; every
-// pick is secret until all of them are in.
+// buttons sit in their own zone and read the cups from their own end.
 //
-// PARALLEL (SoloArena): alone on each phone, the same shuffles from the shared
-// seed, until your first miss. Score: 10 a cup found, plus up to 9 for how
-// quickly you picked on average, so a tied streak still has a winner.
+// PARALLEL (SoloArena), across phones with a race link (SoloArena.race()):
+// every phone plays the same shuffles from the shared seed and sends its
+// answer and how fast it was (from when ITS cups stopped, so a slow network
+// doesn't lose a fast hand); the host gives the round to the fastest right
+// answer, and every phone shows it. Score: rounds won.
+//
+// PARALLEL alone (no link: solo play): the same shuffles until your first
+// miss. Score: 10 a cup found, plus up to 9 for how quickly you picked on
+// average, so a tied streak still has a winner.
 // ============================================================
 
 import { state } from '../../AppHost.js';
@@ -32,7 +39,7 @@ import * as Solo from './SoloArena.js';
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 const CUP_X = [-1.7, 0, 1.7];            // the three positions, P1's left to right
-const MAX_ROUNDS = 15, SOLO_ROUNDS = 25;
+const RACE_TO = 3, SOLO_ROUNDS = 25, CALL_WAIT = 12;   // CALL_WAIT: s to wait for the judge before going on
 // Per round (r from 0): swaps, and seconds per swap. Starts where the old fifth
 // round was, and only gets quicker.
 const PLAN = r => ({ swaps: 7 + r * 2, dur: Math.max(0.1, 0.26 - r * 0.025) });
@@ -47,14 +54,17 @@ let _cups = [], _pea = null, _figs = [], _pads = [], _rings = [];
 let _n = 2, _score = [0, 0], _round = 0, _phase = 'intro', _sub = '', _subT = 0, _t = 0;
 let _under = 0, _swaps = [], _swapI = 0, _plan = null, _picks = [null, null], _bot = [null, null], _frozen = false;
 let _out = [], _lasted = [], _solo = false, _pickT = [], _bonus = 0;
+let _race = null, _locked = [], _winner = -1, _call = null, _waitT = 0;
 
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
     _solo = Solo.isSolo();
+    _race = _solo && Solo.race ? Solo.race() : null;   // a race across phones (null: alone, or round one table)
     _n = _solo ? 1 : Math.max(2, Math.min(4, slotCount()));
     _score = new Array(_n).fill(0); _round = 0; _phase = 'intro'; _sub = ''; _subT = 0; _t = 0; _picks = new Array(_n).fill(null); _frozen = false;
     _out = new Array(_n).fill(false); _lasted = new Array(_n).fill(0); _pickT = new Array(_n).fill(0); _bonus = 0;
+    _locked = new Array(_n).fill(false); _winner = -1; _call = null; _waitT = 0; _over = false;
     registerMinigameCleanup(_destroy);           // R3
 
     const mg = document.getElementById('minigame-layer');
@@ -97,7 +107,10 @@ const _alive = () => _seats().filter(s => !_out[s]);
 const _rnd = k => (_solo ? Solo.draw(_round * 100 + k) : Math.random());
 
 /** Parallel play: what this phone has banked so far. */
-export function soloScore() { return _score[0] * 10 + (_score[0] ? Math.min(9, Math.round(_bonus / _score[0])) : 0); }
+export function soloScore() { return _race ? _score[0] : _score[0] * 10 + (_score[0] ? Math.min(9, Math.round(_bonus / _score[0])) : 0); }
+/** A race (round a table, or across phones): first to this many rounds. */
+const _raceTo = () => (_race && _race.to) || RACE_TO;
+const _racing = () => !_solo || !!_race;
 
 // ── The booth ────────────────────────────────────────────────────────────────
 function _buildBooth() {
@@ -201,6 +214,7 @@ function _nextRound() {
     _plan = PLAN(_round - 1);
     // Whoever is out sits this one out: their pick is already "in".
     _picks = _seats().map(s => (_out[s] ? -2 : null)); _bot = new Array(_n).fill(null);
+    _locked = new Array(_n).fill(false); _winner = -1; _call = null; _waitT = 0; _over = false;
     _rings.forEach(r => { if (r) r.visible = false; });
     // Cups back in a row; the pea under a random one.
     const order = [0, 1, 2].map((k, i) => [k, _rnd(i)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
@@ -210,7 +224,7 @@ function _nextRound() {
     _swaps = Array.from({ length: _plan.swaps }, (_, i) => { const a = (_rnd(10 + i * 2) * 3) | 0; return [a, (a + 1 + ((_rnd(11 + i * 2) * 2) | 0)) % 3]; });
     _swapI = 0;
     _sub = 'show'; _subT = 0;
-    _hud.say(`ROUND ${_round}`, _solo || _round === 1 ? 'WATCH THE PEA' : `${_alive().length} STILL IN`, SHOW * 1000, _t, '#ffd166');
+    _hud.say(`ROUND ${_round}`, _racing() ? `FIRST TO ${_raceTo()} WINS` : 'WATCH THE PEA', SHOW * 1000, _t, '#ffd166');
     _pads.forEach((p, slot) => p.forEach(b => { b.style.opacity = '.4'; b.style.transform = ''; b.style.visibility = _out[slot] ? 'hidden' : ''; }));
     sfx('countdown');
 }
@@ -219,6 +233,7 @@ function _pick(slot, k) {
     if (_phase !== 'play' || _sub !== 'pick' || _picks[slot] != null) return;
     _picks[slot] = _posFor(slot, k);
     _pickT[slot] = _subT;
+    if (_racing()) return _racePick(slot, k);
     // Your own button lights; the others only learn that you have locked in.
     _pads[slot].forEach((b, i) => { b.style.opacity = i === k ? '1' : '.25'; b.style.transform = i === k ? 'scale(1.08)' : ''; });
     const alive = _alive(), inCount = alive.filter(s => _picks[s] != null).length;
@@ -231,7 +246,28 @@ function _pick(slot, k) {
     if (_picks.every(p => p != null)) _reveal();
 }
 
+// A race: the first right answer takes the round; a wrong one is locked out of it.
+function _racePick(slot, k) {
+    const right = _picks[slot] === _posIndex(_under);
+    _pads[slot].forEach((b, i) => { b.style.opacity = i === k ? '1' : '.25'; b.style.transform = i === k ? 'scale(1.08)' : ''; if (i === k && !_race) b.style.borderColor = right ? '#9be15d' : '#ff6b6b'; });
+    sfx('tick');
+    if (!_isBot(slot)) haptic([12]);
+    if (_race) {   // across phones: send it, and wait for the judge
+        try { _race.pick(_round, right, Math.round(_pickT[slot] * 1000)); } catch (e) { /* the call will time out */ }
+        _sub = 'wait'; _waitT = 0;
+        _hud.hint(0, 'LOCKED IN · WAITING FOR THE OTHERS…');
+        return;
+    }
+    if (right) { _winner = slot; return _reveal(); }
+    _locked[slot] = true;
+    _hud.hint(slot, 'WRONG CUP · LOCKED OUT THIS ROUND');
+    _figs[slot].anim?.play('hit', { restart: true });
+    _alive().forEach(o => { if (o !== slot && !seat(o).bot && _picks[o] == null) _hud.hint(o, `${seat(slot).name} MISSED · STILL OPEN`); });
+    if (_alive().every(s => _picks[s] != null)) _reveal();
+}
+
 function _reveal() {
+    if (_racing()) return _raceReveal();
     _sub = 'reveal'; _subT = 0;
     const at = _posIndex(_under);
     const alive = _alive();
@@ -259,6 +295,36 @@ function _reveal() {
     }
     _hud.say(txt, sub, REVEAL * 1000, _t, rights.length ? '#9be15d' : '#ff6b6b');
 }
+
+function _raceReveal() {
+    _sub = 'reveal'; _subT = 0;
+    const at = _posIndex(_under);
+    let txt, sub, good;
+    if (_race) {
+        const c = _call || { winner: -1, wins: {} }, me = _race.me;
+        _score[0] = (c.wins && c.wins[me]) || 0;
+        good = c.winner === me;
+        txt = c.winner === me ? 'YOU FOUND IT FIRST!' : c.winner >= 0 ? `${String(c.name || 'SOMEONE').toUpperCase()} FOUND IT FIRST` : 'NOBODY FOUND IT';
+        sub = `YOU ${_score[0]} · FIRST TO ${_raceTo()}`;
+        if (_picks[0] >= 0 && _rings[0]) { _rings[0].visible = true; _rings[0].position.set(CUP_X[_picks[0]], 0.87, 0); }
+        _figs[0].anim?.play(good ? 'raise' : 'hit', { restart: true });
+        _over = !!c.done;
+    } else {
+        if (_winner >= 0) _score[_winner]++;
+        good = _winner >= 0;
+        _seats().forEach(slot => {
+            const ring = _rings[slot];
+            if (ring && _picks[slot] != null && _picks[slot] >= 0) { ring.visible = true; ring.position.set(CUP_X[_picks[slot]], 0.87 + slot * 0.005, 0); ring.scale.setScalar(1 + slot * 0.2); }
+            if (slot === _winner) _figs[slot].anim?.play('raise', { restart: true });
+        });
+        txt = _winner >= 0 ? `${seat(_winner).name} FOUND IT FIRST!` : 'NOBODY FOUND IT';
+        sub = _seats().map(s => `${seat(s).name} ${_score[s]}`).join(' · ') + ` · FIRST TO ${_raceTo()}`;
+        _over = _score.some(v => v >= _raceTo());
+    }
+    sfx(good ? 'land_good' : 'land_bad');
+    _hud.say(txt, sub, REVEAL * 1000, _t, good ? '#9be15d' : at >= 0 ? '#ffd166' : '#ff6b6b');
+}
+let _over = false;
 
 /** Which table position (0 = P1's left) the cup with index i stands at. */
 function _posIndex(i) {
@@ -308,18 +374,30 @@ function _frame(dt) {
                 } else _startSwap();
             }
         } else if (_sub === 'pick') {
-            _alive().forEach(slot => { const b = _bot[slot]; if (b && _picks[slot] == null && _subT >= b.at) _pick(slot, b.k); });
+            _alive().forEach(slot => { const b = _bot[slot]; if (b && _picks[slot] == null && _subT >= b.at && _sub === 'pick') _pick(slot, b.k); });
             if (_subT >= PICK_TIME && _sub === 'pick') {
-                _alive().forEach(slot => { if (_picks[slot] == null) _picks[slot] = -1; });
-                _reveal();
+                if (_race) {   // no answer from this phone: say so, and wait for the call
+                    _picks[0] = -1;
+                    try { _race.pick(_round, false, Infinity); } catch (e) { /* the call will time out */ }
+                    _sub = 'wait'; _waitT = 0; _hud.hint(0, 'TOO SLOW · WAITING FOR THE OTHERS…');
+                } else {
+                    _alive().forEach(slot => { if (_picks[slot] == null) _picks[slot] = -1; });
+                    _reveal();
+                }
             }
+        } else if (_sub === 'wait') {
+            // across phones: the judge's call (or, if it never comes, nobody scores and on we go)
+            _waitT += dt;
+            let c = null; try { c = _race.call(_round); } catch (e) { c = null; }
+            if (c) { _call = c; _reveal(); }
+            else if (_waitT >= CALL_WAIT) { _call = { winner: -1, wins: { [_race.me]: _score[0] } }; _reveal(); }
         } else if (_sub === 'reveal') {
             const u = _subT / REVEAL;
             _cups.forEach(c => { c.lift = u < 0.2 ? u / 0.2 : u < 0.8 ? 1 : Math.max(0, 1 - (u - 0.8) / 0.2); });
             if (_subT >= REVEAL) {
                 _cups.forEach(c => { c.lift = 0; });
-                // Over when one is left in (alone: at the first miss), or at the cap.
-                const done = _solo ? (_out[0] || _round >= SOLO_ROUNDS) : (_alive().length <= 1 || _round >= MAX_ROUNDS);
+                // A race: over when somebody has enough rounds. Alone: at the first miss (or the cap).
+                const done = _racing() ? _over : (_out[0] || _round >= SOLO_ROUNDS);
                 if (done) _end(); else _nextRound();
             }
         }
@@ -333,12 +411,13 @@ function _frame(dt) {
 
 // Who's on top: everyone still in (the knockout's survivors), else the most found.
 function _leaders() {
+    if (_racing()) { const top = Math.max(..._score); return _seats().filter(s => _score[s] === top); }
     const alive = _alive();
     if (alive.length) return alive;
     const top = Math.max(..._score); return _seats().filter(s => _score[s] === top);
 }
 // How long each player lasted, for the standings: the round they went out, or past the last one.
-const _standing = () => _seats().map(s => (_out[s] ? _lasted[s] : _round + 1) * 100 + _score[s]);
+const _standing = () => _seats().map(s => (_racing() ? _score[s] : (_out[s] ? _lasted[s] : _round + 1) * 100 + _score[s]));
 const _isBot = slot => !_solo && isBotSlot(slot);
 
 function _startSwap() {
@@ -360,11 +439,11 @@ function _draw() {
 function _renderHud() {
     if (!_hud) return;
     const rnd = `ROUND ${Math.max(1, _round)}`;
-    _seats().forEach(slot => _hud.line(slot, (_out[slot] ? `🥤 OUT IN ROUND ${_lasted[slot]} · ${_score[slot]} FOUND`
-        : _solo ? `🥤 ${rnd} · ${_score[0]} FOUND · ${soloScore()} PTS` : `🥤 ${rnd} · ${_score[slot]} FOUND`) +
+    _seats().forEach(slot => _hud.line(slot, (_racing() ? `🥤 ${rnd} · ${_score[slot]} OF ${_raceTo()}${_locked[slot] ? ' · LOCKED OUT' : ''}`
+        : `🥤 ${rnd} · ${_score[0]} FOUND · ${soloScore()} PTS`) +
         (_sub === 'pick' && _picks[slot] == null ? ` · ${Math.max(0, Math.ceil(PICK_TIME - _subT))}s` : '')));
     const el = document.getElementById('mg-neutral');
-    if (el && _phase === 'play') el.textContent = _solo ? `${rnd} · ${_score[0]} FOUND` : `${rnd} · ${_alive().length} OF ${_n} STILL IN`;
+    if (el && _phase === 'play') el.textContent = _racing() ? `${rnd} · FIRST TO ${_raceTo()}` : `${rnd} · ${_score[0]} FOUND`;
 }
 
 function _end() {
@@ -375,14 +454,15 @@ function _end() {
     if (_solo) {
         // Parallel play reports a score, not a winner.
         const banked = soloScore();
-        _hud.say(`${_score[0]} FOUND`, `${banked} POINTS`, 0, _t, '#ffd166');
+        if (_race) _hud.say(_score[0] >= _raceTo() ? 'YOU WIN!' : 'RACE OVER', `${_score[0]} ROUND${_score[0] === 1 ? '' : 'S'} WON`, 0, _t, '#ffd166');
+        else _hud.say(`${_score[0]} FOUND`, `${banked} POINTS`, 0, _t, '#ffd166');
         setTimeout(() => { if (_done) return; _destroy(); Solo.soloFinish(banked); }, 1400);
         return;
     }
     const lead = _leaders(), w = lead.length === 1 ? lead[0] : -1;
     _dir.close({
         winner: w, figs: _figs.filter(f => f.rig).map(f => ({ slot: f.slot, rig: f.rig, anim: f.anim })),
-        sub: w < 0 ? `${lead.length} STILL IN AFTER ${_round} ROUNDS` : `LAST ONE IN · ${_score[w]} FOUND`,
+        sub: w < 0 ? `A DRAW AFTER ${_round} ROUNDS` : `FIRST TO ${_raceTo()} · ${_score[w]} ROUNDS`,
         onDone: () => _finish(w, _standing()),
     });
     const el = document.getElementById('mg-neutral');
@@ -391,7 +471,7 @@ function _end() {
 
 // ── Probe hooks ──────────────────────────────────────────────────────────────
 export function _debugState() {
-    return { phase: _phase, n: _n, sub: _sub, round: _round, score: [..._score], picks: [..._picks], out: [..._out], solo: _solo,
+    return { phase: _phase, n: _n, sub: _sub, round: _round, score: [..._score], picks: [..._picks], out: [..._out], solo: _solo, race: !!_race, racing: _racing(), locked: [..._locked], winner: _winner,
              answer: _cups.length ? _posIndex(_under) : -1, swaps: _plan ? _plan.swaps : 0, dur: _plan ? +_plan.dur.toFixed(2) : 0,
              swapI: _swapI, gl: !!_stage?.gl, turned: !!_stage?.turned };
 }

@@ -320,6 +320,26 @@ export function ghosts() {
     try { return _link.others() || []; } catch (e) { return []; }
 }
 
+// ── Races (across phones): who answers first ───────────────────────────────
+// A parallel game can be a race: each round goes to the fastest right answer
+// on any phone, judged by the host app (CLAWGames' Room). With no link the
+// game plays alone, as it always has.
+//
+//   link.me                       this phone's player id
+//   link.to                       rounds to win
+//   link.pick(round, right, ms)   this phone's answer: right or not, and how many
+//                                 ms after the pick began (Infinity: no answer)
+//   link.call(round)              null until the round is judged, then
+//                                 { winner (player id, or -1), name, wins: { id: n }, done }
+
+let _race = null;
+
+/** The host app's race judge, or null: a parallel game is then played alone. */
+export function setRaceLink(link) { _race = link || null; }
+
+/** The race link while a race is on (solo play with a link), else null. */
+export function race() { return _solo && _race ? _race : null; }
+
 /** The label a parallel game shows above its score. */
 export function scoreLabel(type) {
     return (MG_INFO[type] && MG_INFO[type].title) || 'SCORE';
