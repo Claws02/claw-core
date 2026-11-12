@@ -5,6 +5,7 @@
 // and create a new file in src/minigames/. That's it.
 // ============================================================
 
+import { plain } from '../config/Text.js';
 import { state, playerCount, setPlayerCount } from '../../AppHost.js';
 import { Bot } from '../../AppHost.js';
 import { MG_TYPES, MG_INFO, MG_ORIENTATIONS, orientationOf, MG_WATCHDOG_MS,
@@ -1230,7 +1231,7 @@ function _showScoreboard(winnerId, payouts, practice, done) {
         if (arcade) {
             return `<div class="mg-sc-card ${isWin && !isTie ? 'mg-sc-win' : ''}">
                 <div class="mg-sc-rank ${rankCls}">${rank}</div>
-                <div class="mg-sc-name" style="color:${SLOT_HUE[i] || '#fff'}">${p.name}</div>
+                <div class="mg-sc-name" style="color:${SLOT_HUE[i] || '#fff'}">${plain(p.name)}</div>
                 <div class="mg-sc-coins">${_arcadeWins[i]}<span class="mg-sc-unit">won</span></div>
                 <div class="mg-sc-line mg-sc-dim">rounds won in the arcade</div>
             </div>`;
@@ -1250,7 +1251,7 @@ function _showScoreboard(winnerId, payouts, practice, done) {
         if (!lines.length) lines.push(`<span class="mg-sc-line mg-sc-dim">${practice ? 'practice — nothing at stake' : 'no coins this round'}</span>`);
         return `<div class="mg-sc-card ${isWin && !isTie ? 'mg-sc-win' : ''}">
             <div class="mg-sc-rank ${rankCls}">${rank}</div>
-            <div class="mg-sc-name" style="color:${SLOT_HUE[i] || '#fff'}">${p.name}</div>
+            <div class="mg-sc-name" style="color:${SLOT_HUE[i] || '#fff'}">${plain(p.name)}</div>
             <div class="mg-sc-coins">${p.coins}<span class="mg-sc-unit">🪙</span></div>
             ${lines.join('')}
             <div class="mg-sc-line mg-sc-dim">minigames won: <b>${p.mgWins}</b></div>

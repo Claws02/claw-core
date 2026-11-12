@@ -543,7 +543,8 @@ function _blast(s) {
                 const jj = J * fall * endgame;
                 const imp = new CANNON.Vec3(side * jj * 0.55 + travel * jj * PUSH * 0.45, jj * 0.32, (b.position.z - pos.z) * jj * 0.15);
                 // At the point it was hit, so a blow high on a piece tips it over.
-                b.applyImpulse(imp, near);
+                // cannon.js 0.6.2 takes the point in world space, cannon-es relative to the body.
+                b.applyImpulse(imp, CANNON.BODY_TYPES ? near.vsub(b.position) : near);
             });
         });
     }

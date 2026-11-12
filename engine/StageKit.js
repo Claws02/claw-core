@@ -23,6 +23,7 @@
 //                              framing of the face-off 3D games (Vault Heist)
 // ============================================================
 
+import { plain } from '../config/Text.js';
 import { state } from '../../AppHost.js';
 import { isBotSlot, seatFor, slotCount } from '../minigames/MinigameManager.js';
 import { zonesFor, seatRing } from '../config/MinigameLayout.js';
@@ -44,7 +45,7 @@ export function seat(slot) {
     const p = state.players[seatFor(slot)] || {};
     const color = p.color ?? (slot === 0 ? 0xff3b3b : 0x3b8eff);
     return {
-        name: (p.name || `P${slot + 1}`).toUpperCase(),
+        name: (plain(p.name) || `P${slot + 1}`).toUpperCase(),
         color, css: '#' + color.toString(16).padStart(6, '0'),
         bot: isBotSlot(slot),
     };

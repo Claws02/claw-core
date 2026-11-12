@@ -188,7 +188,9 @@ function _makePin(x, z) {
         // scatter into each other.
         const b = new CANNON.Body({ mass: 1.0, material: _pinMat, linearDamping: 0.05, angularDamping: 0.1 });
         const cyl = new CANNON.Cylinder(PIN_R, PIN_R * 0.75, PIN_H, 10);
-        const q = new CANNON.Quaternion(); q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);   // cannon's cylinder runs along z
+        // cannon.js 0.6.2 builds a cylinder along z and it has to be stood up;
+        // cannon-es builds it along y already. BODY_TYPES only exists in cannon-es.
+        const q = new CANNON.Quaternion(); if (!CANNON.BODY_TYPES) q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
         b.addShape(cyl, new CANNON.Vec3(0, 0, 0), q);
         b.position.set(x, PIN_H / 2 + 0.01, z);
         _world.addBody(b); p.body = b;

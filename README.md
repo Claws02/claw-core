@@ -23,7 +23,7 @@ net/        NetTransport (Trystero WebRTC), LoopbackStrategy (same-browser rooms
   src/AppHost.js        ← the app's side of the contract (below)
   src/claw-core/        ← this repo, as a submodule
   vendor/three.min.js   ← three.js r128, loaded as the global THREE
-  vendor/cannon.min.js  ← cannon.js 0.6.2, loaded as the global CANNON
+  vendor/cannon*.js     ← cannon-es 0.20 or cannon.js 0.6.2, loaded as the global CANNON
   vendor/trystero-nostr.min.js, vendor/trystero-torrent.min.js   ← only if the app opens online rooms
 ```
 
