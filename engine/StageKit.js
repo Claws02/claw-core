@@ -25,17 +25,19 @@
 
 import { state } from '../../AppHost.js';
 import { isBotSlot, seatFor, slotCount } from '../minigames/MinigameManager.js';
-import { zonesFor, seatRing } from '../config/MinigameLayout.js';
+import { zonesFor, seatRing, isScreen, MAX_SCREEN_SEATS } from '../config/MinigameLayout.js';
 import * as Solo from '../minigames/SoloArena.js';
 
 // How many seats the round has: 2 unless the manager has seated more. At two,
 // everything below is the face-off exactly as it shipped; at three and four the
 // seats take the zone layout's ring (MinigameLayout.zonesFor), corners at four.
-const _seatN = () => Math.max(2, Math.min(4, slotCount() || 2));
+// On a TV (MinigameLayout.setScreen) up to twelve, every one of them upright.
+const _seatN = () => Math.max(2, Math.min(isScreen() ? MAX_SCREEN_SEATS : 4, slotCount() || 2));
 const _zones = stage => zonesFor(_seatN(), stage.width, stage.height);
 
 /** Which edge a seat sits at: 'bottom' (reads upright) or 'top' (turned). */
 export function seatEdge(slot) {
+    if (isScreen()) return 'bottom';
     const n = _seatN();
     if (n <= 2) return slot === 1 ? 'top' : 'bottom';
     return seatRing(n)[slot]?.edge || 'bottom';
@@ -62,7 +64,7 @@ function _pop(el, on) {
 export function faceoffHud(stage, { bg = 'rgba(12,10,20,.72)' } = {}) {
     // Played alone for a score, one strip and one message across the whole screen.
     const solo = Solo.isSolo();
-    if (!solo && _seatN() > 2) return _ringHud(stage, bg);
+    if (!solo && (_seatN() > 2 || isScreen())) return _ringHud(stage, bg);
     const root = stage.hud;
     root.classList.add('bfont');
     const halves = (solo ? [0] : [0, 1]).map(slot => {
@@ -136,10 +138,11 @@ function _ringHud(stage, bg) {
         });
     };
     stage.onResize(layout);
-    const halves = [0, 1].map(k => {
+    // On a TV the big message is drawn once, upright, across the middle.
+    const halves = (isScreen() ? [-1] : [0, 1]).map(k => {
         const half = document.createElement('div');
-        half.style.cssText = 'position:absolute;left:0;right:0;height:50%;pointer-events:none;' +
-            (k === 0 ? 'bottom:0;' : 'top:0;transform:rotate(180deg);');
+        half.style.cssText = 'position:absolute;left:0;right:0;pointer-events:none;' +
+            (k < 0 ? 'top:0;bottom:0;' : k === 0 ? 'height:50%;bottom:0;' : 'height:50%;top:0;transform:rotate(180deg);');
         const box = document.createElement('div');
         box.style.cssText = 'position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);text-align:center;' +
             'opacity:0;transition:opacity .2s;white-space:nowrap;' + TXT;

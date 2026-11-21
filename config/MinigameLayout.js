@@ -331,6 +331,35 @@ function _out(shape, ctx, n, inner, shared, seats, rail, ok, why) {
 const _dim = r => `${r.w}x${r.h}`;
 const _tooSmall = r => `the playfield comes out ${_dim(r)}, under the ${CHROME.MIN_PLAY}x${CHROME.MIN_PLAY} floor.`;
 
+// ── The screen: a TV that everybody watches from the front ──────────────────
+//
+// CLAWGames' TV mode runs a game on a TV and gives every player a phone as a
+// touchpad. Nobody sits round the screen, so no seat is turned: every zone
+// reads upright, and past four seats the zones are a grid (two rows up to 8,
+// three rows past that) whose only job is to give each seat somewhere of its
+// own for the relayed touches to land. Off unless the app turns it on, so
+// HundredBlockDash never sees it.
+export const MAX_SCREEN_SEATS = 12;
+let _screen = false;
+/** The app's TV mode: every seat upright, and up to MAX_SCREEN_SEATS of them. */
+export function setScreen(on) { _screen = !!on; }
+export const isScreen = () => _screen;
+
+function _screenZones(n, w, h) {
+    const inner = innerBox(w, h);
+    if (n <= 4) {
+        // The usual places (a half each at two, corners at four), none turned.
+        return _ringZones(n, inner).map(z => ({ ...z, rot: 0 }));
+    }
+    const rows = n > 8 ? 3 : 2, cols = Math.ceil(n / rows);
+    return Array.from({ length: n }, (_, i) => {
+        // Seat 0 bottom left, filling the bottom row first, as the near edge does at two.
+        const row = rows - 1 - Math.floor(i / cols), col = i % cols;
+        return { seat: i, rect: rect(inner.x + inner.w * col / cols, inner.y + inner.h * row / rows, inner.w / cols, inner.h / rows),
+                 rot: 0, edge: row >= rows / 2 ? 'bottom' : 'top' };
+    });
+}
+
 /**
  * One zone per seat, covering the screen, laid out where people are sitting.
  *
@@ -349,8 +378,11 @@ const _tooSmall = r => `the playfield comes out ${_dim(r)}, under the ${CHROME.M
  * Returns [{ seat, rect, rot, edge }] in seat order.
  */
 export function zonesFor(n, w, h) {
-    const seats = Math.max(1, Math.min(4, n | 0));
-    const inner = innerBox(w, h);
+    if (_screen) return _screenZones(Math.max(1, Math.min(MAX_SCREEN_SEATS, n | 0)), w, h);
+    return _ringZones(Math.max(1, Math.min(4, n | 0)), innerBox(w, h));
+}
+
+function _ringZones(seats, inner) {
     const half  = inner.h / 2;
     return seatRing(seats).map((s, i) => {
         const [a, b] = s.span;
