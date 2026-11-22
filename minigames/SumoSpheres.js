@@ -2,7 +2,8 @@
 // SUMO SPHERES — everybody in a glass ball, one crumbling ring.
 // (Rebuilt on the stage; the earlier version is in archived/SumoSpheres.js.)
 //
-// TWO, THREE OR FOUR players on one phone, one shared camera over the ring.
+// TWO, THREE OR FOUR players on one phone, one shared camera over the ring
+// (up to TWELVE on a TV, where every player's thumb is on their own phone).
 // Each player's character rides upright inside a see-through sphere.
 //
 //   DRAG in your zone: a stick appears under your thumb and rolls your ball
@@ -20,7 +21,7 @@
 import { state } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
 import { registerMinigameCleanup, slotCount, isBotSlot } from './MinigameManager.js';
-import { zonesFor } from '../config/MinigameLayout.js';
+import { zonesFor, isScreen, MAX_SCREEN_SEATS } from '../config/MinigameLayout.js';
 import { createStage } from '../engine/Stage.js';
 import { createDirector } from '../engine/StageDirector.js';
 import { seat, effects, overheadCam } from '../engine/StageKit.js';
@@ -45,7 +46,8 @@ let _phase = 'intro', _phaseT = 0, _t = 0, _clock = 0, _radius = ARENA_RADIUS, _
 export function start(isBot, onWin, botSkill = 0.55) {
     if (!state.mgActive) return;
     _done = false; _onWin = onWin; _botSkill = botSkill;
-    _n = Math.max(2, Math.min(4, slotCount()));
+    // Up to four on a phone; on a TV (MinigameLayout.setScreen) up to twelve, the ring is big enough.
+    _n = Math.max(2, Math.min(isScreen() ? MAX_SCREEN_SEATS : 4, slotCount()));
     _vel = Array.from({ length: _n }, () => new THREE.Vector3());
     _input = Array.from({ length: _n }, () => new THREE.Vector2());
     _mom = new Array(_n).fill(0); _falling = new Array(_n).fill(false); _outAt = new Array(_n).fill(0);

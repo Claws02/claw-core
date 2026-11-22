@@ -11,7 +11,7 @@ import { MG_TYPES, MG_INFO, MG_ORIENTATIONS, orientationOf, MG_WATCHDOG_MS,
          surfacesOf } from '../config/MinigameRegistry.js';
 import { MINIGAME_REWARD, MINIGAME_PLACE_COINS } from '../../AppHost.js';
 import { sfx, haptic } from '../engine/AudioManager.js';
-import { zonesFor } from '../config/MinigameLayout.js';
+import { zonesFor, isScreen, MAX_SCREEN_SEATS } from '../config/MinigameLayout.js';
 import { DualRead } from '../../AppHost.js';
 
 import { loadUIManager } from '../../AppHost.js';
@@ -124,7 +124,7 @@ export function slots() { return _seats.map((_, i) => i); }
 
 function _setRoster(seats, min = 2) {
     const n = state.players.length;
-    const ok = Array.isArray(seats) && seats.length >= min && seats.length <= 4
+    const ok = Array.isArray(seats) && seats.length >= min && seats.length <= (isScreen() ? MAX_SCREEN_SEATS : 4)
         && seats.every(i => typeof i === 'number' && i >= 0 && i < n)
         && new Set(seats).size === seats.length;
     const out = ok ? seats.slice() : [0, Math.min(1, n - 1)];
@@ -344,7 +344,8 @@ export function triggerStandalone(mgType, isBotOpponent = false, seats = 2, opts
     state.cameraState = 'MINIGAME';
     state.mgType      = mgType;
     // opts.solo: a game played alone (Mini Golf against par) — one seat.
-    const n = Math.max(opts.solo ? 1 : 2, Math.min(4, seats | 0));
+    // On a TV (MinigameLayout.setScreen) a table can seat up to twelve.
+    const n = Math.max(opts.solo ? 1 : 2, Math.min(isScreen() ? MAX_SCREEN_SEATS : 4, seats | 0));
     // The arcade opens with the default two seats, so asking for four has to
     // grow the table first — a roster naming a seat that does not exist is
     // rejected by _setRoster and silently falls back to a duel.
@@ -803,8 +804,11 @@ function _buildReadyButtons(n) {
         rd.classList.remove('ready');
         rd.textContent = 'READY';
     });
-    layer.classList.toggle('mg-many', n > 2);
-    if (n <= 2) return;
+    // On a TV the board is used at two as well: the shared phone's turned P2 button would be upside down.
+    layer.classList.toggle('mg-many', n > 2 || isScreen());
+    // On a TV the status pill is read once, upright: its turned twin goes.
+    layer.classList.toggle('mg-screen', isScreen());
+    if (n <= 2 && !isScreen()) return;
 
     const sideon = layer.classList.contains('is-sideon');
     const W = layer.clientWidth || window.innerWidth, H = layer.clientHeight || window.innerHeight;
@@ -890,6 +894,7 @@ function _ensureBoardCss() {
 @keyframes mg-tag-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 #minigame-layer.mg-many #mg-neutral, #minigame-layer.mg-many #mg-neutral-mirror { visibility: hidden; }
 #minigame-layer.mg-many #mg-countdown { z-index: 80; }
+#minigame-layer.mg-screen #mg-neutral-mirror { display: none !important; }
 `;
     document.head.appendChild(st);
 }

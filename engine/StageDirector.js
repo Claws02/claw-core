@@ -32,6 +32,7 @@
 import { state } from '../../AppHost.js';
 import { sfx } from './AudioManager.js';
 import { seatFor } from '../minigames/MinigameManager.js';
+import { isScreen } from '../config/MinigameLayout.js';
 
 const OPEN_DUR = 2.1;
 const CLOSE_DUR = 2.6;
@@ -72,9 +73,11 @@ export function createDirector(stage) {
     });
 
     // One title card, or two back to back in the face-off hold.
-    const cards = (stage.hold === 'faceoff' ? [0, 180] : [0]).map(rot => {
+    // On a TV (MinigameLayout.setScreen) nobody is across the table: one card.
+    const twin = stage.hold === 'faceoff' && !isScreen();
+    const cards = (twin ? [0, 180] : [0]).map(rot => {
         const c = document.createElement('div');
-        const half = stage.hold === 'faceoff';
+        const half = twin;
         c.style.cssText = 'position:absolute;left:0;right:0;display:flex;flex-direction:column;align-items:center;' +
             'justify-content:center;gap:4px;z-index:31;pointer-events:none;opacity:0;transition:opacity .3s;' +
             (half ? (rot ? 'top:0;height:50%;transform:rotate(180deg);' : 'bottom:0;height:50%;') : 'top:0;bottom:0;');
